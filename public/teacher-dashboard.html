@@ -3925,6 +3925,49 @@ function appendOptimisticMessage(text, reply) {
             border-right-color: rgba(255, 255, 255, 0.8);
         }
     </style>
+    <style>
+        /* ===== controls live in the footer row, never over the text ===== */
+        .message-bubble .message-actions-bar {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
+            bottom: auto !important;
+            transform: none !important;
+            display: inline-flex !important;
+            flex-direction: row-reverse !important;
+            align-items: center;
+            gap: 2px;
+            margin: 0 !important;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity .15s ease;
+        }
+        .message-bubble:hover .message-actions-bar,
+        .message-bubble:focus-within .message-actions-bar {
+            opacity: 1 !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
+        }
+        .message-bubble .message-action-btn {
+            width: 22px;
+            height: 22px;
+            font-size: 0.62rem;
+        }
+        .message-bubble .message-time {
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        /* no hover on touch, so keep them visible there */
+        @media (hover: none) {
+            .message-bubble .message-actions-bar {
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
+            }
+        }
+    </style>
     </head>
 <body>
 <!-- ===== PLATFORM PRELOADER SPLASH SCREEN ===== -->
@@ -9914,19 +9957,18 @@ function updateUI() {
 
             html += `
                 <div class="message-bubble ${isSent ? 'sent' : 'received'} ${isAudioMsg ? 'has-audio-player' : ''}" data-msg-id="${msg.id}">
-                    <div class="message-actions-bar">
-                        ${isSent ? `<button class="message-action-btn" type="button" onclick="event.stopPropagation(); deleteMessage(${msg.id})" title="حذف"><i class="fas fa-trash"></i></button>` : ''}
-                        <button class="message-action-btn" type="button" onclick="event.stopPropagation(); openEmojiPicker(${msg.id}, this.closest('.message-bubble'))" title="تفاعل"><i class="far fa-smile"></i></button>
-                        <button class="message-action-btn" type="button" onclick="event.stopPropagation(); startReplyToMessage(${msg.id}, '${escapeHtml(senderDisplayName).replace(/'/g, "\\'")}', '${cleanTextForJs}')" title="رد"><i class="fas fa-reply"></i></button>
-                    </div>
                     <div class="message-content" style="${isAudioMsg ? 'min-width: 260px; max-width: 95%; padding: 6px 8px;' : ''}">
                         ${replyQuoteHtml}
                         <div class="message-text-body">${bodyContentHtml}</div>
                         ${reactionsHtml}
                         <div class="message-time" style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
+<div class="message-actions-bar">
+    ${isSent ? `<button class="message-action-btn" type="button" onclick="event.stopPropagation(); deleteMessage(${msg.id})" title="حذف"><i class="fas fa-trash"></i></button>` : ''}
+    <button class="message-action-btn" type="button" onclick="event.stopPropagation(); openEmojiPicker(${msg.id}, this.closest('.message-bubble'))" title="تفاعل"><i class="far fa-smile"></i></button>
+    <button class="message-action-btn" type="button" onclick="event.stopPropagation(); startReplyToMessage(${msg.id}, '${escapeHtml(senderDisplayName).replace(/'/g, "\\'")}', '${cleanTextForJs}')" title="رد"><i class="fas fa-reply"></i></button>
+</div>
                             <span>${date.toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' })}</span>
 ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.is_read ? 'قُرئت' : 'أُرسلت'}">${msg.is_read ? '<i class="fas fa-check-double"></i>' : '<i class="fas fa-check"></i>'}</span>` : ''}
-                            ${isSent && !isAudioMsg ? `<button type="button" onclick="event.stopPropagation(); deleteMessage(${msg.id})" title="حذف الرسالة" style="background:rgba(255,255,255,0.2); border:none; color:#fff; border-radius:6px; padding:2px 6px; font-size:0.68rem; cursor:pointer;"><i class="fas fa-trash-alt"></i></button>` : ''}
                         </div>
                     </div>
                 </div>`;
