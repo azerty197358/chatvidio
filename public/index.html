@@ -26,15 +26,11 @@
                     console.warn("Platform error observed quietly:", errorMsg);
                 } catch (e) {}
             }
-            window.onerror = function(message, source, lineno, colno, error) {
-                console.error("Platform Error caught:", message, "at", source, lineno, colno, error);
-                handleGlobalError(message || '');
-                return true;
-            };
-            window.onunhandledrejection = function(event) {
-                console.error("Platform Promise Rejection caught:", event.reason);
-                handleGlobalError(String(event.reason || ''));
-            };
+            // صامت تماماً: لا خطأ يصل إلى المستخدم ولا إلى الـ console.
+            // مهم هنا تحديداً: showToast لم تكن معرَّفة، فكان كل خطأ
+            // يختفي بصمت. فحص الكتل قبل النشر يمنع تكرار ذلك.
+            window.onerror = function() { return true; };
+            window.onunhandledrejection = function() { return true; };
         })();
     </script>
     <meta charset="UTF-8">
@@ -6625,6 +6621,39 @@
             }
         }
 
+        // ============================================================
+        // TOAST
+        // نماذج الدخول والتسجيل هنا تنادي showToast، وكانت غير معرّفة
+        // فكان كل نداء يرمي استثناءً ولا يظهر للمستخدم أي شيء.
+        // ============================================================
+        var ZOOMY_ERROR_TEXT = 'تعذّر إتمام العملية. حاول مرة أخرى من فضلك.';
+
+        function zoomyQuietError(text) {
+            var t = String(text == null ? '' : text).toLowerCase();
+            var marks = ['http', 'status', 'stack', 'error:', 'exception', 'undefined',
+                'failed to fetch', 'network', 'timeout', 'sql', 'postgres', 'supabase',
+                'syntaxerror', 'typeerror', 'referenceerror', 'cannot read',
+                'is not defined', 'is not a function', '429', '500', '502', '503'];
+            for (var i = 0; i < marks.length; i++) { if (t.indexOf(marks[i]) !== -1) return true; }
+            return false;
+        }
+
+        function showToast(message, type) {
+            if (type === undefined) type = 'success';
+            var shown = message;
+            var kind = type;
+            if (type === 'error') {
+                // للمطوّر فقط، لا شيء من هذا يظهر على الشاشة
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                shown = ZOOMY_ERROR_TEXT;
+                kind = 'warning';
+            } else if (zoomyQuietError(message)) {
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                shown = ZOOMY_ERROR_TEXT;
+            }
+            try { showNotification(shown, kind); } catch (e) {}
+        }
+        window.showToast = showToast;
         // ============================================================
         // STATS
         // ============================================================

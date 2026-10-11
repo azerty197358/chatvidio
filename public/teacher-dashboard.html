@@ -15520,7 +15520,6 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         if (overlay) overlay.style.display = 'none';
     }
 
-    async 
     function isImageFile(file) {
         return file && typeof file.type === 'string' && file.type.indexOf('image/') === 0;
     }
@@ -15533,7 +15532,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             reader.onerror = reject;
         });
     }
-function handleExerciseFilesSelected(event) {
+    async function handleExerciseFilesSelected(event) {
         const files = Array.from(event.target.files || []);
         if (!files || files.length === 0) return;
 
