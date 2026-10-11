@@ -17,6 +17,7 @@ const { getOne, insert, update, generateVerificationToken, generateReferralCode,
 const { encrypt, maskIP } = require('../utils/encryption');
 const { sendVerificationEmail, sendResetEmail, sendTeacherApprovalEmail, sendTeacherRejectionEmail } = require('../utils/email');
 const { processReferralOnRegister } = require('../utils/referral');
+const { STARTING_AI_TOKENS } = require('../utils/ai-points');
 const { uploadToSupabase, validateUploadedFiles } = require('../utils/upload');
 const { verifyRecaptcha, isValidDzPhone, isValidEmail } = require('../utils/validation');
 const { generateToken, verifyToken } = require('../utils/jwt');
@@ -257,7 +258,7 @@ router.post('/teacher/register', checkBanned, [
             is_banned: false,
             ban_reason: null,
             profile_completion: true, // ✅ حساب مفعل وجاهز للعمل
-            ai_tokens: 5,
+            ai_tokens: STARTING_AI_TOKENS,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         });
@@ -415,7 +416,7 @@ router.post('/student/register', checkBanned, [
             referral_code: null,
             is_banned: false,
             ban_reason: null,
-            ai_tokens: 5,
+            ai_tokens: STARTING_AI_TOKENS,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         });
@@ -1338,7 +1339,7 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
                 is_banned: false,
                 ban_reason: null,
                 profile_completion: false,
-                ai_tokens: 5,
+                ai_tokens: STARTING_AI_TOKENS,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             });
@@ -1392,7 +1393,7 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
                 is_banned: false,
                 ban_reason: null,
                 profile_completion: false,
-                ai_tokens: 5,
+                ai_tokens: STARTING_AI_TOKENS,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             });
@@ -1582,7 +1583,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                     balance: 0,
                     referral_balance: 0,
                     profile_completion: false,
-                    ai_tokens: 5,
+                    ai_tokens: STARTING_AI_TOKENS,
                     created_at: new Date().toISOString()
                 });
                 const referralCode = generateReferralCode(fullName, finalUser.id);
@@ -1607,7 +1608,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                     profile_completion: false,
                     referral_balance: 0,
                     gift_box_chances: 0,
-                    ai_tokens: 5,
+                    ai_tokens: STARTING_AI_TOKENS,
                     created_at: new Date().toISOString()
                 });
                 const referralCode = generateReferralCode(fullName, finalUser.id);

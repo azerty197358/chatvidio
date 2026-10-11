@@ -113,5 +113,46 @@ console.log('\n=== the compressor must exist exactly once ===');
     ].forEach(function (p) { report(p[1].test(src), 'compressor: ' + p[0]); });
 }
 
+console.log('\n=== free AI points must stay at zero ===');
+{
+    const SERVER_FILES = ['server.js', 'routes/auth.js', 'routes/student.js',
+        'routes/teacher.js', 'routes/admin.js', 'utils/ai-points.js'];
+
+    SERVER_FILES.forEach(function (rel) {
+        const p = path.join(ROOT, rel);
+        if (!fs.existsSync(p)) return;
+        const src = fs.readFileSync(p, 'utf8');
+        src.split(/\r?\n/).forEach(function (l, i) {
+            // أي رقم 5 بجانب أي اسم من أسماء النقاط المجانية خطأ
+            if (/(free_ai_points|ai_tokens|STARTING_AI_TOKENS|DEFAULT_FREE_AI_POINTS)[^\n]{0,30}\b5\b/.test(l)
+                || /\b5\b[^\n]{0,30}(free_ai_points|ai_tokens|STARTING_AI_TOKENS)/.test(l)) {
+                report(false, rel + ' L' + (i + 1) + ': a free allowance of 5', l.trim().slice(0, 90));
+            }
+        });
+    });
+
+    const mod = fs.readFileSync(path.join(ROOT, 'utils', 'ai-points.js'), 'utf8');
+    report(/STARTING_AI_TOKENS = 0;/.test(mod), 'a new account starts at 0');
+    report(/DEFAULT_FREE_AI_POINTS = 0;/.test(mod), 'the free daily allowance defaults to 0');
+
+    // المنح اليومي يضاف ولا يُمحى: لا يوجد مسار يرجع رصيداً أقل
+    const daily = mod.substring(mod.indexOf('function dailyGrant'), mod.indexOf('module.exports'));
+    report(!/tokens:\s*current\s*-/.test(daily) && !/Math\.max\(0,\s*current/.test(daily),
+        'the daily grant can never lower the balance');
+    report(/if \(granted <= 0\) return \{ tokens: current, granted: 0 \};/.test(daily),
+        'a zero allowance leaves the balance untouched');
+
+    // ولا يستبدل الرصيد في الخادم
+    const srv = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+    const resets = (srv.match(/dailyGrant\(/g) || []).length;
+    report(resets === 3, 'all three daily resets use dailyGrant (' + resets + ')');
+    report(!/ai_tokens:\s*dailyFreeTokens/.test(srv), 'no reset writes the free amount over the balance');
+    report(!/ai_tokens:\s*default(Student|Teacher)AiPoints/.test(srv), 'no /me reset overwrites the balance');
+
+    // الواجهة لا تَعِد بتجديد مجاني
+    const tutor = fs.readFileSync(path.join(ROOT, 'public', 'ai-tutor.html'), 'utf8');
+    report(tutor.indexOf('تجدد النقاط المجانية') === -1, 'ai-tutor no longer promises a free daily refill');
+}
+
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));
 process.exit(bad ? 1 : 0);

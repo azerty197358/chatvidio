@@ -4806,7 +4806,7 @@ app.post('/api/ai/chat', authenticate, requireRegisteredUser, async (req, res) =
         let userObj = isTeacher ? teacher : student;
         let userTable = isTeacher ? 'teachers' : 'students';
         let hasCustomTokens = userObj?.ai_tokens !== undefined && userObj?.ai_tokens !== null;
-        let currentTokens = hasCustomTokens ? userObj.ai_tokens : 5;
+        let currentTokens = safeTokens(userObj.ai_tokens);
         
         if (hasCustomTokens || student || teacher) {
             const now = new Date();
@@ -4820,26 +4820,27 @@ app.post('/api/ai/chat', authenticate, requireRegisteredUser, async (req, res) =
                 
             if (isNewDay) {
                 const revSettings = await getRevenueSettings();
-                const dailyFreeTokens = teacher 
-                    ? (revSettings.teacher_free_ai_points !== undefined ? revSettings.teacher_free_ai_points : 5)
-                    : (revSettings.student_free_ai_points !== undefined ? revSettings.student_free_ai_points : 5);
-                
-                currentTokens = dailyFreeTokens;
+                const dailyFreeTokens = freeAiPoints(revSettings, isTeacher ? 'teacher' : 'student');
+                const grant = dailyGrant(currentTokens, dailyFreeTokens);
+                currentTokens = grant.tokens;
                 try {
-                    await update(userTable, userId, {
-                        ai_tokens: dailyFreeTokens,
-                        last_ai_reset: now.toISOString()
-                    });
-                    console.log(`⏳ [Zoomy] تم تجديد النقاط المجانية اليومية (${dailyFreeTokens} نقطة) للمستخدم ${userId}`);
+                    // last_ai_reset يُسجَّل دائماً حتى لا يُعاد الحساب في كل طلب،
+                    // و ai_tokens لا يُكتب إلا إذا مُنح فعلاً - فالرصيد المدفوع لا يُمس.
+                    const patch = { last_ai_reset: now.toISOString() };
+                    if (grant.granted > 0) patch.ai_tokens = grant.tokens;
+                    await update(userTable, userId, patch);
+                    if (grant.granted > 0) {
+                        console.log(`⏳ [Zoomy] أُضيفت ${grant.granted} نقطة مجانية للمستخدم ${userId}`);
+                    }
                 } catch (dbErr) {
-                    console.warn('⚠️ Could not update last_ai_reset or ai_tokens in chat endpoint:', dbErr.message);
+                    console.warn('⚠️ Could not update last_ai_reset in chat endpoint:', dbErr.message);
                 }
             }
 
             if (currentTokens <= 0) {
                 return res.status(403).json({ 
                     success: false, 
-                    error: 'لقد نفدت نقاط Zoomy المتاحة لك لهذا اليوم. تجدد النقاط المجانية تلقائياً كل يوم، أو يمكنك شحن نقاط إضافية للمتابعة الآن!',
+                    error: 'نفدت نقاط Zoomy الخاصة بك. اشحن رصيدك من صفحة الدفع للمتابعة، أو انتقل إلى باقات النقاط لشراء ما تحتاجه.',
                     out_of_tokens: true
                 });
             }
@@ -5513,22 +5514,25 @@ app.get('/api/teacher/me', authenticate, authorize(['teacher']), async (req, res
             nowTeacher.getDate() !== lastResetTeacher.getDate();
             
         const revSettingsTeacher = await getRevenueSettings();
-        const defaultTeacherAiPoints = revSettingsTeacher.teacher_free_ai_points !== undefined ? revSettingsTeacher.teacher_free_ai_points : 5;
+        const defaultTeacherAiPoints = freeAiPoints(revSettingsTeacher, 'teacher');
 
         if (isNewDayTeacher) {
-            teacher.ai_tokens = defaultTeacherAiPoints;
+            const grant = dailyGrant(teacher.ai_tokens, defaultTeacherAiPoints);
+            teacher.ai_tokens = grant.tokens;
             teacher.last_ai_reset = nowTeacher.toISOString();
             try {
-                await update('teachers', teacherId, {
-                    ai_tokens: defaultTeacherAiPoints,
-                    last_ai_reset: nowTeacher.toISOString()
-                });
-                console.log(`⏳ تم تجديد النقاط المجانية اليومية (${defaultTeacherAiPoints} نقطة) للأستاذ ${teacherId}`);
+                // لا نكتب ai_tokens إلا إذا مُنح فعلاً، فالرصيد المدفوع يبقى
+                const patch = { last_ai_reset: nowTeacher.toISOString() };
+                if (grant.granted > 0) patch.ai_tokens = grant.tokens;
+                await update('teachers', teacherId, patch);
+                if (grant.granted > 0) {
+                    console.log(`⏳ أُضيفت ${grant.granted} نقطة مجانية للأستاذ ${teacherId}`);
+                }
             } catch (dbErr) {
-                console.warn('⚠️ Could not update last_ai_reset or ai_tokens in teacher me endpoint:', dbErr.message);
+                console.warn('⚠️ Could not update last_ai_reset in teacher me endpoint:', dbErr.message);
             }
-        } else if (teacher.ai_tokens === undefined || teacher.ai_tokens === null) {
-            teacher.ai_tokens = defaultTeacherAiPoints;
+        } else {
+            teacher.ai_tokens = safeTokens(teacher.ai_tokens);
         }
 
         // جلب البث النشط إن وجد
@@ -5588,22 +5592,25 @@ app.get('/api/student/me', authenticate, authorize(['student']), async (req, res
             now.getDate() !== lastReset.getDate();
             
         const revSettings = await getRevenueSettings();
-        const defaultStudentAiPoints = revSettings.student_free_ai_points !== undefined ? revSettings.student_free_ai_points : 5;
+        const defaultStudentAiPoints = freeAiPoints(revSettings, 'student');
 
         if (isNewDay) {
-            student.ai_tokens = defaultStudentAiPoints;
+            const grant = dailyGrant(student.ai_tokens, defaultStudentAiPoints);
+            student.ai_tokens = grant.tokens;
             student.last_ai_reset = now.toISOString();
             try {
-                await update('students', studentId, {
-                    ai_tokens: defaultStudentAiPoints,
-                    last_ai_reset: now.toISOString()
-                });
-                console.log(`⏳ تم تجديد النقاط المجانية اليومية (${defaultStudentAiPoints} نقطة) للطالب ${studentId}`);
+                // لا نكتب ai_tokens إلا إذا مُنح فعلاً، فالرصيد المدفوع يبقى
+                const patch = { last_ai_reset: now.toISOString() };
+                if (grant.granted > 0) patch.ai_tokens = grant.tokens;
+                await update('students', studentId, patch);
+                if (grant.granted > 0) {
+                    console.log(`⏳ أُضيفت ${grant.granted} نقطة مجانية للطالب ${studentId}`);
+                }
             } catch (dbErr) {
-                console.warn('⚠️ Could not update last_ai_reset or ai_tokens in me endpoint:', dbErr.message);
+                console.warn('⚠️ Could not update last_ai_reset in me endpoint:', dbErr.message);
             }
-        } else if (student.ai_tokens === undefined || student.ai_tokens === null) {
-            student.ai_tokens = defaultStudentAiPoints;
+        } else {
+            student.ai_tokens = safeTokens(student.ai_tokens);
         }
         
         console.log('✅ تم جلب بيانات الطالب:', student.full_name);
@@ -6406,8 +6413,8 @@ let inMemoryRevenueSettings = {
     ai_per_query_price: 100,
 
     // 2. النقاط المجانية اليومية
-    student_free_ai_points: 5,
-    teacher_free_ai_points: 5,
+    student_free_ai_points: 0,
+    teacher_free_ai_points: 0,
 
     // 3. السحب والعمولات
     teacher_withdrawal_commission: 1,
@@ -6771,8 +6778,8 @@ app.post('/api/admin/settings/revenue_settings', authenticate, authorize(['admin
             ai_subscription_teacher_price: parseFloat(ai_subscription_teacher_price) >= 0 ? parseFloat(ai_subscription_teacher_price) : 1000,
             ai_per_query_price: parseFloat(ai_per_query_price) >= 0 ? parseFloat(ai_per_query_price) : 100,
 
-            student_free_ai_points: parseInt(student_free_ai_points) >= 0 ? parseInt(student_free_ai_points) : 5,
-            teacher_free_ai_points: parseInt(teacher_free_ai_points) >= 0 ? parseInt(teacher_free_ai_points) : 5,
+            student_free_ai_points: parseInt(student_free_ai_points) >= 0 ? parseInt(student_free_ai_points) : 0,
+            teacher_free_ai_points: parseInt(teacher_free_ai_points) >= 0 ? parseInt(teacher_free_ai_points) : 0,
 
             teacher_withdrawal_commission: parseFloat(teacher_withdrawal_commission) >= 0 ? parseFloat(teacher_withdrawal_commission) : 1,
             student_withdrawal_commission: parseFloat(student_withdrawal_commission) >= 0 ? parseFloat(student_withdrawal_commission) : 2,
@@ -7106,6 +7113,7 @@ app.use(errorHandler);
 // ✅ Cron: مراقبة الدروس المنتهية والبث غير المغلق (كل دقيقة)
 // ============================================================
 const { checkAndExpireOverdueOffers } = require('./utils/streamVerification');
+const { STARTING_AI_TOKENS, safeTokens, freeAiPoints, dailyGrant } = require('./utils/ai-points');
 
 function startOfferCron() {
     // تشغيل فوري عند بدء الخادم

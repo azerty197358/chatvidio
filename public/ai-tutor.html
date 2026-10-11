@@ -822,7 +822,7 @@
         <div class="chat-head">
             <div class="chat-head-info">
                 <strong>Zoomy</strong>
-                <small id="dailyPointsNote">النقاط المجانية تتجدد كل يوم</small>
+                <small id="dailyPointsNote">اشحن رصيداً لاستخدام Zoomy</small>
             </div>
             
             <!-- أداة عرض نقاط التوكنز وشحنها -->
@@ -1160,7 +1160,7 @@ async function submit() {
     // التحقق من وجود توكن متبقي قبل الإرسال الفعلي
     const currentTokens = studentData ? (studentData.ai_tokens !== undefined ? studentData.ai_tokens : dailyFreePoints) : 0;
     if (currentTokens <= 0) {
-        alert('عذراً، لقد استهلكت جميع نقاط المحادثة المتاحة لديك لهذا اليوم. تجدد النقاط المجانية تلقائياً كل يوم، أو يمكنك شحن رصيدك لمواصلة استخدام Zoomy.');
+        alert('نفدت نقاط Zoomy المتوفرة في رصيدك. اشحن رصيداً أو اشترِ باقة نقاط للمتابعة.');
         buyTokensModal.style.display = 'flex';
         return;
     }
@@ -1199,7 +1199,7 @@ async function submit() {
         
         if (!r.ok || !data.success) {
             if (data.out_of_tokens) {
-                alert('لقد نفدت نقاط Zoomy الخاصة بك لهذا اليوم. تجدد النقاط المجانية تلقائياً كل يوم، أو يمكنك شحن نقاط إضافية للمتابعة.');
+                alert('نفدت نقاط Zoomy الخاصة بك. اشحن نقاط إضافية أو اشترِ باقة للمتابعة.');
                 buyTokensModal.style.display = 'flex';
                 throw new Error('نفاد نقاط Zoomy');
             }

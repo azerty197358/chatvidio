@@ -3338,8 +3338,8 @@ router.get('/settings/revenue_settings', authenticate, authorize(['admin']), asy
             ai_subscription_student_price: 500,
             ai_subscription_teacher_price: 1000,
             ai_per_query_price: 100,
-            student_free_ai_points: 5,
-            teacher_free_ai_points: 5,
+            student_free_ai_points: 0,
+            teacher_free_ai_points: 0,
             teacher_withdrawal_commission: 1,
             student_withdrawal_commission: 2,
             min_withdrawal_amount: 500,
@@ -3385,8 +3385,8 @@ router.post('/settings/revenue_settings', authenticate, authorize(['admin']), as
             ai_subscription_teacher_price: parseFloat(payload.ai_subscription_teacher_price) >= 0 ? parseFloat(payload.ai_subscription_teacher_price) : 1000,
             ai_per_query_price: parseFloat(payload.ai_per_query_price) >= 0 ? parseFloat(payload.ai_per_query_price) : 100,
 
-            student_free_ai_points: parseInt(payload.student_free_ai_points) >= 0 ? parseInt(payload.student_free_ai_points) : 5,
-            teacher_free_ai_points: parseInt(payload.teacher_free_ai_points) >= 0 ? parseInt(payload.teacher_free_ai_points) : 5,
+            student_free_ai_points: parseInt(payload.student_free_ai_points) >= 0 ? parseInt(payload.student_free_ai_points) : 0,
+            teacher_free_ai_points: parseInt(payload.teacher_free_ai_points) >= 0 ? parseInt(payload.teacher_free_ai_points) : 0,
 
             teacher_withdrawal_commission: parseFloat(payload.teacher_withdrawal_commission) >= 0 ? parseFloat(payload.teacher_withdrawal_commission) : 1,
             student_withdrawal_commission: parseFloat(payload.student_withdrawal_commission) >= 0 ? parseFloat(payload.student_withdrawal_commission) : 2,

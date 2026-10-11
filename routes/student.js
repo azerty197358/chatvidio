@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { safeTokens } = require('../utils/ai-points');
 // ============================================================
 // مسارات الطالب - Student Routes (مبسط ومستقر)
 // ============================================================
@@ -136,7 +137,7 @@ router.post('/buy-tokens', authenticate, authorize(['student', 'teacher']), asyn
             });
         }
 
-        const currentTokens = user.ai_tokens !== undefined && user.ai_tokens !== null ? user.ai_tokens : 5; // Default to 5 free tokens
+        const currentTokens = safeTokens(user.ai_tokens); // الحساب الجديد يبدأ بلا رصيد
         const newBalance = currentBalance - selectedPackage.price;
         const newTokens = currentTokens + selectedPackage.tokens;
 
@@ -657,7 +658,7 @@ router.get('/balance/:student_id', authenticate, authorize(['student']), [
             pending_count: pendingCount || 0,
             referral_balance: student.referral_balance || 0,
             gift_box_chances: student.gift_box_chances || 0,
-            ai_tokens: student.ai_tokens !== undefined && student.ai_tokens !== null ? student.ai_tokens : 5,
+            ai_tokens: safeTokens(student.ai_tokens),
             transactions: transactions || []
         });
     } catch (error) {
