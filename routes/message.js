@@ -833,6 +833,11 @@ function typingKey(aType, aId, bType, bId) {
     return pair.join('|');
 }
 
+// كل طرف له مدخل مستقل، وإلا رأى المستخدم مؤشره.
+function typingSlot(key, userType, userId) {
+    return key + '#' + userType + ':' + userId;
+}
+
 function pruneTyping() {
     const now = Date.now();
     for (const [k, v] of memoryTyping) {
@@ -885,10 +890,11 @@ router.post('/typing', authenticate, [
         }
 
         // 2) الذاكرة (يعمل دائماً)
+        const slot = typingSlot(key, userType, userId);
         if (isTyping) {
-            memoryTyping.set(key, { typing: true, at: at });
+            memoryTyping.set(slot, { typing: true, at: at, userId: userId, userType: userType });
         } else {
-            memoryTyping.delete(key);
+            memoryTyping.delete(slot);
         }
         pruneTyping();
 
@@ -935,11 +941,21 @@ router.get('/typing/:user_id/:user_type/:other_id/:other_type', authenticate, as
         // 2) الذاكرة
         if (!isTyping) {
             pruneTyping();
-            const mem = memoryTyping.get(key);
-            if (mem && mem.typing && (now - mem.at) < TYPING_TTL_MS) isTyping = true;
+            const mem = memoryTyping.get(typingSlot(key, peerType, peerId));
+            if (mem && mem.typing
+                && String(mem.userId) === String(peerId)
+                && String(mem.userType) === String(peerType)
+                && (now - mem.at) < TYPING_TTL_MS) {
+                isTyping = true;
+            }
         }
 
-        res.json({ success: true, is_typing: isTyping });
+        res.json({
+            success: true,
+            is_typing: isTyping,
+            user_id: isTyping ? peerId : null,
+            user_type: isTyping ? peerType : null
+        });
     } catch (error) {
         logger.error('خطأ في قراءة حالة الكتابة:', error.message);
         res.status(500).json({ success: false, error: 'حدث خطأ في الخادم' });
