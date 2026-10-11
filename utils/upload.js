@@ -73,6 +73,12 @@ async function uploadToSupabase(file, folder, oldFileName = null) {
                 // نعيد الضغط تدريجياً حتى نصل إلى 450KB كحد أقصى تقريباً.
                 const image = sharp(fileBuffer).rotate();
                 const metadata = await image.metadata();
+
+                // JPEG لا يدعم الشفافية: PNG/WebP الشفاف كان يتحول
+                // إلى خلفية سوداء. نمدّ خلفية بيضاء تحته أولاً.
+                const flatten = function (pipeline, w, h) {
+                    return pipeline.flatten({ background: '#ffffff' });
+                };
                 const largestSide = Math.max(metadata.width || 0, metadata.height || 0);
                 const resizeOptions = largestSide > 720
                     ? { width: 720, height: 720, fit: 'inside', withoutEnlargement: true }
@@ -81,8 +87,9 @@ async function uploadToSupabase(file, folder, oldFileName = null) {
                 let compressed = null;
 
                 for (const quality of qualities) {
-                    const pipeline = image.clone();
-                    if (resizeOptions) pipeline.resize(resizeOptions);
+                    let pipeline = image.clone();
+                    if (resizeOptions) pipeline = pipeline.resize(resizeOptions);
+                    pipeline = flatten(pipeline);
                     compressed = await pipeline
                         .jpeg({ quality, progressive: true, mozjpeg: true })
                         .toBuffer();
@@ -91,8 +98,8 @@ async function uploadToSupabase(file, folder, oldFileName = null) {
 
                 // حد أخير للصور شديدة الدقة حتى لا تتجاوز قيود التخزين.
                 if (compressed && compressed.length > 300 * 1024) {
-                    compressed = await image.clone()
-                        .resize({ width: 540, height: 540, fit: 'inside', withoutEnlargement: true })
+                    compressed = await flatten(image.clone()
+                        .resize({ width: 540, height: 540, fit: 'inside', withoutEnlargement: true }))
                         .jpeg({ quality: 18, progressive: true, mozjpeg: true })
                         .toBuffer();
                 }

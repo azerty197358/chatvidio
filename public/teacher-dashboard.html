@@ -543,15 +543,9 @@ function appendOptimisticMessage(text, reply) {
                     console.warn("Platform error observed quietly:", errorMsg);
                 } catch (e) {}
             }
-            window.onerror = function(message, source, lineno, colno, error) {
-                console.error("Platform Error caught:", message, "at", source, lineno, colno, error);
-                handleGlobalError(message || '');
-                return true;
-            };
-            window.onunhandledrejection = function(event) {
-                console.error("Platform Promise Rejection caught:", event.reason);
-                handleGlobalError(String(event.reason || ''));
-            };
+            // لا شيء من هذا يصل إلى المستخدم أو إلى console
+            window.onerror = function() { return true; };
+            window.onunhandledrejection = function() { return true; };
         })();
     </script>
     <script>
@@ -570,7 +564,8 @@ function appendOptimisticMessage(text, reply) {
             } catch (e) {}
         })();
     </script>
-    <script src="/js/anti-rapid-click.js"></script>
+    <script src="/js/image-compressor.js?v=1"></script>
+<script src="/js/anti-rapid-click.js"></script>
     <script src="/js/site-branding.js"></script>
     <script src="/js/mobile-navbar-swipe.js"></script>
     <script src="/js/zoomy-assistant-widget.js"></script>
@@ -3447,6 +3442,30 @@ function appendOptimisticMessage(text, reply) {
         .toast.warning { background: var(--gradient-gold); }
         .toast.info { background: var(--gradient-main); }
         .toast i { font-size: 1.1rem; flex-shrink: 0; }
+
+        /* ===== TOAST: ي��ب تحت الشريط العلوي على الجوال =====
+        /* الشريط العلوي مثبّت أعلى 60px وكان يغط�� الرسائل */
+        @media (max-width: 768px) {
+            .toast-container {
+                top: 78px !important;
+                left: 12px !important;
+                right: 12px !important;
+                gap: 8px !important;
+                align-items: stretch !important;
+            }
+            .toast {
+                max-width: 100% !important;
+                width: 100% !important;
+                padding: 12px 16px !important;
+                font-size: 0.86rem !important;
+                border-radius: 12px !important;
+            }
+            .toast i { font-size: 1.05rem !important; }
+        }
+        /* شريط المفاتيح على الجوال يغطي ما دون 900px، فنرفعها فوقه */
+        @media (max-width: 768px) and (orientation: portrait) {
+            .toast-container { top: 84px !important; }
+        }
         @keyframes slideInTop {
             from { transform: translateY(-100%) scale(0.95); opacity: 0; }
             to { transform: translateY(0) scale(1); opacity: 1; }
@@ -7931,7 +7950,22 @@ function appendOptimisticMessage(text, reply) {
     // TOAST
     // ================================================================
 
-    function showToast(message, type = 'success') {
+        // ================================================================
+    //  إخفاء رسائل الخطأ: أي خطأ يُسجَّل في console للمطوّر،
+    //  وما يراه المستخدم سطر هادئ واحد لا يكشف أي تفصيل تقني.
+    // ================================================================
+    var ZOOMY_ERROR_TEXT = 'تعذّر إتمام العملية. حاول مرة أخرى من فضلك.';
+
+    function zoomyQuietError(text) {
+        var t = String(text == null ? '' : text).toLowerCase();
+        var marks = ['http', 'status', 'stack', 'error:', 'exception', 'undefined',
+            'failed to fetch', 'network', 'timeout', 'sql', 'postgres', 'supabase',
+            'syntaxerror', 'typeerror', 'referenceerror', 'cannot read',
+            'is not a function', '429', '500', '502', '503'];
+        for (var i = 0; i < marks.length; i++) { if (t.indexOf(marks[i]) !== -1) return true; }
+        return false;
+    }
+function showToast(message, type = 'success') {
         // الحاوية قد تكون غائبة - ننشئها بدل رمي استثناء، لأن استثناء هنا
         // كان يوقف logout() قبل مسح التوكن.
         let container = document.getElementById('toastContainer');
@@ -7951,8 +7985,19 @@ function appendOptimisticMessage(text, reply) {
         };
         try {
             const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
+            let shown = message;
+            let kind = type;
+            if (type === 'error') {
+                // لل��مطوّر فقط
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                shown = ZOOMY_ERROR_TEXT;
+                kind = 'info';
+            } else if (zoomyQuietError(message)) {
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                shown = ZOOMY_ERROR_TEXT;
+            }
+            toast.className = `toast ${kind}`;
+            toast.innerHTML = `<i class="fas ${icons[kind] || icons.info}"></i> ${shown}`;
             container.appendChild(toast);
             setTimeout(() => {
                 toast.style.opacity = '0';
@@ -15475,7 +15520,20 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         if (overlay) overlay.style.display = 'none';
     }
 
-    async function handleExerciseFilesSelected(event) {
+    async 
+    function isImageFile(file) {
+        return file && typeof file.type === 'string' && file.type.indexOf('image/') === 0;
+    }
+
+    function readFileAsDataUrl(file) {
+        return new Promise(function (resolve, reject) {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+        });
+    }
+function handleExerciseFilesSelected(event) {
         const files = Array.from(event.target.files || []);
         if (!files || files.length === 0) return;
 
@@ -15490,15 +15548,17 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
 
         for (const file of filesToProcess) {
             try {
-                const base64 = await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.readAsDataURL(file);
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = error => reject(error);
-                });
+                // كانت تُحفظ كما هي في حقل images داخل قاعدة البيانات،
+                // أي base64 خام بلا ضغط، فيتضخم الصف بلا داع.
+                let base64;
+                if (isImageFile(file) && typeof window.compressBase64ImageFile === 'function') {
+                    base64 = await window.compressBase64ImageFile(file, 1280, 1280, 0.82);
+                } else {
+                    base64 = await readFileAsDataUrl(file);
+                }
                 exerciseImagesToUpload.push(base64);
             } catch (e) {
-                console.error('Error reading file:', e);
+                try { exerciseImagesToUpload.push(await readFileAsDataUrl(file)); } catch (e2) {}
             }
         }
 
@@ -15506,42 +15566,6 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         event.target.value = '';
     }
 
-    // Keep this function around in case it's used elsewhere, just in case
-    function compressBase64ImageFile(file, maxWidth = 1200, maxHeight = 1200, quality = 0.75) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = (e) => {
-                const img = new Image();
-                img.src = e.target.result;
-                img.onload = () => {
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (width > maxWidth || height > maxHeight) {
-                        if (width / height > maxWidth / maxHeight) {
-                            height = Math.round((height * maxWidth) / width);
-                            width = maxWidth;
-                        } else {
-                            width = Math.round((width * maxHeight) / height);
-                            height = maxHeight;
-                        }
-                    }
-
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-
-                    const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-                    resolve(compressedDataUrl);
-                };
-                img.onerror = (err) => reject(err);
-            };
-            reader.onerror = (err) => reject(err);
-        });
-    }
 
     function renderExerciseImagePreviews() {
         const container = document.getElementById('exerciseModalImagesPreview');
