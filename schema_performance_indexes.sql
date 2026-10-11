@@ -1,144 +1,145 @@
--- ============================================================
+﻿-- ============================================================
 --  فهارس الأداء - شغّل هذا الملف في Supabase SQL Editor
---  الفهارس هي ما يحوّل "استعلام يقرأ الجدول كاملاً" إلى "قراءة صفحات قليلة".
---  آمن للتشغيل أكثر من مرة: IF NOT EXISTS في كل سطر.
---  نفّذه مرة واحدة فقط - الخادم يستفيد منها تلقائياً بعد ذلك.
+--  آمن 100%: لا يفشل أبداً مهما كان شكل الجداول.
+--  كل فهرس يُنشأ فقط إذا كان جدوله موجوداً وكل أعمدته موجودة،
+--  وإلا يتخطّاه ويطبع ملاحظة تشرح السبب.
+--  آمن للتشغيل أكثر من مرة (IF NOT EXISTS + فحص الأعمدة).
+--  شغّله بعد النسخة الأولى إن فشلت: ما أُنشئ سابقاً سيُتخطّى تلقائياً.
 -- ============================================================
 
--- ------------------------------------------------------------
--- 1) الأساتذة: القائمة العامة + التصفية بالمستوى + الترتيب
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_teachers_status_created
-    ON public.teachers (status, created_at DESC);
+DO $$
+DECLARE
+    r          RECORD;
+    missing    TEXT;
+    col_list   TEXT;
+BEGIN
+    FOR r IN
+        SELECT * FROM (VALUES
 
-CREATE INDEX IF NOT EXISTS idx_teachers_level_status
-    ON public.teachers (teaching_level, status);
+            -- ---------------------------------------------
+            -- 1) الأساتذة
+            -- ---------------------------------------------
+            ('idx_teachers_status_created',      'teachers', ARRAY['status','created_at']::TEXT[],                    NULL::TEXT),
+            ('idx_teachers_level_status',        'teachers', ARRAY['teaching_level','status']::TEXT[],               NULL::TEXT),
+            ('idx_teachers_vip_certified',       'teachers', ARRAY['is_vip','is_certified','created_at']::TEXT[],     NULL::TEXT),
+            ('idx_teachers_banned',              'teachers', ARRAY['is_banned']::TEXT[],                             'is_banned = false'),
 
-CREATE INDEX IF NOT EXISTS idx_teachers_vip_certified
-    ON public.teachers (is_vip DESC NULLS LAST, is_certified DESC NULLS LAST, created_at DESC);
+            -- ---------------------------------------------
+            -- 2) المجموعات
+            -- ---------------------------------------------
+            ('idx_group_members_student',        'group_members',   ARRAY['student_id','is_blocked']::TEXT[],      NULL::TEXT),
+            ('idx_group_members_group',          'group_members',   ARRAY['group_id','is_blocked']::TEXT[],        NULL::TEXT),
+            ('idx_group_messages_group_time',    'group_messages',  ARRAY['group_id','created_at']::TEXT[],       NULL::TEXT),
+            ('idx_groups_teacher',               'groups',          ARRAY['teacher_id','created_at']::TEXT[],      NULL::TEXT),
 
-CREATE INDEX IF NOT EXISTS idx_teachers_banned
-    ON public.teachers (is_banned) WHERE is_banned = false;
+            -- ---------------------------------------------
+            -- 3) التمارين
+            -- ---------------------------------------------
+            ('idx_exercise_posts_created',       'exercise_posts',  ARRAY['created_at']::TEXT[],                   NULL::TEXT),
+            ('idx_exercise_posts_teacher',       'exercise_posts',  ARRAY['teacher_id','created_at']::TEXT[],       NULL::TEXT),
+            ('idx_exercise_bookmarks_user',      'exercise_bookmarks', ARRAY['user_id','user_type']::TEXT[],         NULL::TEXT),
 
--- ------------------------------------------------------------
--- 2) المجموعات: عضوية الطالب + رسائل المجموعة
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_group_members_student
-    ON public.group_members (student_id, is_blocked);
+            -- ---------------------------------------------
+            -- 4) الباقات والدورات
+            -- ---------------------------------------------
+            ('idx_packages_teacher',             'packages',         ARRAY['teacher_id']::TEXT[],                  NULL::TEXT),
+            ('idx_package_subs_package',         'package_subscriptions', ARRAY['package_id','created_at']::TEXT[],  NULL::TEXT),
+            ('idx_package_subs_student',         'package_subscriptions', ARRAY['student_id','created_at']::TEXT[],  NULL::TEXT),
+            ('idx_courses_teacher',              'courses',          ARRAY['teacher_id','created_at']::TEXT[],     NULL::TEXT),
+            ('idx_courses_status_created',       'courses',          ARRAY['status','created_at']::TEXT[],         NULL::TEXT),
+            ('idx_course_purchases_course',      'course_purchases', ARRAY['course_id','created_at']::TEXT[],      NULL::TEXT),
 
-CREATE INDEX IF NOT EXISTS idx_group_members_group
-    ON public.group_members (group_id, is_blocked);
+            -- ---------------------------------------------
+            -- 5) الرسائل والإشعارات
+            -- ---------------------------------------------
+            ('idx_messages_pair_created',        'messages',      ARRAY['sender_id','sender_type','receiver_id','receiver_type','created_at']::TEXT[], NULL::TEXT),
+            ('idx_messages_receiver_unread',     'messages',      ARRAY['receiver_id','receiver_type','is_read']::TEXT[], NULL::TEXT),
+            ('idx_notifications_user',           'notifications', ARRAY['user_id','user_type','created_at']::TEXT[],     NULL::TEXT),
+            ('idx_notifications_unread',         'notifications', ARRAY['user_id','is_read']::TEXT[],                  'is_read = false'),
 
-CREATE INDEX IF NOT EXISTS idx_group_messages_group_time
-    ON public.group_messages (group_id, created_at DESC);
+            -- ---------------------------------------------
+            -- 6) البحث بالاسم (شريط البحث في الأعلى)
+            -- ---------------------------------------------
+            ('idx_students_name_lower',          'students',     ARRAY['full_name']::TEXT[],   NULL::TEXT),
+            ('idx_teachers_name_lower',          'teachers',     ARRAY['full_name']::TEXT[],   NULL::TEXT),
 
-CREATE INDEX IF NOT EXISTS idx_groups_teacher
-    ON public.groups (teacher_id, created_at DESC);
+            -- ---------------------------------------------
+            -- 7) العروض والحصص
+            -- ---------------------------------------------
+            ('idx_offers_teacher',               'offers',              ARRAY['teacher_id','created_at']::TEXT[], NULL::TEXT),
+            ('idx_stream_subs_teacher',          'stream_subscriptions', ARRAY['teacher_id','created_at']::TEXT[], NULL::TEXT),
+            ('idx_stream_subs_offer',            'stream_subscriptions', ARRAY['offer_id','created_at']::TEXT[],   NULL::TEXT),
+            ('idx_sessions_offer',               'sessions',            ARRAY['offer_id','created_at']::TEXT[],    NULL::TEXT),
+            ('idx_sessions_student',             'sessions',            ARRAY['student_id','created_at']::TEXT[],  NULL::TEXT)
 
-CREATE INDEX IF NOT EXISTS idx_groups_status
-    ON public.groups (status) WHERE status = 'active';
+        ) AS v(idx_name, tbl, cols, predicate)
+    LOOP
+        -- هل الجدول موجود أصلاً؟
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = r.tbl) THEN
+            RAISE NOTICE 'تخطّي % : الجدول % غير موجود', r.idx_name, r.tbl;
+            CONTINUE;
+        END IF;
 
--- ------------------------------------------------------------
--- 3) التمارين: القائمة + المرrelated{profiles} + الإشارات
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_exercise_posts_created
-    ON public.exercise_posts (created_at DESC);
+        -- هل كل عمود من أعمدة الفهرس موجود؟
+        SELECT string_agg(c.column_name, ', ' ORDER BY c.ord)
+          INTO missing
+          FROM unnest(r.cols) WITH ORDINALITY AS c(column_name, ord)
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name  = r.tbl
+                      AND column_name = c.column_name
+               );
 
-CREATE INDEX IF NOT EXISTS idx_exercise_posts_teacher
-    ON public.exercise_posts (teacher_id, created_at DESC);
+        IF missing IS NOT NULL THEN
+            RAISE NOTICE 'تخطّي % : الجدول % لا يملك العمود %', r.idx_name, r.tbl, missing;
+            CONTINUE;
+        END IF;
 
-CREATE INDEX IF NOT EXISTS idx_exercise_posts_level
-    ON public.exercise_posts (education_level, created_at DESC);
+        -- كل شيء موجود: ابنِ قائمة الأعمدة ثم أنشئ الفهرس
+        SELECT string_agg(quote_ident(c.column_name), ', ' ORDER BY c.ord)
+          INTO col_list
+          FROM unnest(r.cols) WITH ORDINALITY AS c(column_name, ord);
 
-CREATE INDEX IF NOT EXISTS idx_exercise_bookmarks_user
-    ON public.exercise_bookmarks (user_id, user_type);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON public.%I (%s)%s',
+                       r.idx_name,
+                       r.tbl,
+                       col_list,
+                       CASE WHEN r.predicate IS NULL THEN '' ELSE ' WHERE ' || r.predicate END);
 
--- ------------------------------------------------------------
--- 4) الباقات والدورات
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_packages_teacher
-    ON public.packages (teacher_id, is_active);
+        RAISE NOTICE 'تم إنشاء %', r.idx_name;
+    END LOOP;
+END $$;
 
-CREATE INDEX IF NOT EXISTS idx_package_subscriptions_package
-    ON public.package_subscriptions (package_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_package_subscriptions_student
-    ON public.package_subscriptions (student_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_courses_teacher
-    ON public.courses (teacher_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_courses_status_created
-    ON public.courses (status, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_course_purchases_course
-    ON public.course_purchases (course_id, created_at DESC);
-
--- ------------------------------------------------------------
--- 5) الرسائل والإشعارات: أعلى ما يكثر تحديثه
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_messages_pair_created
-    ON public.messages (sender_id, sender_type, receiver_id, receiver_type, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_messages_receiver_unread
-    ON public.messages (receiver_id, receiver_type, is_read);
-
-CREATE INDEX IF NOT EXISTS idx_notifications_user
-    ON public.notifications (user_id, user_type, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_notifications_unread
-    ON public.notifications (user_id, is_read) WHERE is_read = false;
-
--- ------------------------------------------------------------
--- 6) البحث عن مستخدمين (شريط البحث في الأعلى)
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_students_name_lower
-    ON public.students (lower(full_name) text_pattern_ops);
-
-CREATE INDEX IF NOT EXISTS idx_teachers_name_lower
-    ON public.teachers (lower(full_name) text_pattern_ops);
-
--- ------------------------------------------------------------
--- 7) العروض والحصص
--- ------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_offers_teacher
-    ON public.offers (teacher_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_stream_subscriptions_teacher
-    ON public.stream_subscriptions (teacher_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_stream_subscriptions_offer
-    ON public.stream_subscriptions (offer_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_offer
-    ON public.sessions (offer_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_student
-    ON public.sessions (student_id, created_at DESC);
-
--- ------------------------------------------------------------
--- 8) تحديث الإحصائيات
--- ------------------------------------------------------------
-ANALYZE public.teachers;
-ANALYZE public.students;
-ANALYZE public.groups;
-ANALYZE public.group_members;
-ANALYZE public.group_messages;
-ANALYZE public.exercise_posts;
-ANALYZE public.packages;
-ANALYZE public.courses;
-ANALYZE public.messages;
-ANALYZE public.notifications;
+-- ============================================================
+--  تحديث إحصائيات Postgres حتى تختار الخطة أفضل مسار تنفيذي
+-- ============================================================
+DO $$
+DECLARE
+    t TEXT;
+    tbls TEXT[] := ARRAY[
+        'teachers', 'students', 'groups', 'group_members', 'group_messages',
+        'exercise_posts', 'exercise_bookmarks', 'packages', 'package_subscriptions',
+        'courses', 'course_purchases', 'messages', 'notifications',
+        'offers', 'stream_subscriptions', 'sessions'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tbls LOOP
+        IF EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = t) THEN
+            EXECUTE format('ANALYZE public.%I', t);
+        END IF;
+    END LOOP;
+END $$;
 
 -- ============================================================
 --  للتحقق بعد التنفيذ:
 --
---  SELECT indexname, tablename
+--  SELECT tablename, indexname
 --  FROM pg_indexes
 --  WHERE schemaname = 'public' AND indexname LIKE 'idx_%'
 --  ORDER BY tablename, indexname;
 --
---  ============================================================
---  ملاحظة: في Supabase قد يستغرق بناء الفهارس على جداول كبيرة
---  بضع ثوانٍ. هذا طبيعي. لا تعِد التشغيل إلا عند إضافة فهارس جديدة.
+--  يجب أن ترى كل الفهارس التي لم تتخطَّها رسائل "تم إنشاء".
 -- ============================================================
