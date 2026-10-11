@@ -3841,7 +3841,84 @@ function appendOptimisticMessage(text, reply) {
         .chat-typing-dot:nth-child(3) { animation-delay: 0.36s; }
         #chatTypingIndicator { min-height: 20px; }
     </style>
-</head>
+<style>
+        /* ===== design.messages: the bubble is the card, one box only ===== */
+        .chat-messages > .message-bubble {
+            display: block !important;
+            width: fit-content !important;
+            box-sizing: border-box !important;
+            padding: 8px 12px 6px !important;
+            border-radius: 16px !important;
+            font-size: 0.9rem !important;
+            line-height: 1.65 !important;
+            max-width: min(78%, 620px) !important;
+            min-width: 0 !important;
+            margin: 0 0 10px 0 !important;
+            overflow-wrap: break-word !important;
+            word-break: normal !important;
+        }
+        .chat-messages > .message-bubble.sent {
+            justify-content: flex-start !important;
+            background: #1e40af !important;
+            color: #ffffff !important;
+            align-self: flex-end !important;
+            border-bottom-right-radius: 5px !important;
+        }
+        .chat-messages > .message-bubble.received {
+            justify-content: flex-start !important;
+            background: #f1f5f9 !important;
+            color: #1e293b !important;
+            align-self: flex-start !important;
+            border-bottom-left-radius: 5px !important;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+        }
+        /* the inner wrapper must never paint a second box */
+        .message-bubble > .message-content {
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            border-radius: 0 !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            line-height: inherit !important;
+            display: block !important;
+        }
+        .message-bubble .message-text-body {
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+            word-break: normal;
+        }
+        .message-bubble .message-time {
+            font-size: 0.62rem;
+            margin-top: 3px;
+            opacity: 0.7;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+        }
+        /* read receipts: one tick when sent, two ticks when read */
+        .msg-status { display: inline-flex; align-items: center; gap: 2px; opacity: .85; }
+        .msg-status i { font-size: 0.6rem; }
+        .msg-status.read i { color: #38bdf8; }
+        .message-bubble.received .msg-status { display: none; }
+        .message-bubble .replied-quote-bubble {
+            background: rgba(0, 0, 0, 0.05);
+            border-right: 3px solid #94a3b8;
+            border-radius: 8px;
+            padding: 4px 8px;
+            margin-bottom: 5px;
+            font-size: 0.78rem;
+        }
+        .message-bubble.sent .replied-quote-bubble {
+            background: rgba(255, 255, 255, 0.16);
+            border-right-color: rgba(255, 255, 255, 0.8);
+        }
+    </style>
+    </head>
 <body>
 <!-- ===== PLATFORM PRELOADER SPLASH SCREEN ===== -->
 <div id="platformPreloader" class="platform-preloader" aria-label="جاري التحميل">
@@ -9826,6 +9903,7 @@ function updateUI() {
                         ${reactionsHtml}
                         <div class="message-time" style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
                             <span>${date.toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' })}</span>
+${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.is_read ? 'قُرئت' : 'أُرسلت'}">${msg.is_read ? '<i class="fas fa-check-double"></i>' : '<i class="fas fa-check"></i>'}</span>` : ''}
                             ${isSent && !isAudioMsg ? `<button type="button" onclick="event.stopPropagation(); deleteMessage(${msg.id})" title="حذف الرسالة" style="background:rgba(255,255,255,0.2); border:none; color:#fff; border-radius:6px; padding:2px 6px; font-size:0.68rem; cursor:pointer;"><i class="fas fa-trash-alt"></i></button>` : ''}
                         </div>
                     </div>
