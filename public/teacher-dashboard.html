@@ -3968,6 +3968,37 @@ function appendOptimisticMessage(text, reply) {
             }
         }
     </style>
+    <style>
+        /* ===== COURSES: switch between my courses and other teachers' ===== */
+        .course-view-tabs { display: flex; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--gray-200, #e2e8f0); flex-wrap: wrap; }
+        .course-view-tab {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 9px 16px; border-radius: 10px; cursor: pointer;
+            font-weight: 800; font-size: 0.85rem;
+            background: #f1f5f9; color: #475569;
+            border: 1.5px solid #e2e8f0; transition: all 0.2s;
+        }
+        .course-view-tab:hover { background: #e2e8f0; }
+        .course-view-tab.active { background: var(--primary, #1e40af); color: #ffffff; border-color: var(--primary, #1e40af); box-shadow: 0 4px 12px rgba(30, 64, 175, 0.25); }
+        .other-courses-bar { display: none; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+        .other-courses-bar select, .other-courses-bar input {
+            padding: 9px 13px; border: 1px solid #cbd5e1; border-radius: 10px;
+            font-size: 0.85rem; font-family: inherit; background: #ffffff; color: #1e293b;
+        }
+        .other-courses-bar select { min-width: 210px; }
+        .other-courses-bar input { flex: 1; min-width: 170px; }
+        .other-courses-bar select:focus, .other-courses-bar input:focus { outline: none; border-color: var(--primary, #1e40af); box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.12); }
+        .other-course-owner { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .other-course-owner img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #e2e8f0; background: #f1f5f9; }
+        .other-course-owner .owner-name { font-weight: 800; font-size: 0.85rem; color: #1e293b; }
+        .other-course-owner .owner-spec { font-size: 0.75rem; color: #64748b; }
+        .other-course-owner .owner-mini {
+            display: inline-block; font-size: 0.65rem; font-weight: 800; padding: 1px 7px;
+            border-radius: 10px; margin-inline-start: 6px; vertical-align: middle;
+        }
+        .owner-mini.vip { background: #fef3c7; color: #b45309; }
+        .owner-mini.cert { background: #dbeafe; color: #1d4ed8; }
+</style>
     </head>
 <body>
 <!-- ===== PLATFORM PRELOADER SPLASH SCREEN ===== -->
@@ -4592,7 +4623,23 @@ function appendOptimisticMessage(text, reply) {
                 <i class="fas fa-info-circle"></i>
                 لرفع مقاطع الدورة ننصح باستخدام <a href="https://1024terabox.com/s/14V-GPony-cv6UEaL6EzEIQ" target="_blank" rel="noopener" style="color: #0369a1; font-weight: 700; text-decoration: underline;">منصة 1024terabox</a> لضمان سرعة تحميل عالية ومساحة تخزين كافية.
             </div>
-            <div class="section-actions">
+            <!-- ===== COURSES VIEW SWITCH ===== -->
+            <div class="course-view-tabs" id="courseViewTabs">
+                <button type="button" class="course-view-tab active" id="courseTabMine" onclick="switchCourseView('mine')">
+                    <i class="fas fa-layer-group"></i> دوراتي
+                </button>
+                <button type="button" class="course-view-tab" id="courseTabOthers" onclick="switchCourseView('others')">
+                    <i class="fas fa-users"></i> دورات الأساتذة الآخرين
+                </button>
+            </div>
+
+            <div class="other-courses-bar" id="otherCoursesBar">
+                <select id="otherCoursesTeacherFilter" onchange="renderOtherTeacherCourses()"></select>
+                <input type="text" id="otherCoursesSearch" oninput="renderOtherTeacherCourses()" placeholder="ابحث باسم الدورة..." />
+                <span id="otherCoursesCount" style="font-size: 0.8rem; color: var(--gray-600); font-weight: 700;"></span>
+            </div>
+
+<div class="section-actions" id="coursesSectionActions">
                 <button class="btn-primary" onclick="showCreateCourseModal()"><i class="fas fa-plus"></i> دورة جديدة</button>
             </div>
             <div id="coursesList" class="courses-grid"></div>
@@ -12373,6 +12420,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     // ================================================================
 
     async function loadCourses() {
+        if (courseViewMode === 'others') return loadOtherTeacherCourses();
         // ✅ التحقق من حالة الحساب
         if (userData && userData.status !== 'approved' && !(userData.is_guest || userData.id === -1)) {
             const c = document.getElementById('coursesList');
@@ -12491,6 +12539,209 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         html += '</div>';
         container.innerHTML = html;
     }
+
+// ================================================================
+// 📚 COURSES - عرض دورات الأساتذة الآخرين
+// ================================================================
+
+const COURSE_LEVEL_LABELS = {
+    'primary_all': 'ابتدائي - جميع المستويات',
+    'primary_1': 'السنة الأولى ابتدائي',
+    'primary_2': 'السنة الثانية ابتدائي',
+    'primary_3': 'السنة الثالثة ابتدائي',
+    'primary_4': 'السنة الرابعة ابتدائي',
+    'primary_5': 'السنة الخامسة ابتدائي',
+    '5eme_pri': 'خامس ابتدائي',
+    'middle_all': 'متوسط - جميع المستويات',
+    '1ere_am': 'أولى متوسط',
+    '2eme_am': 'ثانية متوسط',
+    '3eme_am': 'ثالثة متوسط',
+    '4eme_am': 'رابعة متوسط (BEM)',
+    'bem': 'رابعة متوسط (BEM)',
+    'secondary_all': 'ثانوي - جميع المستويات',
+    '1ere_as': 'أولى ثانوي',
+    '2eme_as': 'ثانية ثانوي',
+    '3eme_as': 'ثالثة ثانوي (BAC)',
+    'bac': 'ثالثة ثانوي (BAC)',
+    'university': 'جامعة - جميع المستويات',
+    '1ere_uni': 'جامعي سنة أولى (L1)',
+    '2eme_uni': 'جامعي ثانية (L2)',
+    '3eme_uni': 'جامعي ثالثة (L3)',
+    'master': 'ماجستير',
+    'doctorat': 'دكتوراه',
+    'other': 'مستوى آخر'
+};
+
+let courseViewMode = 'mine';
+let otherCoursesCache = [];
+let otherCoursesTotal = 0;
+let otherCoursesHasMore = false;
+let otherCoursesPage = 1;
+
+function switchCourseView(mode) {
+    courseViewMode = (mode === 'others') ? 'others' : 'mine';
+    const mine = document.getElementById('courseTabMine');
+    const others = document.getElementById('courseTabOthers');
+    const bar = document.getElementById('otherCoursesBar');
+    const actions = document.getElementById('coursesSectionActions');
+    if (mine) mine.classList.toggle('active', courseViewMode === 'mine');
+    if (others) others.classList.toggle('active', courseViewMode === 'others');
+    if (bar) bar.style.display = courseViewMode === 'others' ? 'flex' : 'none';
+    if (actions) actions.style.display = courseViewMode === 'mine' ? '' : 'none';
+    const filter = document.getElementById('otherCoursesTeacherFilter');
+    if (filter && courseViewMode !== 'others') filter.innerHTML = '';
+    loadCourses();
+}
+
+function otherCourseAvatar(c) {
+    const img = c.teacher_profile_image;
+    if (img) return img;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
+        '<rect width="100" height="100" fill="#e2e8f0"/>' +
+        '<circle cx="50" cy="38" r="18" fill="#94a3b8"/>' +
+        '<path d="M12 100c0-22 17-34 38-34s38 12 38 34z" fill="#94a3b8"/></svg>'
+    );
+}
+
+function buildOtherTeacherFilter() {
+    const sel = document.getElementById('otherCoursesTeacherFilter');
+    if (!sel) return;
+    const previous = sel.value;
+    const seen = [];
+    const map = {};
+    otherCoursesCache.forEach(function (c) {
+        const id = c.teacher_id;
+        if (!id || map[id]) return;
+        map[id] = true;
+        seen.push({ id: id, name: c.teacher_name || 'أستاذ' });
+    });
+    seen.sort(function (a, b) { return a.name.localeCompare(b.name, 'ar'); });
+    let html = '<option value="">كل الأساتذة</option>';
+    seen.forEach(function (t) {
+        html += '<option value="' + t.id + '">' + escapeHtml(t.name) + '</option>';
+    });
+    sel.innerHTML = html;
+    if (previous && map[previous]) sel.value = previous;
+}
+
+function renderOtherTeacherCourses() {
+    const container = document.getElementById('coursesList');
+    if (!container) return;
+    const filterEl = document.getElementById('otherCoursesTeacherFilter');
+    const searchEl = document.getElementById('otherCoursesSearch');
+    const wantedTeacher = filterEl ? filterEl.value : '';
+    const term = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+
+    const list = otherCoursesCache.filter(function (c) {
+        if (wantedTeacher && String(c.teacher_id) !== String(wantedTeacher)) return false;
+        if (!term) return true;
+        return String(c.title || '').toLowerCase().indexOf(term) !== -1;
+    });
+
+    const countEl = document.getElementById('otherCoursesCount');
+    if (countEl) {
+        countEl.textContent = list.length + ' من ' + otherCoursesTotal + ' دورة';
+    }
+
+    if (otherCoursesCache.length === 0) {
+        container.innerHTML = '<p style="text-align:center; padding:25px; color:var(--gray-500);">لا توجد دورات منشورة بعد</p>';
+        return;
+    }
+    if (list.length === 0) {
+        container.innerHTML = '<p style="text-align:center; padding:25px; color:var(--gray-500);"><i class="fas fa-search"></i> لا توجد نتائج مطابقة</p>';
+        return;
+    }
+
+    let html = '<div class="courses-grid">';
+    list.forEach(function (c) {
+        const levelLabel = COURSE_LEVEL_LABELS[c.education_level] || c.education_level || 'غير محدد';
+        const priceText = c.is_free ? 'مجاناً' : (Number(c.price) || 0) + ' دج';
+        let badges = '';
+        if (c.teacher_is_vip) badges += '<span class="owner-mini vip">VIP</span>';
+        else if (c.teacher_is_certified) badges += '<span class="owner-mini cert">موثّق</span>';
+        const safeTitle = escapeHtml(c.title);
+        const safeUrl = escapeHtml(c.course_url || '');
+
+        html += '<div class="course-card">';
+        html += '<div class="other-course-owner">';
+        html += '<img src="' + otherCourseAvatar(c) + '" alt="" loading="lazy" onerror="this.src=\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect width=%22100%22 height=%22100%22 fill=%22%23e2e8f0%22/%3E%3C/svg%3E\'" />';
+        html += '<div style="min-width:0;">';
+        html += '<div class="owner-name">' + escapeHtml(c.teacher_name || 'أستاذ') + badges + '</div>';
+        html += '<div class="owner-spec">' + escapeHtml(c.teacher_specialization || 'تخصص غير محدد') + '</div>';
+        html += '</div></div>';
+
+        html += '<div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">';
+        html += '<div style="flex:1; min-width:0;">';
+        html += '<h3 style="font-size:1rem; margin-bottom:4px; color:var(--gray-900);">' + safeTitle + '</h3>';
+        html += '<p style="font-size:0.8rem; color:var(--gray-600); margin-bottom:6px;">' + parseContentWithLinks(c.description || '') + '</p>';
+        html += '<p style="font-size:0.8rem;"><strong>المستوى:</strong> ' + escapeHtml(levelLabel) + '</p>';
+        html += '<p style="font-size:0.8rem;"><strong>السعر:</strong> ' + priceText + '</p>';
+        html += '<p style="font-size:0.8rem; color:var(--gray-600); margin-top:4px;"><i class="fas fa-eye" style="color:var(--primary);"></i> المشاهدات: <strong>' + (Number(c.views_count || c.views || 0)) + '</strong></p>';
+        html += '<div onclick="openCourseReviewsModal(' + Number(c.id) + ', \'' + safeTitle.replace(/'/g, "\\'") + '\')" style="display:flex; align-items:center; gap:12px; font-size:0.78rem; margin-top:6px; cursor:pointer;">';
+        html += '<span style="color:#d97706; font-weight:800;"><i class="fas fa-star" style="color:#f59e0b;"></i> ' + Number(c.average_rating || 0).toFixed(1) + ' (' + Number(c.ratings_count || 0) + ')</span>';
+        html += '<span style="color:#2563eb; font-weight:800;"><i class="fas fa-shopping-cart"></i> ' + Number(c.sales_count || 0) + ' مبيعة</span>';
+        html += '</div>';
+        if (safeUrl && safeUrl !== '#' && safeUrl.indexOf('undefined') === -1) {
+            html += '<p style="font-size:0.75rem; color:var(--gray-500); word-break:break-all;"><a href="' + safeUrl + '" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none;">↗ افتح الدورة</a></p>';
+        }
+        html += '</div>';
+        html += '<div class="button-group" style="flex-direction:column; gap:6px;">';
+        html += '<button class="btn-share" onclick="shareCourse(' + Number(c.id) + ')" style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; padding:4px 8px; cursor:pointer; font-weight:700;"><i class="fas fa-share-alt"></i> مشاركة</button>';
+        html += '</div></div></div>';
+    });
+    html += '</div>';
+
+    if (otherCoursesHasMore) {
+        html += '<div style="text-align:center; margin-top:18px;"><button type="button" class="btn-primary" id="otherCoursesMoreBtn" onclick="loadOtherTeacherCourses(true)"><i class="fas fa-arrow-down"></i> تحميل المزيد</button></div>';
+    } else if (otherCoursesCache.length > 0) {
+        html += '<p style="text-align:center; margin-top:18px; font-size:0.8rem; color:var(--gray-500);">تم عرض كل الدورات</p>';
+    }
+
+    container.innerHTML = html;
+}
+
+async function loadOtherTeacherCourses(append) {
+    const container = document.getElementById('coursesList');
+    if (!container) return;
+    if (append) {
+        const btn = document.getElementById('otherCoursesMoreBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ التحميل...'; }
+    } else {
+        otherCoursesCache = [];
+        otherCoursesPage = 1;
+        otherCoursesTotal = 0;
+        otherCoursesHasMore = false;
+        const filter = document.getElementById('otherCoursesTeacherFilter');
+        const search = document.getElementById('otherCoursesSearch');
+        if (filter) filter.innerHTML = '<option value="">كل الأساتذة</option>';
+        if (search) search.value = '';
+        container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> جارٍ تحميل دورات الأساتذة...</div>';
+    }
+    try {
+        const url = '/api/course/public?page=' + otherCoursesPage + '&limit=50';
+        const res = await fetchWithAuth(url);
+        const data = await res.json();
+        const incoming = (data && Array.isArray(data.courses)) ? data.courses : [];
+        otherCoursesCache = append ? otherCoursesCache.concat(incoming) : incoming;
+        otherCoursesTotal = (data && data.total) ? Number(data.total) : otherCoursesCache.length;
+        otherCoursesHasMore = Boolean(data && data.has_more);
+        if (otherCoursesHasMore) otherCoursesPage += 1;
+        buildOtherTeacherFilter();
+        renderOtherTeacherCourses();
+    } catch (e) {
+        if (!append) {
+            const c = document.getElementById('coursesList');
+            if (c) c.innerHTML = '<p style="text-align:center; padding:25px; color:var(--danger);">تعذّر تحميل دورات الأساتذة</p>';
+        } else {
+            const btn = document.getElementById('otherCoursesMoreBtn');
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-arrow-down"></i> تحميل المزيد'; }
+        }
+    }
+}
+window.switchCourseView = switchCourseView;
+window.renderOtherTeacherCourses = renderOtherTeacherCourses;
+window.loadOtherTeacherCourses = loadOtherTeacherCourses;
 
     function showCreateCourseModal() {
         if (!checkTeacherProfileComplete()) return;
