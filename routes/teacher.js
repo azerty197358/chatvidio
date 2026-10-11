@@ -779,7 +779,7 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
             .eq('teacher_id', teacher_id);
 
         if (offersError) {
-            logger.error('خطأ في جلب دروس الأستاذ:', offersError.message);
+            logger.error('خطأ في جلب عروض الأستاذ:', offersError.message);
         }
 
         const offerIds = (offers || []).map(o => o.id);
@@ -788,8 +788,33 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
 
         let allSessions = [];
         if (offerIds.length > 0) {
-            // 2. جلب جميع الجلسات (المعلقة والمدفوعة) المرتبطة بحصص الأستاذ
-            const { data: sessions, error: sessionsError } = await supabase
+            // سجلات الحجز هي المصدر الموثوق لحالة الدفع: الاشتراك وحده لا يكفي
+            // لأن صفّه يبقى "active" حتى بعد تسليم آخر حصة، ولأن الحجز الملغى
+            // كان يختفي من التقرير كله.
+            let bookingRows = [];
+            try {
+                const { data: sessRows, error: sessErr } = await supabase
+                    .from('sessions')
+                    .select('id, offer_id, student_id, payment_status, payment_amount, teacher_earned, created_at')
+                    .in('offer_id', offerIds)
+                    .order('created_at', { ascending: false })
+                    .limit(1000);
+                if (sessErr) {
+                    logger.warn('تعذر جلب سجلات الجلسات:', sessErr.message);
+                }
+                bookingRows = sessRows || [];
+            } catch (e) {
+                logger.warn('تعذر جلب سجلات الجلسات:', e.message);
+            }
+
+            const bookingIndex = new Map();
+            bookingRows.forEach(row => {
+                const key = row.offer_id + '|' + row.student_id;
+                if (!bookingIndex.has(key)) bookingIndex.set(key, []);
+                bookingIndex.get(key).push(row);
+            });
+
+            const { data: subscriptions, error: subscriptionsError } = await supabase
                 .from('stream_subscriptions')
                 .select(`
                     id,
@@ -798,9 +823,11 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                     status,
                     total_amount_paid,
                     teacher_total_escrow,
+                    teacher_released_so_far,
                     created_at,
                     session_number,
                     plan_type,
+                    price_per_session,
                     total_sessions,
                     completed_sessions,
                     students:student_id (
@@ -810,71 +837,101 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                     )
                 `)
                 .in('offer_id', offerIds)
-                .eq('status', 'active')
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .limit(1000);
 
-            if (sessionsError) {
-                logger.error('خطأ في جلب الاشتراكات:', sessionsError.message);
-            } else if (sessions) {
-                const { data: streamSessions, error: streamSessionsError } = await supabase
-                    .from('stream_sessions')
-                    .select('id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds')
-                    .in('offer_id', offerIds)
-                    .order('session_number', { ascending: true });
-                if (streamSessionsError) logger.error('خطأ في جلب جلسات البث:', streamSessionsError.message);
-                const streamByOffer = new Map();
-                for (const session of streamSessions || []) {
-                    if (!streamByOffer.has(session.offer_id)) streamByOffer.set(session.offer_id, session);
-                }
-                allSessions = sessions.map(s => {
-                    const streamSession = streamByOffer.get(s.offer_id) || {};
-                    s = { ...s, ...streamSession };
-                    const offer = offersMap.get(s.offer_id);
-                    const offerPrice = parseFloat(offer?.price || 0);
-                    let earned = (s.teacher_earned !== undefined && s.teacher_earned !== null && Number(s.teacher_earned) > 0)
-                        ? Number(s.teacher_earned)
-                        : (Number(s.payment_amount || 0) > 0 ? Math.max(0, Number(s.payment_amount) - 50) : Math.max(0, offerPrice - 50));
-                    
-                    const sessionTotalSessions = Math.max(1, Number(s.total_sessions || offer?.total_sessions || 1));
-                    const sessionPlanType = (offer?.plan_type && offer.plan_type !== 'null')
-                        ? offer.plan_type
-                        : (s.plan_type || (sessionTotalSessions > 1 ? '1_month' : '1_day'));
-
-                    return {
-                        id: s.id,
-                        offer_id: s.offer_id,
-                        student_id: s.student_id,
-                        payment_status: s.status === 'active' ? 'pending_stream' : s.status,
-                        payment_amount: Number(s.total_amount_paid || 0),
-                        teacher_earned: Number(s.teacher_total_escrow || 0) || earned,
-                        created_at: s.created_at,
-                        session_number: s.session_number || 1,
-                        plan_type: sessionPlanType,
-                        total_sessions: sessionTotalSessions,
-                        completed_sessions: Number(s.completed_sessions) || 0,
-                        session_date: s.session_date || offer?.offer_date,
-                        duration_minutes: Number(s.duration_minutes) || 60,
-                        status: s.status || 'upcoming',
-                        title: s.title || offer?.subject_name,
-                        offers: {
-                            subject_name: offer?.subject_name || 'درس خصوصي',
-                            price: offerPrice,
-                            offer_date: offer?.offer_date,
-                            session_number: s.session_number || 1,
-                            plan_type: sessionPlanType,
-                            total_sessions: sessionTotalSessions,
-                            completed_sessions: Number(s.completed_sessions) || 0,
-                            session_date: s.session_date || offer?.offer_date,
-                            duration_minutes: Number(s.duration_minutes) || 60,
-                            status: s.status || 'upcoming'
-                        },
-                        student_name: s.students?.full_name || 'طالب منصة ZoomDz'
-                    };
-                });
+            if (subscriptionsError) {
+                logger.error('خطأ في جلب الاشتراكات:', subscriptionsError.message);
             }
+
+            const { data: streamSessions, error: streamSessionsError } = await supabase
+                .from('stream_sessions')
+                .select('id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds')
+                .in('offer_id', offerIds)
+                .order('session_number', { ascending: true });
+            if (streamSessionsError) logger.error('خطأ في جلب الحصص:', streamSessionsError.message);
+
+            const streamByOffer = new Map();
+            for (const session of streamSessions || []) {
+                if (!streamByOffer.has(session.offer_id)) streamByOffer.set(session.offer_id, session);
+            }
+
+            const usedPerPair = new Map();
+            const rows = [];
+            (subscriptions || []).forEach(sub => {
+                const offer = offersMap.get(sub.offer_id) || {};
+                const offerPrice = parseFloat(offer.price || 0);
+                const streamSession = streamByOffer.get(sub.offer_id) || {};
+
+                const pairKey = sub.offer_id + '|' + sub.student_id;
+                const pool = bookingIndex.get(pairKey) || [];
+                const used = usedPerPair.get(pairKey) || 0;
+                const booking = pool[used];
+                if (booking) usedPerPair.set(pairKey, used + 1);
+
+                const totalSessions = Math.max(1, Number(sub.total_sessions || offer.total_sessions || 1));
+                const completedSessions = Number(sub.completed_sessions || 0);
+                const escrow = Number(sub.teacher_total_escrow || 0);
+
+                const earned = escrow > 0
+                    ? escrow
+                    : (Number(sub.total_amount_paid || 0) > 0
+                        ? Math.max(0, Number(sub.total_amount_paid) - 50)
+                        : Math.max(0, offerPrice - 50));
+
+                // 1) سجل الحجز يقرر  2) وإلا فعدد الحصص المسلَّمة  3) وإلا حالة الاشتراك
+                let paymentStatus = sub.status || 'active';
+                if (booking && booking.payment_status) {
+                    paymentStatus = booking.payment_status;
+                } else if (completedSessions >= totalSessions) {
+                    paymentStatus = 'paid';
+                } else if (completedSessions > 0) {
+                    paymentStatus = 'partial';
+                } else if (paymentStatus === 'active') {
+                    paymentStatus = 'pending_stream';
+                }
+
+                const planType = (offer.plan_type && offer.plan_type !== 'null')
+                    ? offer.plan_type
+                    : (sub.plan_type || (totalSessions > 1 ? '1_month' : '1_day'));
+
+                rows.push({
+                    id: sub.id,
+                    offer_id: sub.offer_id,
+                    student_id: sub.student_id,
+                    payment_status: paymentStatus,
+                    payment_amount: Number(booking?.payment_amount || sub.total_amount_paid || 0),
+                    platform_fee: Math.max(0, Number(booking?.payment_amount || sub.total_amount_paid || 0) - earned),
+                    teacher_earned: Number(booking?.teacher_earned || 0) || earned,
+                    teacher_released_so_far: Number(sub.teacher_released_so_far || 0),
+                    created_at: sub.created_at,
+                    session_number: sub.session_number || 1,
+                    plan_type: planType,
+                    total_sessions: totalSessions,
+                    completed_sessions: completedSessions,
+                    session_date: streamSession.session_date || offer.offer_date,
+                    duration_minutes: Number(streamSession.duration_minutes) || 60,
+                    status: streamSession.status || sub.status || 'upcoming',
+                    title: streamSession.title || offer.subject_name,
+                    offers: {
+                        subject_name: offer.subject_name || 'درس خاص',
+                        price: offerPrice,
+                        offer_date: offer.offer_date,
+                        session_number: sub.session_number || 1,
+                        plan_type: planType,
+                        total_sessions: totalSessions,
+                        completed_sessions: completedSessions,
+                        session_date: streamSession.session_date || offer.offer_date,
+                        duration_minutes: Number(streamSession.duration_minutes) || 60,
+                        status: streamSession.status || sub.status || 'upcoming'
+                    },
+                    student_name: sub.students?.full_name || 'مستخدم منصة ZoomDz'
+                });
+            });
+            allSessions = rows;
         }
 
-        // 2. جلب أرباح الباقات التعليمية الخاصة بالأستاذ
+// 2. جلب أرباح الباقات التعليمية الخاصة بالأستاذ
         let packageEarnings = [];
         try {
             const { data: teacherPackages } = await supabase
@@ -1048,6 +1105,65 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
         const calculatedTotalEarned = lessonsEarnedTotal + packagesEarnedTotal + coursesEarnedTotal;
         const finalTotalEarned = Math.max(parseFloat(teacher.total_earned || 0), calculatedTotalEarned);
 
+        // ================================================================
+        // هوية الدافع في كل سطر: قد يكون طالباً أو أستاذاً آخر.
+        // نجمع كل المعرّفات دفعة واحدة ثم نحدّد النوع لكل صف.
+        // ================================================================
+        const payerIds = [...new Set(
+            allEarningsCombined
+                .map(r => r.student_id)
+                .filter(id => id !== undefined && id !== null && Number(id) > 0)
+        )];
+
+        if (payerIds.length > 0) {
+            const nameOf = new Map();
+            const typeOf = new Map();
+            try {
+                const [stuRes, teaRes] = await Promise.all([
+                    supabase.from('students').select('id, full_name').in('id', payerIds),
+                    supabase.from('teachers').select('id, full_name').in('id', payerIds)
+                ]);
+                (stuRes.data || []).forEach(s => {
+                    nameOf.set(String(s.id), s.full_name);
+                    typeOf.set(String(s.id), 'student');
+                });
+                (teaRes.data || []).forEach(t => {
+                    const key = String(t.id);
+                    // الطالب له الأولوية إن كان المعرّف مشتركاً بين الجدولين
+                    if (!nameOf.has(key)) {
+                        nameOf.set(key, t.full_name);
+                        typeOf.set(key, 'teacher');
+                    }
+                });
+            } catch (payerErr) {
+                logger.warn('تعذر تحديد هوية الدافعين:', payerErr.message);
+            }
+
+            allEarningsCombined.forEach(row => {
+                const key = String(row.student_id);
+                const resolvedName = nameOf.get(key);
+                const resolvedType = typeOf.get(key);
+                if (resolvedName) {
+                    row.payer_name = resolvedName;
+                    row.payer_type = resolvedType || 'student';
+                    row.student_name = resolvedName;
+                } else {
+                    row.payer_name = row.student_name || 'مستخدم منصة ZoomDz';
+                    row.payer_type = row.payer_type || 'student';
+                }
+            });
+        } else {
+            allEarningsCombined.forEach(row => {
+                row.payer_name = row.student_name || 'مستخدم منصة ZoomDz';
+                row.payer_type = row.payer_type || 'student';
+            });
+        }
+
+        // إعادة الترتيب النهائية بعد اكتمال كل المصادر
+        allEarningsCombined.sort((a, b) => {
+            return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        });
+
         res.json({
             success: true,
             balance: parseFloat(teacher.balance || 0),
@@ -1061,7 +1177,9 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                 lessons: formattedSessions.length,
                 packages: packageEarnings.length,
                 courses: courseEarnings.length,
-                total: allEarningsCombined.length
+                total: allEarningsCombined.length,
+                student_payers: allEarningsCombined.filter(r => r.payer_type === "student").length,
+                teacher_payers: allEarningsCombined.filter(r => r.payer_type === "teacher").length
             },
             sessions: allEarningsCombined,
             earnings: allEarningsCombined

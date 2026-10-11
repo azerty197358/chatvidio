@@ -586,6 +586,107 @@ router.get('/student', authenticate, authorize(['student']), async (req, res) =>
 });
 
 // جلب رسائل المجموعة مع بيانات المرسل والتفاعلات من قاعدة البيانات مباشرة
+// ============================================================================
+//  حالة الكتابة داخل المجموعات
+//  نفس فكرة الرسائل المباشرة: من يكتب تظهر نقاط عند الطرف الآخر.
+//  التخزين في الذاكرة لأن الإشارة لحظية ولا تحتاج أن تبقى بعد Five ثوانٍ،
+//  فلا يحتاج المستخدم إلى تشغيل أي SQL.
+// ============================================================================
+const GROUP_TYPING_TTL_MS = 6000;
+
+// groupId -> Map(userKey -> { userId, userType, userName, at })
+const groupTypingMemory = new Map();
+
+function groupTypingPrune(now) {
+    for (const [groupId, users] of groupTypingMemory) {
+        for (const [key, entry] of users) {
+            if (now - entry.at > GROUP_TYPING_TTL_MS) users.delete(key);
+        }
+        if (users.size === 0) groupTypingMemory.delete(groupId);
+    }
+}
+
+// POST /:id/typing  -Mark typing state
+router.post('/:id/typing', authenticate, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            return res.status(400).json({ success: false, error: 'رقم المجموعة غير صالح' });
+        }
+
+        const userId = req.user.userId;
+        const userType = req.user.role;
+        const isTyping = req.body && req.body.is_typing === true;
+
+        // The group must exist
+        const { data: group } = await supabase
+            .from('groups')
+            .select('id')
+            .eq('id', groupId)
+            .maybeSingle();
+
+        if (!group) {
+            return res.status(404).json({ success: false, error: 'المجموعة غير موجودة' });
+        }
+
+        const key = userType + ':' + userId;
+        const now = Date.now();
+        groupTypingPrune(now);
+
+        if (!groupTypingMemory.has(groupId)) groupTypingMemory.set(groupId, new Map());
+        const users = groupTypingMemory.get(groupId);
+
+        if (isTyping) {
+            users.set(key, {
+                userId: userId,
+                userType: userType,
+                userName: (req.body && req.body.user_name) ? String(req.body.user_name).slice(0, 80) : '',
+                at: now
+            });
+        } else {
+            users.delete(key);
+        }
+
+        if (users.size === 0) groupTypingMemory.delete(groupId);
+
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('خطأ في تسجيل حالة الكتابة بالمجموعة:', error.message);
+        res.status(500).json({ success: false, error: 'تعذر تسجيل حالة الكتابة' });
+    }
+});
+
+// GET /:id/typing  -من يكتب الآن داخل المجموعة (عدا نفسي)
+router.get('/:id/typing', authenticate, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            return res.status(400).json({ success: false, error: 'رقم المجموعة غير صالح' });
+        }
+
+        const meId = req.user.userId;
+        const meType = req.user.role;
+        const now = Date.now();
+        groupTypingPrune(now);
+
+        const users = groupTypingMemory.get(groupId) || new Map();
+        const typing = [];
+        for (const entry of users.values()) {
+            if (String(entry.userId) === String(meId) && entry.userType === meType) continue;
+            typing.push({
+                user_id: entry.userId,
+                user_type: entry.userType,
+                user_name: entry.userName
+            });
+        }
+
+        res.json({ success: true, typing: typing });
+    } catch (error) {
+        logger.error('خطأ في جلب حالة الكتابة بالمجموعة:', error.message);
+        res.status(500).json({ success: true, typing: [] });
+    }
+});
+
 router.get('/:id/messages', optionalAuth, async (req, res) => {
     const groupId = req.params.id;
     try {

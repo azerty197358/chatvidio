@@ -2,7 +2,268 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>
+// ============================================================================
+//  🔔 أصوات الإشعارات والرسائل
+//  أصوات مولَّدة عبر Web Audio API - بلا ملفات صوتية، فلا اعتماد على CDN
+//  وتعمل حتى بدون إنترنت. تُفتح مرة واحدة عند أول تفاعل من المستخدم لأن
+//  المتصفحات تمنع الصوت قبل ذلك.
+// ============================================================================
+(function () {
+    if (window.__zoomySoundInstalled) return;
+    window.__zoomySoundInstalled = true;
+
+    let ctx = null;
+    let unlocked = false;
+    let muted = false;
+    const lastPlayed = {};
+
+    function audio() {
+        if (muted) return null;
+        try {
+            if (!ctx) {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return null;
+                ctx = new Ctx();
+            }
+            if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+            return ctx;
+        } catch (e) { return null; }
+    }
+
+    function tone(ac, freq, startAt, duration, gainPeak) {
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startAt);
+        g.gain.setValueAtTime(0.0001, startAt);
+        g.gain.exponentialRampToValueAtTime(gainPeak, startAt + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+        osc.connect(g);
+        g.connect(ac.destination);
+        osc.start(startAt);
+        osc.stop(startAt + duration + 0.02);
+    }
+
+    // نغمة قصيرة: إشعار
+    function playChime() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        tone(ac, 880, t, 0.16, 0.16);
+        tone(ac, 1320, t + 0.10, 0.22, 0.13);
+    }
+
+    // نغمة واحدة هابطة: رسالة واردة
+    function playPop() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(760, t);
+        osc.frequency.exponentialRampToValueAtTime(430, t + 0.16);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.15, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+        osc.connect(g);
+        g.connect(ac.destination);
+        osc.start(t);
+        osc.stop(t + 0.21);
+    }
+
+    // نغمة ثلاثية: تنبيه مهم (طلب، رسالة في مجموعة)
+    function playAlert() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        tone(ac, 660, t, 0.13, 0.15);
+        tone(ac, 880, t + 0.09, 0.13, 0.15);
+        tone(ac, 1170, t + 0.18, 0.24, 0.13);
+    }
+
+    // منع تكرار الصوت نفس الرسالة في كل دورة استطلاع
+    function throttled(key, ms) {
+        const now = Date.now();
+        if (lastPlayed[key] && (now - lastPlayed[key]) < (ms || 2500)) return false;
+        lastPlayed[key] = now;
+        return true;
+    }
+
+    window.zoomySound = {
+        unlock: function () {
+            unlocked = true;
+            const ac = audio();
+            if (ac && ac.state === 'suspended') ac.resume().catch(function () {});
+        },
+        isUnlocked: function () { return unlocked; },
+        notification: function () { if (unlocked && throttled('notif', 4000)) playChime(); },
+        message: function (key) { if (unlocked && throttled('msg' + (key || ''), 1800)) playPop(); },
+        alert: function (key) { if (unlocked && throttled('alert' + (key || ''), 3000)) playAlert(); },
+        setMuted: function (v) { muted = !!v; },
+        isMuted: function () { return muted; }
+    };
+
+    // أول نقرة / لوحة مفاتيح تفتح الصوت
+    const unlockOnce = function () { window.zoomySound.unlock(); };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+        window.addEventListener(ev, unlockOnce, { once: true, passive: true });
+    });
+
+    // ---- 1) الإشعارات: نقارن القائمة الجديدة بالسابقة ----
+    window.zoomySoundWatchNotifications = function (list, myId) {
+        const arr = Array.isArray(list) ? list : [];
+        const prev = window.__zoomySeenNotifications;
+        if (prev && prev.size > 0) {
+            let fresh = 0;
+            for (let i = 0; i < arr.length; i++) {
+                const n = arr[i];
+                if (!n || n.is_read) continue;
+                if (!prev.has(String(n.id))) fresh++;
+            }
+            if (fresh > 0) window.zoomySound.notification();
+        }
+        window.__zoomySeenNotifications = new Set(arr.map(function (n) { return String(n && n.id); }));
+    };
+
+    // ---- 2) الرسائل: نقارن أعلى معرّف مستقبَل بالسابق ----
+    window.zoomySoundWatchMessages = function (messages, myIds) {
+        const arr = Array.isArray(messages) ? messages : [];
+        if (!arr.length) return false;
+        const prev = window.__zoomySeenMessages;
+        const mine = {};
+        (myIds || []).forEach(function (id) { mine[String(id)] = true; });
+        let incoming = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const m = arr[i];
+            if (!m) continue;
+            const senderId = m.sender_id !== undefined ? m.sender_id : m.senderId;
+            if (senderId !== undefined && mine[String(senderId)]) continue;
+            if (prev && prev.has(String(m.id))) continue;
+            if (prev) incoming++;
+        }
+        const ids = arr.map(function (m) { return String(m && m.id); });
+        window.__zoomySeenMessages = new Set(ids);
+        if (incoming > 0) {
+            window.zoomySound.message();
+            return true;
+        }
+        return false;
+    };
+})();
+</script>
+
     <script>
+// ============================================================================
+//  حالة الكتابة في المحادثة الجماعية - "يكتب الآن"
+//  نفس سلوك الرسائل المباشرة: إشارة عند الكتابة، توقّف عند الإرسال أو
+//  السكون، واستعلام قصير يعرض نقاط الطرف الآخر.
+// ============================================================================
+let groupChatTypingFlag = false;
+let groupChatTypingLastSent = 0;
+let groupChatTypingIdleTimer = null;
+let groupChatTypingPoll = null;
+let groupChatTypingGroup = null;
+let groupChatTypingMyName = '';
+
+function groupChatTypingSend(isTyping) {
+    const groupId = activeChatGroupId;
+    if (!groupId) return;
+    try {
+        if (typeof fetchWithAuth === 'function') {
+            fetchWithAuth('/api/groups/' + groupId + '/typing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    is_typing: !!isTyping,
+                    user_name: groupChatTypingMyName || ''
+                })
+            }).catch(function () {});
+        } else {
+            fetch('/api/groups/' + groupId + '/typing', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                },
+                body: JSON.stringify({ is_typing: !!isTyping, user_name: groupChatTypingMyName || '' })
+            }).catch(function () {});
+        }
+    } catch (e) {}
+    groupChatTypingFlag = !!isTyping;
+    groupChatTypingLastSent = Date.now();
+}
+
+function groupChatTypingStop() {
+    if (groupChatTypingIdleTimer) { clearTimeout(groupChatTypingIdleTimer); groupChatTypingIdleTimer = null; }
+    if (groupChatTypingFlag) groupChatTypingSend(false);
+}
+
+function groupChatTypingOnInput() {
+    if (!activeChatGroupId) return;
+    const ta = document.getElementById('chatInputMessage');
+    const hasText = ta && String(ta.value || '').trim().length > 0;
+    if (!hasText) { groupChatTypingStop(); return; }
+
+    const now = Date.now();
+    // إشارة كل ثانيتين كحد أقصى حتى لا نغرق الخادم
+    if (!groupChatTypingFlag || (now - groupChatTypingLastSent) > 2000) {
+        groupChatTypingSend(true);
+    }
+    if (groupChatTypingIdleTimer) clearTimeout(groupChatTypingIdleTimer);
+    groupChatTypingIdleTimer = setTimeout(groupChatTypingStop, 3000);
+}
+
+// ابدأ/أوقف الاستعلام عند فتح المجموعة أو تغييرها
+function groupChatTypingWatch(groupId) {
+    groupChatTypingStop();
+    if (groupChatTypingPoll) { clearInterval(groupChatTypingPoll); groupChatTypingPoll = null; }
+    groupChatTypingGroup = groupId || null;
+    groupChatTypingRender([]);
+    if (!groupId) return;
+    groupChatTypingPoll = setInterval(groupChatTypingAsk, 2500);
+    groupChatTypingAsk();
+}
+
+function groupChatTypingAsk() {
+    const groupId = activeChatGroupId || groupChatTypingGroup;
+    if (!groupId) return;
+    const ask = function (url, options) {
+        if (typeof fetchWithAuth === 'function') return fetchWithAuth(url, options);
+        return fetch(url, options);
+    };
+    ask('/api/groups/' + groupId + '/typing', { headers: { 'Content-Type': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { groupChatTypingRender((d && d.typing) || []); })
+        .catch(function () {});
+}
+
+function groupChatTypingRender(list) {
+    const box = document.getElementById('groupChatTypingIndicator');
+    if (!box) return;
+    const arr = Array.isArray(list) ? list : [];
+    if (arr.length === 0) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+    let dots = '';
+    for (let i = 0; i < 3; i++) {
+        dots += '<span class="chat-typing-dot" style="width:6px;height:6px;border-radius:50%;background:#94a3b8;display:inline-block;"></span>';
+    }
+    const names = arr.map(function (u) {
+        return escapeHtml((u && u.user_name) ? u.user_name : (u && u.user_type === 'teacher' ? 'أستاذ' : 'طالب'));
+    });
+    const label = names.length === 1 ? names[0] : (names.slice(0, -1).join('، ') + ' و' + names[names.length - 1]);
+
+    box.style.display = 'flex';
+    box.innerHTML = '<span style="display:inline-flex;align-items:center;gap:5px;">' +
+        '<span style="display:inline-flex;gap:3px;align-items:center;">' + dots + '</span>' +
+        label + ' يكتب الآن…</span>';
+}
+
+window.addEventListener('beforeunload', function () { groupChatTypingStop(); });
+window.groupChatTypingWatch = groupChatTypingWatch;
+window.groupChatTypingStop = groupChatTypingStop;
+
 // ============================================================================
 // Front end for the typing indicator. Identical on both dashboards so the two
 // sides behave the same.
@@ -163,6 +424,7 @@ async function pollDirectChatQuietly() {
         const topId = msgs[msgs.length - 1].id;
         if (String(topId) === String(directChatLastTopId)) return;
         directChatLastTopId = topId;
+    if (typeof window.zoomySoundWatchMessages === 'function') window.zoomySoundWatchMessages(msgs, [myId]);
         await loadConversationMessages(peer.id, typeParam, true);
     } catch (e) { /* الشبكة قد تتذبذب - نتجاهل بصمت */ }
 }
@@ -5069,7 +5331,8 @@ function appendOptimisticMessage(text, reply) {
 
                 <!-- Chat Input Bar -->
                 <div id="teacherChatInputBar" style="background: #ffffff; padding: 14px 20px; display: flex; align-items: center; gap: 12px; border-top: 1px solid #e2e8f0; box-shadow: 0 -4px 12px rgba(0,0,0,0.02);">
-                    <input type="file" id="teacherChatPdfFileInput" accept="application/pdf,.pdf,image/*,.jpg,.jpeg,.png,.webp" style="display: none;" onchange="handleTeacherGroupPdfSelect(event); return false;" onkeydown="event.stopPropagation();"><input type="file" id="teacherChatCameraInput" accept="image/*" capture="environment" style="display: none;" onchange="handleTeacherGroupCameraSelect(event)"><div style="display: flex; align-items: center; gap: 8px; flex-grow: 1; position: relative;"><button type="button" onclick="document.getElementById('teacherChatPdfFileInput').click()" title="إرفاق ملف" style="background: #f8fafc; color: #475569; border: 1.5px solid #e2e8f0; border-radius: 50%; width: 44px; height: 44px; min-width: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.15rem; transition: all 0.2s ease;"><i class="fas fa-plus"></i></button><button type="button" onclick="document.getElementById('teacherChatCameraInput').click()" title="التقاط صورة" style="background: #f8fafc; color: #475569; border: 1.5px solid #e2e8f0; border-radius: 50%; width: 44px; height: 44px; min-width: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.15rem; transition: all 0.2s ease;"><i class="fas fa-camera"></i></button><button type="button" class="btn-record" id="teacherGroupRecordBtn" onclick="toggleGroupRecording('teacher')" title="تسجيل رسالة صوتية"><i class="fas fa-microphone"></i></button><textarea id="chatInputMessage" placeholder="اكتب رسالة، توجيهاً، أو واجباً لطلابك في المجموعة... (Enter للإرسال، Shift+Enter لسطر جديد)" rows="1" onkeydown="handleChatInputKey(event)" oninput="autoResizeChatInput(this)" style="width: 100%; padding: 12px 18px; border: 1.5px solid #cbd5e1; border-radius: 24px; font-size: 0.95rem; resize: none; outline: none; line-height: 1.45; font-family: inherit; background: #f8fafc; max-height: 110px; color: #0f172a; transition: all 0.2s ease;"></textarea>
+                    <div id="groupChatTypingIndicator" style="display:none; align-items:center; gap:6px; padding:4px 10px; font-size:0.76rem; font-weight:800; color:#64748b; width:100%;"></div>
+                    <input type="file" id="teacherChatPdfFileInput" accept="application/pdf,.pdf,image/*,.jpg,.jpeg,.png,.webp" style="display: none;" onchange="handleTeacherGroupPdfSelect(event); return false;" onkeydown="event.stopPropagation();"><input type="file" id="teacherChatCameraInput" accept="image/*" capture="environment" style="display: none;" onchange="handleTeacherGroupCameraSelect(event)"><div style="display: flex; align-items: center; gap: 8px; flex-grow: 1; position: relative;"><button type="button" onclick="document.getElementById('teacherChatPdfFileInput').click()" title="إرفاق ملف" style="background: #f8fafc; color: #475569; border: 1.5px solid #e2e8f0; border-radius: 50%; width: 44px; height: 44px; min-width: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.15rem; transition: all 0.2s ease;"><i class="fas fa-plus"></i></button><button type="button" onclick="document.getElementById('teacherChatCameraInput').click()" title="التقاط صورة" style="background: #f8fafc; color: #475569; border: 1.5px solid #e2e8f0; border-radius: 50%; width: 44px; height: 44px; min-width: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.15rem; transition: all 0.2s ease;"><i class="fas fa-camera"></i></button><button type="button" class="btn-record" id="teacherGroupRecordBtn" onclick="toggleGroupRecording('teacher')" title="تسجيل رسالة صوتية"><i class="fas fa-microphone"></i></button><textarea id="chatInputMessage" placeholder="اكتب رسالة، توجيهاً، أو واجباً لطلابك في المجموعة... (Enter للإرسال، Shift+Enter لسطر جديد)" rows="1" onkeydown="handleChatInputKey(event)" oninput="groupChatTypingOnInput();autoResizeChatInput(this)" style="width: 100%; padding: 12px 18px; border: 1.5px solid #cbd5e1; border-radius: 24px; font-size: 0.95rem; resize: none; outline: none; line-height: 1.45; font-family: inherit; background: #f8fafc; max-height: 110px; color: #0f172a; transition: all 0.2s ease;"></textarea>
                     </div>
                     <button id="sendChatMsgBtn" onclick="sendGroupChatMessage()" style="background: var(--primary, #3b82f6); color: white; border: none; border-radius: 50%; width: 46px; height: 46px; min-width: 46px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.15rem; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35); transition: all 0.2s ease;">
                         <i class="fas fa-paper-plane"></i>
@@ -7345,6 +7608,7 @@ function appendOptimisticMessage(text, reply) {
             const res = await fetchWithAuth(`/api/notifications/${teacherId}/teacher`);
             const data = await res.json();
             notifications = data || [];
+    if (typeof window.zoomySoundWatchNotifications === 'function') window.zoomySoundWatchNotifications(notifications, teacherId);
             unreadCount = notifications.filter(n => !n.is_read).length;
             updateNotifBadge();
             renderNotifications();
@@ -9168,53 +9432,147 @@ function updateUI() {
     window.teacherAllEarnings = [];
     window.currentEarningsFilter = 'all';
 
+    // ================================================================
+    // 💰 المدفوعات المستحقة والأرباح - 20 صفاً ثم تحميل المزيد بالتمرير
+    // ================================================================
+    window.teacherEarningsShown = 20;
+    const TEACHER_EARNINGS_PAGE = 20;
+
+    function teacherEarningsStatusCell(row) {
+        const status = row.payment_status || row.status || '';
+        if (status === 'paid' || status === 'completed' || status === 'completed_stream')
+            return '<span style="background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;"><i class="fas fa-check-circle"></i> مدفوعة</span>';
+        if (status === 'partial')
+            return '<span style="background: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;"><i class="fas fa-circle-half-stroke"></i> جزئية</span>';
+        if (status === 'pending_stream' || status === 'pending' || status === 'active')
+            return '<span style="background: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;"><i class="fas fa-clock"></i> معلّقة</span>';
+        if (status === 'cancelled' || status === 'refunded')
+            return '<span style="background: #fee2e2; color: #b91c1c; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;"><i class="fas fa-ban"></i> ملغاة</span>';
+        return '<span style="background: #e2e8f0; color: #475569; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">' + escapeHtml(status || 'غير محددة') + '</span>';
+    }
+
+    // الطالب والأستاذ معاً في نفس العمود، مع شارة تميّز النوع
+    function teacherEarningsPayerCell(row) {
+        const name = row.payer_name || row.student_name || 'مستخدم منصة ZoomDz';
+        const isTeacher = row.payer_type === 'teacher';
+        const badge = isTeacher
+            ? '<span style="background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; padding: 1px 7px; border-radius: 8px; font-size: 0.68rem; font-weight: 800; margin-right: 5px;"><i class="fas fa-chalkboard-user"></i> أستاذ</span>'
+            : '<span style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 1px 7px; border-radius: 8px; font-size: 0.68rem; font-weight: 800; margin-right: 5px;"><i class="fas fa-user-graduate"></i> طالب</span>';
+        return '<span style="display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px;">' + badge + escapeHtml(name) + '</span>';
+    }
+
+    function teacherEarningsRowHtml(s) {
+        const itemType = s.type || 'lesson';
+        let typeBadge = '';
+        if (itemType === 'package') {
+            typeBadge = '<span style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-block;"><i class="fas fa-cubes"></i> باقة</span>';
+        } else if (itemType === 'course') {
+            typeBadge = '<span style="background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-block;"><i class="fas fa-graduation-cap"></i> دورة</span>';
+        } else {
+            typeBadge = '<span style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-block;"><i class="fas fa-video"></i> درس</span>';
+        }
+
+        const teacherEarned = (s.teacher_earned !== undefined && s.teacher_earned !== null) ? s.teacher_earned : (s.payment_amount - (s.platform_fee || 0));
+        const titleText = s.title || (s.offers && s.offers.subject_name) || s.subject_name || 'عنصر غير محدد';
+        const dateFormatted = s.created_at
+            ? new Date(s.created_at).toLocaleDateString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : 'غير محددة';
+
+        return '<tr>' +
+            '<td>' + typeBadge + '</td>' +
+            '<td><strong style="color: #1e293b;">' + escapeHtml(titleText) + '</strong></td>' +
+            '<td>' + teacherEarningsPayerCell(s) + '</td>' +
+            '<td><span style="color: #059669; font-weight: 800; font-size: 1rem;">+' + Number(teacherEarned).toLocaleString() + ' دج</span>' +
+                (s.platform_fee ? '<br><small style="font-size:0.7rem; color: #64748b;">(رسوم المنصة: ' + Number(s.platform_fee).toLocaleString() + ' دج)</small>' : '') +
+            '</td>' +
+            '<td style="font-size: 0.8rem; color: var(--gray-600);">' + dateFormatted + '</td>' +
+            '<td>' + teacherEarningsStatusCell(s) + '</td>' +
+        '</tr>';
+    }
+
     function renderTeacherEarningsRows(filter = 'all') {
         const items = window.teacherAllEarnings || [];
         const filtered = filter === 'all' ? items : items.filter(it => it.type === filter);
         const tbody = document.getElementById('teacherEarningsTableBody');
         const countSpan = document.getElementById('teacherEarningsFilterCount');
-        if (countSpan) countSpan.textContent = `${filtered.length} عملية`;
         if (!tbody) return;
 
+        const limit = Math.min(window.teacherEarningsShown || TEACHER_EARNINGS_PAGE, filtered.length);
+        if (countSpan) {
+            countSpan.textContent = limit < filtered.length
+                ? 'عرض ' + limit + ' من ' + filtered.length + ' عملية'
+                : filtered.length + ' عملية';
+        }
+
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 30px; color:var(--gray-400);"><i class="fas fa-receipt" style="font-size: 2rem; margin-bottom: 8px; opacity: 0.4; display: block;"></i> لا توجد أرباح مسجلة في هذا التصنيف حتى الآن</td></tr>`;
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 30px; color:var(--gray-400);"><i class="fas fa-receipt" style="font-size: 2rem; margin-bottom: 8px; opacity: 0.4;"></i><br>لا توجد عمليات بعد</td></tr>';
             return;
         }
 
-        tbody.innerHTML = filtered.map(s => {
-            const isPending = s.payment_status === 'pending' || s.payment_status === 'pending_stream';
-            const teacherEarned = (s.teacher_earned !== undefined && s.teacher_earned !== null) ? s.teacher_earned : (s.payment_amount - (s.platform_fee || 0));
-            const itemType = s.type || 'lesson';
-            
-            let typeBadge = '';
-            if (itemType === 'package') {
-                typeBadge = `<span style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-flex; align-items: center; gap: 5px;"><i class="fas fa-cubes"></i> باقة تعليمية</span>`;
-            } else if (itemType === 'course') {
-                typeBadge = `<span style="background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-flex; align-items: center; gap: 5px;"><i class="fas fa-graduation-cap"></i> دورة مسجلة</span>`;
-            } else {
-                typeBadge = `<span style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; display: inline-flex; align-items: center; gap: 5px;"><i class="fas fa-video"></i> درس / بث مباشر</span>`;
-            }
+        tbody.innerHTML = filtered.slice(0, limit).map(teacherEarningsRowHtml).join('');
 
-            const titleText = s.title || s.offers?.subject_name || s.subject_name || 'درس خصوصي';
-            const studentName = s.student_name || 'طالب مسجل';
-            const dateFormatted = s.created_at ? new Date(s.created_at).toLocaleDateString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'غير محدد';
-
-            return `<tr>
-                <td>${typeBadge}</td>
-                <td><strong style="color: #1e293b;">${escapeHtml(titleText)}</strong></td>
-                <td><i class="fas fa-user-graduate" style="color: var(--gray-400); margin-left: 4px;"></i> ${escapeHtml(studentName)}</td>
-                <td>
-                    <span style="color: #059669; font-weight: 800; font-size: 1rem;">+${Number(teacherEarned).toLocaleString()} دج</span>
-                    ${s.platform_fee ? `<br><small style="font-size:0.7rem; color: #64748b;">(اقتطاع منصة: ${Number(s.platform_fee).toLocaleString()} دج)</small>` : ''}
-                </td>
-                <td style="font-size: 0.8rem; color: var(--gray-600);">${dateFormatted}</td>
-                <td>${isPending ? '<span style="background: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="fas fa-clock"></i> معلق (في انتظار البث)</span>' : '<span style="background: #dcfce7; color: #166534; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="fas fa-check-circle"></i> مدفوع في الرصيد</span>'}</td>
-            </tr>`;
-        }).join('');
+        // سطر-indicator يقود إلى تحميل المزيد
+        const sentinel = document.createElement('tr');
+        sentinel.id = 'teacherEarningsMoreRow';
+        sentinel.innerHTML = '<td colspan="6" style="text-align:center; padding: 14px; color: var(--gray-500); font-size: 0.8rem; font-weight: 700;">' +
+            (limit < filtered.length
+                ? '<i class="fas fa-arrow-down"></i> ' + (filtered.length - limit) + ' عملية أخرى - انزل للمزيد'
+                : '<i class="fas fa-check-double"></i> تم عرض كل العمليات') +
+            '</td>';
+        tbody.appendChild(sentinel);
+        armTeacherEarningsSentinel(filtered, limit);
     }
+
+    // تمرير لا نهائي: يظهر المزيد عند الاقتراب من أسفل الجدول
+    function armTeacherEarningsSentinel(filtered, shown) {
+        const row = document.getElementById('teacherEarningsMoreRow');
+        if (!row) return;
+        if (window.teacherEarningsObserver) {
+            window.teacherEarningsObserver.disconnect();
+            window.teacherEarningsObserver = null;
+        }
+        if (shown >= filtered.length) return;
+
+        if (typeof IntersectionObserver === 'undefined') {
+            // احتياطي: زر يدوي
+            row.innerHTML = '<td colspan="6" style="text-align:center; padding: 12px;"><button type="button" onclick="showMoreTeacherEarnings()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:7px 18px;font-weight:800;cursor:pointer;"><i class="fas fa-arrow-down"></i> عرض المزيد</button></td>';
+            return;
+        }
+
+        window.teacherEarningsObserver = new IntersectionObserver(function (entries) {
+            if (!entries[0].isIntersecting) return;
+            showMoreTeacherEarnings();
+        }, { rootMargin: '160px' });
+        window.teacherEarningsObserver.observe(row);
+    }
+
+    function showMoreTeacherEarnings() {
+        const items = window.teacherAllEarnings || [];
+        const filter = window.currentEarningsFilter || 'all';
+        const filtered = filter === 'all' ? items : items.filter(it => it.type === filter);
+        const next = (window.teacherEarningsShown || TEACHER_EARNINGS_PAGE) + TEACHER_EARNINGS_PAGE;
+        if (next >= filtered.length + TEACHER_EARNINGS_PAGE) {
+            window.teacherEarningsShown = filtered.length;
+        } else {
+            window.teacherEarningsShown = next;
+        }
+        renderTeacherEarningsRows(filter);
+    }
+    window.showMoreTeacherEarnings = showMoreTeacherEarnings;
+
+    // شبكة أمان: إن لم يعمل المراقب نُحمّل عند nearingأسفل الصفحة
+    window.addEventListener('scroll', function () {
+        const items = window.teacherAllEarnings || [];
+        const filter = window.currentEarningsFilter || 'all';
+        const filtered = filter === 'all' ? items : items.filter(it => it.type === filter);
+        if ((window.teacherEarningsShown || 0) >= filtered.length) return;
+        if ((window.innerHeight + window.scrollY) < (document.body.scrollHeight - 320)) return;
+        showMoreTeacherEarnings();
+    }, { passive: true });
 
     window.filterTeacherEarningsTab = function(type, btn) {
         window.currentEarningsFilter = type;
+        window.teacherEarningsShown = 20;
         const allBtns = document.querySelectorAll('.earnings-filter-btn');
         allBtns.forEach(b => {
             b.style.backgroundColor = '#f1f5f9';
@@ -9246,6 +9604,7 @@ function updateUI() {
             document.getElementById('withdrawBalance').textContent = balance;
 
             window.teacherAllEarnings = data.sessions || data.earnings || [];
+            window.teacherEarningsShown = 20;
 
             let earningsHtml = `
                 <div style="background: var(--gray-50); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px; border: 1px solid var(--gray-200);">
@@ -15911,7 +16270,10 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         let activeChatGroupId = null;
         Object.defineProperty(window, 'activeChatGroupId', {
             get() { return activeChatGroupId; },
-            set(val) { activeChatGroupId = val; },
+            set(val) {
+                activeChatGroupId = val;
+                if (typeof groupChatTypingWatch === 'function') groupChatTypingWatch(val || null);
+            },
             configurable: true
         });
         let activeChatGroupName = '';
@@ -16560,6 +16922,8 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         let currentManagingGroupIsOwner = false;
 
         async function enterGroupChat(groupId, groupName, groupImageUrl, isOwner) {
+            groupChatTypingMyName = (userData && (userData.full_name || userData.name)) || '';
+            if (typeof groupChatTypingWatch === 'function') groupChatTypingWatch(groupId);
             activeChatGroupId = groupId;
             activeChatGroupName = groupName || '';
             activeChatGroupImageUrl = groupImageUrl || '';
@@ -16663,6 +17027,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         }
 
         function exitGroupChat() {
+            if (typeof groupChatTypingWatch === 'function') groupChatTypingWatch(null);
             activeChatGroupId = null;
             activeChatGroupIsOwner = false;
             window.teacherChatMessagesLimit = 20;
@@ -16799,6 +17164,17 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 const fetchLimit = isOlderLoad ? ((window.teacherChatMessagesLimit || 20) + 20) : (window.teacherChatMessagesLimit || 20);
                 const response = await fetchWithAuth(`/api/groups/${activeChatGroupId}/messages?limit=${fetchLimit}`);
                 const messages = await response.json();
+                if (typeof window.zoomySoundWatchMessages === 'function') {
+                    const soundMeId = (function () {
+                        try {
+                            const tk = localStorage.getItem('token');
+                            if (!tk) return null;
+                            const dec = JSON.parse(atob(tk.split('.')[1]));
+                            return dec.userId || dec.id || null;
+                        } catch (e) { return null; }
+                    })();
+                    window.zoomySoundWatchMessages(messages, [soundMeId]);
+                }
                 
                 if (isOlderLoad) {
                     window.teacherChatMessagesLimit = fetchLimit;
@@ -17162,6 +17538,7 @@ ${activeChatGroupIsOwner ? `
 
         async function sendGroupChatMessage() {
             if (!activeChatGroupId) return;
+            groupChatTypingStop();
             const input = document.getElementById('chatInputMessage');
             const sendBtn = document.getElementById('sendChatMsgBtn');
             const message = (input.value || '').trim();
@@ -18068,5 +18445,100 @@ window.addEventListener("offline", function() {
 \n
     <!-- ================================================================ -->
     <!-- ================================================================ -->
-    </body>
+    <script>
+// ============================================================================
+//  ترتيب التبويبات حسب الأولوية
+//  نرتّب عناصر DOM داخل كل حاوية تنقّل (#navTabs، القوائم الجانبية، شريط
+//  الجوال السفلي) بدل تعديل CSS، فيصل الترتيب لكل الشاشات معاً.
+// ============================================================================
+(function () {
+    if (window.__zoomyNavOrderDone) return;
+    window.__zoomyNavOrderDone = true;
+
+    // من الأعلى الأولوية إلى الأقل
+    const TEACHER_ORDER = [
+        'offers',            // ZoomDz Live / البثوث
+        'messages',          // الرسائل
+        'groups',            // المجموعات
+        'all-lessons',       // دروس الطلاب
+        'exercises',         // التمارين
+        'earnings',          // الأرباح والمدفوعات
+        'courses',           // الدورات
+        'packages',          // الباقات
+        'teachers',          // الأساتذة
+        'community-channels',
+        'ai-assistant',
+        'transactions',
+        'referral',
+        'profile'
+    ];
+
+    const STUDENT_ORDER = [
+        'exercises',         // التمارين - النشاط اليومي
+        'offers',            // ZoomDz Live
+        'messages',          // الرسائل
+        'groups',            // المجموعات
+        'teachers',          // الأساتذة
+        'packages',          // الباقات
+        'courses',           // الدورات
+        'community-channels',
+        'ai-assistant',
+        'transactions',
+        'referral',
+        'profile'
+    ];
+
+    const isTeacher = (typeof teacherId !== 'undefined' && teacherId) ||
+        (typeof userData !== 'undefined' && userData && userData.role === 'teacher');
+    const order = isTeacher ? TEACHER_ORDER : STUDENT_ORDER;
+
+    function rank(el) {
+        const i = order.indexOf(el.getAttribute('data-section'));
+        // أي عنصر بلا مفتاح يبقى في نهاية القائمة
+        return i === -1 ? order.length : i;
+    }
+
+    function sortContainer(container) {
+        const kids = Array.prototype.slice.call(container.children);
+        const movable = kids.filter(function (el) {
+            return el.getAttribute && el.getAttribute('data-section');
+        });
+        if (movable.length < 2) return 0;
+
+        const sorted = movable.slice().sort(function (a, b) { return rank(a) - rank(b); });
+        let k = 0;
+        const result = kids.map(function (el) {
+            return movable.indexOf(el) === -1 ? el : sorted[k++];
+        });
+
+        let changed = 0;
+        result.forEach(function (el, i) { if (kids[i] !== el) changed++; });
+        if (!changed) return 0;
+
+        // appendChild على عنصر موجود ينقله، فالتنفيذ يبدّل الترتيب في مكانه
+        result.forEach(function (el) { container.appendChild(el); });
+        return changed;
+    }
+
+    function apply() {
+        const targets = [];
+        const tabs = document.getElementById('navTabs');
+        if (tabs) targets.push(tabs);
+        document.querySelectorAll('.sidebar-nav-list').forEach(function (el) { targets.push(el); });
+        document.querySelectorAll('.mobile-bottom-nav').forEach(function (el) { targets.push(el); });
+
+        let moved = 0;
+        targets.forEach(function (c) { moved += sortContainer(c); });
+        window.__zoomyNavOrderMoved = moved;
+        document.dispatchEvent(new CustomEvent('zoomy:nav-ordered'));
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+    // بعض الأقسام تُبنى لاحقاً بالـ JS، نعيد الترتيب بعدها أيضاً
+    window.addEventListener('load', function () { setTimeout(apply, 1200); });
+    window.addEventListener('zoomy:nav-reapply', apply);
+})();
+</script>
+</body>
 </html>

@@ -1,6 +1,158 @@
 ﻿<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<script>
+// ============================================================================
+//  🔔 أصوات الإشعارات والرسائل
+//  أصوات مولَّدة عبر Web Audio API - بلا ملفات صوتية، فلا اعتماد على CDN
+//  وتعمل حتى بدون إنترنت. تُفتح مرة واحدة عند أول تفاعل من المستخدم لأن
+//  المتصفحات تمنع الصوت قبل ذلك.
+// ============================================================================
+(function () {
+    if (window.__zoomySoundInstalled) return;
+    window.__zoomySoundInstalled = true;
+
+    let ctx = null;
+    let unlocked = false;
+    let muted = false;
+    const lastPlayed = {};
+
+    function audio() {
+        if (muted) return null;
+        try {
+            if (!ctx) {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return null;
+                ctx = new Ctx();
+            }
+            if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+            return ctx;
+        } catch (e) { return null; }
+    }
+
+    function tone(ac, freq, startAt, duration, gainPeak) {
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startAt);
+        g.gain.setValueAtTime(0.0001, startAt);
+        g.gain.exponentialRampToValueAtTime(gainPeak, startAt + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+        osc.connect(g);
+        g.connect(ac.destination);
+        osc.start(startAt);
+        osc.stop(startAt + duration + 0.02);
+    }
+
+    // نغمة قصيرة: إشعار
+    function playChime() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        tone(ac, 880, t, 0.16, 0.16);
+        tone(ac, 1320, t + 0.10, 0.22, 0.13);
+    }
+
+    // نغمة واحدة هابطة: رسالة واردة
+    function playPop() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(760, t);
+        osc.frequency.exponentialRampToValueAtTime(430, t + 0.16);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.15, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+        osc.connect(g);
+        g.connect(ac.destination);
+        osc.start(t);
+        osc.stop(t + 0.21);
+    }
+
+    // نغمة ثلاثية: تنبيه مهم (طلب، رسالة في مجموعة)
+    function playAlert() {
+        const ac = audio();
+        if (!ac) return;
+        const t = ac.currentTime;
+        tone(ac, 660, t, 0.13, 0.15);
+        tone(ac, 880, t + 0.09, 0.13, 0.15);
+        tone(ac, 1170, t + 0.18, 0.24, 0.13);
+    }
+
+    // منع تكرار الصوت نفس الرسالة في كل دورة استطلاع
+    function throttled(key, ms) {
+        const now = Date.now();
+        if (lastPlayed[key] && (now - lastPlayed[key]) < (ms || 2500)) return false;
+        lastPlayed[key] = now;
+        return true;
+    }
+
+    window.zoomySound = {
+        unlock: function () {
+            unlocked = true;
+            const ac = audio();
+            if (ac && ac.state === 'suspended') ac.resume().catch(function () {});
+        },
+        isUnlocked: function () { return unlocked; },
+        notification: function () { if (unlocked && throttled('notif', 4000)) playChime(); },
+        message: function (key) { if (unlocked && throttled('msg' + (key || ''), 1800)) playPop(); },
+        alert: function (key) { if (unlocked && throttled('alert' + (key || ''), 3000)) playAlert(); },
+        setMuted: function (v) { muted = !!v; },
+        isMuted: function () { return muted; }
+    };
+
+    // أول نقرة / لوحة مفاتيح تفتح الصوت
+    const unlockOnce = function () { window.zoomySound.unlock(); };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+        window.addEventListener(ev, unlockOnce, { once: true, passive: true });
+    });
+
+    // ---- 1) الإشعارات: نقارن القائمة الجديدة بالسابقة ----
+    window.zoomySoundWatchNotifications = function (list, myId) {
+        const arr = Array.isArray(list) ? list : [];
+        const prev = window.__zoomySeenNotifications;
+        if (prev && prev.size > 0) {
+            let fresh = 0;
+            for (let i = 0; i < arr.length; i++) {
+                const n = arr[i];
+                if (!n || n.is_read) continue;
+                if (!prev.has(String(n.id))) fresh++;
+            }
+            if (fresh > 0) window.zoomySound.notification();
+        }
+        window.__zoomySeenNotifications = new Set(arr.map(function (n) { return String(n && n.id); }));
+    };
+
+    // ---- 2) الرسائل: نقارن أعلى معرّف مستقبَل بالسابق ----
+    window.zoomySoundWatchMessages = function (messages, myIds) {
+        const arr = Array.isArray(messages) ? messages : [];
+        if (!arr.length) return false;
+        const prev = window.__zoomySeenMessages;
+        const mine = {};
+        (myIds || []).forEach(function (id) { mine[String(id)] = true; });
+        let incoming = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const m = arr[i];
+            if (!m) continue;
+            const senderId = m.sender_id !== undefined ? m.sender_id : m.senderId;
+            if (senderId !== undefined && mine[String(senderId)]) continue;
+            if (prev && prev.has(String(m.id))) continue;
+            if (prev) incoming++;
+        }
+        const ids = arr.map(function (m) { return String(m && m.id); });
+        window.__zoomySeenMessages = new Set(ids);
+        if (incoming > 0) {
+            window.zoomySound.message();
+            return true;
+        }
+        return false;
+    };
+})();
+</script>
+
     <script>
 // ============================================================================
 // Front end for the typing indicator. Identical on both dashboards so the two
@@ -162,6 +314,7 @@ async function pollDirectChatQuietly() {
         const topId = msgs[msgs.length - 1].id;
         if (String(topId) === String(directChatLastTopId)) return;
         directChatLastTopId = topId;
+    if (typeof window.zoomySoundWatchMessages === 'function') window.zoomySoundWatchMessages(msgs, [myId]);
         await loadConversationMessages(peer.id, typeParam, true);
     } catch (e) { /* الشبكة قد تتذبذب - نتجاهل بصمت */ }
 }
@@ -5648,6 +5801,7 @@ function appendOptimisticMessage(text, reply) {
             const res = await fetchWithAuth(`/api/notifications/${studentId}/student`);
             const data = await res.json();
             notifications = data || [];
+    if (typeof window.zoomySoundWatchNotifications === 'function') window.zoomySoundWatchNotifications(notifications, studentId);
             renderNotifications();
             updateNotifBadge();
         } catch (e) {
@@ -12711,6 +12865,101 @@ async function updateGroupsUnreadBadge() {
                 console.error("Error updating groups unread badge:", err);
             }
         }
+</script>
+<script>
+// ============================================================================
+//  ترتيب التبويبات حسب الأولوية
+//  نرتّب عناصر DOM داخل كل حاوية تنقّل (#navTabs، القوائم الجانبية، شريط
+//  الجوال السفلي) بدل تعديل CSS، فيصل الترتيب لكل الشاشات معاً.
+// ============================================================================
+(function () {
+    if (window.__zoomyNavOrderDone) return;
+    window.__zoomyNavOrderDone = true;
+
+    // من الأعلى الأولوية إلى الأقل
+    const TEACHER_ORDER = [
+        'offers',            // ZoomDz Live / البثوث
+        'messages',          // الرسائل
+        'groups',            // المجموعات
+        'all-lessons',       // دروس الطلاب
+        'exercises',         // التمارين
+        'earnings',          // الأرباح والمدفوعات
+        'courses',           // الدورات
+        'packages',          // الباقات
+        'teachers',          // الأساتذة
+        'community-channels',
+        'ai-assistant',
+        'transactions',
+        'referral',
+        'profile'
+    ];
+
+    const STUDENT_ORDER = [
+        'exercises',         // التمارين - النشاط اليومي
+        'offers',            // ZoomDz Live
+        'messages',          // الرسائل
+        'groups',            // المجموعات
+        'teachers',          // الأساتذة
+        'packages',          // الباقات
+        'courses',           // الدورات
+        'community-channels',
+        'ai-assistant',
+        'transactions',
+        'referral',
+        'profile'
+    ];
+
+    const isTeacher = (typeof teacherId !== 'undefined' && teacherId) ||
+        (typeof userData !== 'undefined' && userData && userData.role === 'teacher');
+    const order = isTeacher ? TEACHER_ORDER : STUDENT_ORDER;
+
+    function rank(el) {
+        const i = order.indexOf(el.getAttribute('data-section'));
+        // أي عنصر بلا مفتاح يبقى في نهاية القائمة
+        return i === -1 ? order.length : i;
+    }
+
+    function sortContainer(container) {
+        const kids = Array.prototype.slice.call(container.children);
+        const movable = kids.filter(function (el) {
+            return el.getAttribute && el.getAttribute('data-section');
+        });
+        if (movable.length < 2) return 0;
+
+        const sorted = movable.slice().sort(function (a, b) { return rank(a) - rank(b); });
+        let k = 0;
+        const result = kids.map(function (el) {
+            return movable.indexOf(el) === -1 ? el : sorted[k++];
+        });
+
+        let changed = 0;
+        result.forEach(function (el, i) { if (kids[i] !== el) changed++; });
+        if (!changed) return 0;
+
+        // appendChild على عنصر موجود ينقله، فالتنفيذ يبدّل الترتيب في مكانه
+        result.forEach(function (el) { container.appendChild(el); });
+        return changed;
+    }
+
+    function apply() {
+        const targets = [];
+        const tabs = document.getElementById('navTabs');
+        if (tabs) targets.push(tabs);
+        document.querySelectorAll('.sidebar-nav-list').forEach(function (el) { targets.push(el); });
+        document.querySelectorAll('.mobile-bottom-nav').forEach(function (el) { targets.push(el); });
+
+        let moved = 0;
+        targets.forEach(function (c) { moved += sortContainer(c); });
+        window.__zoomyNavOrderMoved = moved;
+        document.dispatchEvent(new CustomEvent('zoomy:nav-ordered'));
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+    // بعض الأقسام تُبنى لاحقاً بالـ JS، نعيد الترتيب بعدها أيضاً
+    window.addEventListener('load', function () { setTimeout(apply, 1200); });
+    window.addEventListener('zoomy:nav-reapply', apply);
+})();
 </script>
 </body>
 </html>
