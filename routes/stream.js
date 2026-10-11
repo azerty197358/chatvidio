@@ -146,6 +146,20 @@ const handleStreamStart = async (req, res) => {
             const notifTitle = '🔴 بدأ البث المباشر للحصة المجانية الآن!';
             const notifMessage = `بدأ الآن البث المباشر لحصة "${offer.subject_name}" مع الأستاذ ${teacherName}. رابط البث للدخول: ${meetUrl}`;
 
+            // one lookup for every recipient instead of one per student
+            const recipientIds = [...targetStudents];
+            const subscribers = {};
+            if (recipientIds.length > 0) {
+                const { data: pushRows } = await supabase
+                    .from('students')
+                    .select('id, push_subscription')
+                    .in('id', recipientIds);
+                (pushRows || []).forEach(function (row) {
+                    if (row.push_subscription) {
+                        subscribers[row.id] = { id: row.id, push_subscription: row.push_subscription };
+                    }
+                });
+            }
             for (const sId of targetStudents) {
                 try {
                     await supabase.from('notifications').insert({
@@ -162,9 +176,8 @@ const handleStreamStart = async (req, res) => {
                         created_at: new Date().toISOString()
                     });
 
-                    const { data: student } = await supabase.from('students').select('push_subscription').eq('id', sId).single();
-                    if (student && student.push_subscription) {
-                        await sendPushNotification(student, notifTitle, notifMessage);
+                    if (subscribers[sId]) {
+                        sendPushNotification(subscribers[sId], notifTitle, notifMessage).catch(function () {});
                     }
                 } catch (notifErr) {
                     logger.error(`⚠️ تعذر إرسال إشعار البث المباشر للطالب ${sId}:`, notifErr.message);
@@ -237,18 +250,36 @@ const handleStreamStart = async (req, res) => {
                     .eq('student_id', session.student_id);
 
                 try {
+                    const notifTitle = 'بدأ الدرس الآن!';
+                    const notifMessage = `الدرس المباشر "${offer.subject_name || 'مادة'}" قد بدأ. انضم الآن ولا تفوّته!`;
+
                     await supabase
                         .from('notifications')
                         .insert({
                             user_id: session.student_id,
                             user_type: 'student',
-                            title: '🔴 البث المباشر بدأ!',
-                            message: `البث المباشر لحصة "${offer.subject_name || 'الدرس'}" قد بدأ الآن. يمكنك الانضمام فوراً!`,
+                            title: notifTitle,
+                            message: notifMessage,
+                            // the dashboard routes the tap through offer_id, and the
+                            // room url is what lets the student join from the bell
+                            offer_id: offer_id,
+                            meet_url: roomUrl,
+                            stream_url: roomUrl,
+                            is_free: false,
                             is_read: false,
                             created_at: new Date().toISOString()
                         });
+
+                    const { data: paidStudent } = await supabase
+                        .from('students')
+                        .select('id, push_subscription')
+                        .eq('id', session.student_id)
+                        .maybeSingle();
+                    if (paidStudent && paidStudent.push_subscription) {
+                        sendPushNotification(paidStudent, notifTitle, notifMessage).catch(function () {});
+                    }
                 } catch (notifErr) {
-                    logger.error(`⚠️ تعذر إرسال إشعار للطالب ${session.student_id}:`, notifErr.message);
+                    logger.error(`⚠️ تعذر إرسال إشعار بدء الدرس للطالب ${session.student_id}:`, notifErr.message);
                 }
             }
         }
