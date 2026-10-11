@@ -78,5 +78,40 @@ console.log('\n=== shared modules ===');
     catch (e) { report(false, f, e.message); }
 });
 
+console.log('\n=== the compressor must exist exactly once ===');
+{
+    const mod = path.join(ROOT, 'public', 'js', 'image-compressor.js');
+    const src = fs.readFileSync(mod, 'utf8');
+    const defs = (src.match(/window\.compressImageFile\s*=/g) || []).length;
+    report(defs === 1, 'one definition in image-compressor.js (' + defs + ')');
+
+    let total = defs;
+    PAGES.forEach(function (page) {
+        const p = path.join(ROOT, 'public', page);
+        if (!fs.existsSync(p)) return;
+        const n = (fs.readFileSync(p, 'utf8').match(/function\s+compressImageFile\s*\(/g) || []).length;
+        if (n) total += n;
+        report(n === 0, page + ': no private copy of compressImageFile (' + n + ')');
+    });
+    report(total === 1, 'the whole project has one implementation (' + total + ')');
+
+    // لا صفحة تحمّل الوحدة مرتين
+    PAGES.forEach(function (page) {
+        const p = path.join(ROOT, 'public', page);
+        if (!fs.existsSync(p)) return;
+        const n = (fs.readFileSync(p, 'utf8').match(/image-compressor\.js/g) || []).length;
+        report(n <= 1, page + ': image-compressor.js loaded once (' + n + ')');
+    });
+
+    // الضمانات التي منعت تعليق الصفحة عند ملف تالف
+    [['reads the dimensions from the header', /function readImageSize\(file\)/],
+        ['decodes with a resize hint', /resizeWidth\s*=/],
+        ['every decode has a timeout', /withTimeout\(decodeScaled/],
+        ['returns the original on failure', /catch \(e\) \{\s*return file;/],
+        ['retries gateway failures', /GATEWAY_STATUSES/],
+        ['never retries a GET', /=== 'POST' &&/]
+    ].forEach(function (p) { report(p[1].test(src), 'compressor: ' + p[0]); });
+}
+
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));
 process.exit(bad ? 1 : 0);

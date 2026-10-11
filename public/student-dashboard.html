@@ -11324,48 +11324,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         }
     }
 
-    async function compressImageFile(file, maxWidth = 1000, quality = 0.75) {
-        if (!file || !file.type.startsWith('image/')) return file;
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = (event) => {
-                const img = new Image();
-                img.src = event.target.result;
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
-
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-
-                    canvas.toBlob((blob) => {
-                        if (blob && blob.size < file.size) {
-                            const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, ".jpg"), {
-                                type: 'image/jpeg',
-                                lastModified: Date.now()
-                            });
-                            resolve(compressedFile);
-                        } else {
-                            resolve(file);
-                        }
-                    }, 'image/jpeg', quality);
-                };
-                img.onerror = () => resolve(file);
-            };
-            reader.onerror = () => resolve(file);
-        });
-    }
-
-    let studentPostFilesArray = [];
+let studentPostFilesArray = [];
 
     async function handleStudentPostFilesSelect(e) {
         const files = Array.from(e.target.files || []);
