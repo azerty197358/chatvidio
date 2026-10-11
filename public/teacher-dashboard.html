@@ -3872,7 +3872,14 @@ function appendOptimisticMessage(text, reply) {
             border-bottom-left-radius: 5px !important;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
         }
-        /* the inner wrapper must never paint a second box */
+        /* The template indentation must not become blank lines, so the
+           bubble and the inner wrapper stay white-space:normal. Only the
+           element that holds the user text keeps pre-wrap. */
+        .chat-messages > .message-bubble,
+        .message-bubble > .message-content {
+            white-space: normal !important;
+        }
+                /* the inner wrapper must never paint a second box */
         .message-bubble > .message-content {
             background: transparent !important;
             border: 0 !important;
@@ -7477,17 +7484,34 @@ function appendOptimisticMessage(text, reply) {
     // ================================================================
 
     function showToast(message, type = 'success') {
-        const container = document.getElementById('toastContainer');
-        const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-triangle-exclamation', info: 'fa-info-circle' };
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
-        container.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            toast.style.transform = 'translateY(-20px)';
-            setTimeout(() => toast.remove(), 300);
-        }, 4500);
+        // الحاوية قد تكون غائبة - ننشئها بدل رمي استثناء، لأن استثناء هنا
+        // كان يوقف logout() قبل مسح التوكن.
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            try {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.className = 'toast-container';
+                (document.body || document.documentElement).appendChild(container);
+            } catch (e) { return; }
+        }
+        const icons = {
+            success: 'fa-check-circle',
+            error: 'fa-exclamation-circle',
+            warning: 'fa-triangle-exclamation',
+            info: 'fa-info-circle'
+        };
+        try {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 4500);
+        } catch (e) { console.warn('showToast:', e); }
     }
 
     // ================================================================
@@ -9897,9 +9921,7 @@ function updateUI() {
                     </div>
                     <div class="message-content" style="${isAudioMsg ? 'min-width: 260px; max-width: 95%; padding: 6px 8px;' : ''}">
                         ${replyQuoteHtml}
-                        <div class="message-text-body">
-                            ${bodyContentHtml}
-                        </div>
+                        <div class="message-text-body">${bodyContentHtml}</div>
                         ${reactionsHtml}
                         <div class="message-time" style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
                             <span>${date.toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -12240,16 +12262,20 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     // ================================================================
 
     function logout() {
-        if (window._isLoggingOut) return;
         window._isLoggingOut = true;
-        if (typeof showToast === 'function') {
-            showToast('يتم تسجيل الخروج الآن', 'info');
-        }
-        localStorage.removeItem('token');
-        localStorage.removeItem('userData');
-        setTimeout(() => {
-            window.location.href = '/';
-        }, 800);
+        try { localStorage.removeItem('token'); } catch (e) {}
+        try { localStorage.removeItem('userData'); } catch (e) {}
+        try { sessionStorage.clear(); } catch (e) {}
+        try {
+            fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('يتم تسجيل الخروج الآن', 'info'); } catch (e) {}
+        setTimeout(() => { window.location.href = '/'; }, 400);
+        // لو فشل الانتقال فلا يبقى الزر معطلاً للأبد
+        setTimeout(() => { window._isLoggingOut = false; }, 2500);
     }
 
     function exitGuestAndNavigate(targetUrl) {
@@ -16234,15 +16260,20 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             activeChatGroupImageUrl = groupImageUrl || '';
             currentManagingGroupId = groupId;
             
-            if (typeof isOwner === 'boolean') {
-                activeChatGroupIsOwner = isOwner;
-            } else {
-                const found = (allTeacherGroups || []).find(g => String(g.id) === String(groupId));
-                activeChatGroupIsOwner = found ? !!found.is_owner : false;
-            }
+            // تُحلّ الملكية من teacher_id دائماً: الخادم لا يُرجع is_owner
+            // إطلاقاً، والفحص القديم كان يعمل فقط عند غياب الاسم.
+            activeChatGroupIsOwner = !!isOwner;
+            try {
+                const cached = (allTeacherGroups || []).find(g => String(g.id) === String(groupId));
+                if (cached && cached.teacher_id !== undefined && cached.teacher_id !== null) {
+                    const myTeacherId = (userData && (userData.id || userData.user_id))
+                        || (typeof teacherId !== 'undefined' ? teacherId : null);
+                    if (myTeacherId) activeChatGroupIsOwner = String(cached.teacher_id) === String(myTeacherId);
+                }
+            } catch (e) {}
             currentManagingGroupIsOwner = activeChatGroupIsOwner;
             
-            if (!groupName) {
+            if (!groupName || !activeChatGroupIsOwner) {
                 try {
                     const res = await fetch(`/api/groups/${groupId}/public`);
                     const gData = await res.json();
@@ -16251,9 +16282,10 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                         groupImageUrl = gData.image_url || '';
                         activeChatGroupName = groupName;
                         activeChatGroupImageUrl = groupImageUrl;
-                        if (gData.teacher_id && userData) {
-                            const myId = userData.id || userData.userId;
-                            activeChatGroupIsOwner = String(gData.teacher_id) === String(myId);
+                        if (gData && gData.teacher_id) {
+                            const myId = (userData && (userData.id || userData.user_id))
+                                || (typeof teacherId !== 'undefined' ? teacherId : null);
+                            if (myId) activeChatGroupIsOwner = String(gData.teacher_id) === String(myId);
                             currentManagingGroupIsOwner = activeChatGroupIsOwner;
                         }
                     }

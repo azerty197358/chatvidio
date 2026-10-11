@@ -3926,7 +3926,14 @@ function appendOptimisticMessage(text, reply) {
             border-bottom-left-radius: 5px !important;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
         }
-        /* the inner wrapper must never paint a second box */
+        /* The template indentation must not become blank lines, so the
+           bubble and the inner wrapper stay white-space:normal. Only the
+           element that holds the user text keeps pre-wrap. */
+        .chat-messages > .message-bubble,
+        .message-bubble > .message-content {
+            white-space: normal !important;
+        }
+                /* the inner wrapper must never paint a second box */
         .message-bubble > .message-content {
             background: transparent !important;
             border: 0 !important;
@@ -6080,22 +6087,34 @@ function appendOptimisticMessage(text, reply) {
     // ================================================================
 
     function showToast(message, type = 'success') {
-        const container = document.getElementById('toastContainer');
+        // الحاوية قد تكون غائبة - ننشئها بدل رمي استثناء، لأن استثناء هنا
+        // كان يوقف logout() قبل مسح التوكن.
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            try {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.className = 'toast-container';
+                (document.body || document.documentElement).appendChild(container);
+            } catch (e) { return; }
+        }
         const icons = {
             success: 'fa-check-circle',
             error: 'fa-exclamation-circle',
             warning: 'fa-triangle-exclamation',
             info: 'fa-info-circle'
         };
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
-        container.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            toast.style.transform = 'translateY(-20px)';
-            setTimeout(() => toast.remove(), 300);
-        }, 4500);
+        try {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 4500);
+        } catch (e) { console.warn('showToast:', e); }
     }
 
     // ================================================================
@@ -9577,9 +9596,7 @@ function appendOptimisticMessage(text, reply) {
                     </div>
                     <div class="message-content" style="${isAudioMsg ? 'min-width: 260px; max-width: 95%; padding: 6px 8px;' : ''}">
                         ${replyQuoteHtml}
-                        <div class="message-text-body">
-                            ${bodyContentHtml}
-                        </div>
+                        <div class="message-text-body">${bodyContentHtml}</div>
                         ${reactionsHtml}
                         <div class="message-time" style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
                             <span>${date.toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -10506,16 +10523,20 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     // ================================================================
 
     function logout() {
-        if (window._isLoggingOut) return;
         window._isLoggingOut = true;
-        if (typeof showToast === 'function') {
-            showToast('يتم تسجيل الخروج الآن', 'info');
-        }
-        localStorage.removeItem('token');
-        localStorage.removeItem('userData');
-        setTimeout(() => {
-            window.location.href = '/';
-        }, 800);
+        try { localStorage.removeItem('token'); } catch (e) {}
+        try { localStorage.removeItem('userData'); } catch (e) {}
+        try { sessionStorage.clear(); } catch (e) {}
+        try {
+            fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('يتم تسجيل الخروج الآن', 'info'); } catch (e) {}
+        setTimeout(() => { window.location.href = '/'; }, 400);
+        // لو فشل الانتقال فلا يبقى الزر معطلاً للأبد
+        setTimeout(() => { window._isLoggingOut = false; }, 2500);
     }
 
     function exitGuestAndNavigate(targetUrl) {
@@ -15268,5 +15289,8 @@ function memoSetVerdict(result) {
         </button>
     </div>
 
-</body>
+<!-- ===== TOAST CONTAINER ===== -->
+<div class="toast-container" id="toastContainer"></div>
+
+    </body>
 </html>
