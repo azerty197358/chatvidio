@@ -152,6 +152,9 @@
         return false;
     };
 })();
+
+// read by the groups unread badge
+var activeStudentGroupId = null;
 </script>
 
     <script>
@@ -10182,7 +10185,14 @@ function updateUI() {
         startChatWithUser(otherId, otherName, otherImage, 'teacher');
     }
 
-    window.startChatWithStudent = startChatWithStudent;
+        
+    // The nav search renders an "instant message" button that calls this.
+    function openDirectChat(userId, name, avatar, userType) {
+        startChatWithUser(userId, name, avatar, userType || 'student');
+    }
+    window.openDirectChat = openDirectChat;
+
+window.startChatWithStudent = startChatWithStudent;
     window.startChatWithTeacher = startChatWithTeacher;
 
     function startChatWithUser(otherId, otherName, otherImage, otherType = 'teacher') {

@@ -345,7 +345,10 @@ router.get('/teacher', authenticate, authorize(['teacher']), async (req, res) =>
                 .from('group_messages')
                 .select('group_id, created_at')
                 .in('group_id', groupIds)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                // was unbounded: every message of every group the student is in
+                // only the newest slice is used for the badge and the counter
+                .limit(Math.max(200, groupIds.length * 100));
 
             if (latestMsgs) {
                 latestMsgs.forEach(m => {
@@ -507,7 +510,8 @@ router.get('/student', authenticate, authorize(['student']), async (req, res) =>
             const { data: teachers } = await supabase
                 .from('teachers')
                 .select('id, full_name, profile_image, profile_url, specialization')
-                .in('id', teacherIds);
+                .in('id', teacherIds)
+                .limit(500);
             if (teachers) {
                 teachers.forEach(t => {
                     teachersMap[t.id] = {
@@ -528,7 +532,10 @@ router.get('/student', authenticate, authorize(['student']), async (req, res) =>
                 .from('group_messages')
                 .select('group_id, created_at')
                 .in('group_id', groupIds)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                // was unbounded: every message of every group the student is in
+                // only the newest slice is used for the badge and the counter
+                .limit(Math.max(200, groupIds.length * 100));
 
             if (latestMsgs) {
                 latestMsgs.forEach(m => {
@@ -544,7 +551,8 @@ router.get('/student', authenticate, authorize(['student']), async (req, res) =>
         const { data: allMembers } = await supabase
             .from('group_members')
             .select('group_id, student_id, is_blocked')
-            .in('group_id', groupIds);
+            .in('group_id', groupIds)
+            .limit(5000);
 
         const groupMembersMap = {};
         groupIds.forEach(gid => { groupMembersMap[String(gid)] = new Set(); });

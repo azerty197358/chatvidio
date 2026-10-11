@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // مسارات التمارين والحلول - Exercises & Solutions Routes
 // ============================================================
 
@@ -42,12 +42,25 @@ router.get('/', optionalAuth, async (req, res) => {
         const currentUserId = req.user ? (req.user.userId || req.user.id) : null;
         const currentUserType = req.user ? req.user.role : null;
 
-        const cacheKey = `exercises_${level || ''}_${search || ''}_${saved_only || ''}_${currentUserId || ''}`;
+        // one query serves every visitor that asks in the same window
+        const cacheKey = `exercises:${level || ''}:${search || ''}:${saved_only || ''}:${currentUserId || ''}`;
         const cached = memoryCache.get(cacheKey);
         if (cached) {
             res.setHeader('Cache-Control', 'public, max-age=20');
             return res.json(cached);
         }
+
+        // another request is already loading this exact list: wait for it
+        // instead of hammering the database a second time
+        const joined = memoryCache.join(cacheKey);
+        if (joined) {
+            try {
+                const value = await joined;
+                res.setHeader('Cache-Control', 'public, max-age=20');
+                return res.json(value);
+            } catch (e) { /* the shared load failed, do it ourselves */ }
+        }
+        const owns = memoryCache.track(cacheKey);
 
         // جلب التمارين المحفوظة إذا كان الطالب يطلب المحفوظات فقط
         let savedExerciseIds = [];
@@ -75,7 +88,9 @@ router.get('/', optionalAuth, async (req, res) => {
         let query = supabase
             .from('exercise_posts')
             .select('*')
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            // was unbounded: one busy table could ship thousands of rows
+            .limit(300);
 
         if (saved_only === 'true' && savedExerciseIds.length > 0) {
             query = query.in('id', savedExerciseIds);
@@ -85,6 +100,7 @@ router.get('/', optionalAuth, async (req, res) => {
 
         if (error && error.code !== 'PGRST116') {
             logger.warn('⚠️ تعذر جلب التمارين من Supabase: ' + error.message);
+            memoryCache.abandon(cacheKey);
             return res.status(500).json({ 
                 success: false, 
                 error: error.message, 
@@ -191,7 +207,7 @@ router.get('/', optionalAuth, async (req, res) => {
             paginated = formatted.slice(startIndex, startIndex + limit);
         }
 
-        memoryCache.set(cacheKey, paginated, 20);
+        memoryCache.publish(cacheKey, paginated, 20);
         res.setHeader('Cache-Control', 'public, max-age=20');
 
         if (req.query.paginated === 'true' || req.query.page || req.query.limit) {

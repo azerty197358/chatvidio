@@ -10,6 +10,7 @@ const { param, validationResult } = require('express-validator');
 const { supabase } = require('../config/database');
 const { getOne, loadLocalTeacherFollowers } = require('../utils/helpers');
 const { getPublicImageUrl, processUserProfile } = require('../utils/upload');
+const memoryCache = require('../utils/cache');
 const { getViewCount } = require('../utils/viewsTracker');
 const { verifyToken, generateToken } = require('../utils/jwt');
 const { authenticate } = require('../middleware/auth');
@@ -48,6 +49,9 @@ router.get('/public/guest-token/:role', handleGuestToken);
 // جلب قائمة الأساتذة المعتمدين (مع مستوى التعليم)
 // ============================================================
 async function fetchApprovedTeachers() {
+    // was: a full table read on EVERY page view, with no cache at all
+    // now: one query for all visitors, served stale while it refreshes
+    return memoryCache.wrap('public:approved-teachers', async () => {
     let data = null;
     try {
         const res = await supabase
@@ -57,7 +61,8 @@ async function fetchApprovedTeachers() {
             .eq('is_banned', false)
             .order('is_vip', { ascending: false, nullsFirst: false })
             .order('is_certified', { ascending: false, nullsFirst: false })
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(2000);
         data = res.data;
     } catch (e) {
         logger.error('خطأ في جلب الأساتذة:', e.message);
@@ -83,6 +88,7 @@ async function fetchApprovedTeachers() {
         const bVip = (b.is_vip === true || (b.is_certified === true && b.verification_status === 'approved')) ? 1 : 0;
         return bVip - aVip;
     });
+    }, { ttl: 45, staleFor: 300 });
 }
 
 // ============================================================
