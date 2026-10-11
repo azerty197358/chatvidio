@@ -4318,6 +4318,11 @@ function appendOptimisticMessage(text, reply) {
                 <i class="fas fa-book-open"></i>
                 <span class="tab-label">التمارين والحلول</span>
             </button>
+            <!-- data-nav-added="memorization" -->
+            <button class="sidebar-nav-item nav-tab" data-section="memorization" onclick="showSection('memorization')" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.2)); border: 1.5px solid rgba(16, 185, 129, 0.4); color: #059669; font-weight: 900;">
+                <i class="fas fa-microphone-lines"></i>
+                <span class="tab-label">المحفظ الذكي</span>
+            </button>
             <button class="sidebar-nav-item nav-tab" data-section="messages" onclick="showSection('messages')">
                 <i class="fab fa-facebook-messenger" style="color: #0084ff;"></i>
                 <span class="tab-label">الرسائل</span>
@@ -4360,6 +4365,11 @@ function appendOptimisticMessage(text, reply) {
             <button class="sidebar-nav-item nav-tab" data-section="profile" onclick="showSection('profile')">
                 <i class="fas fa-user-circle" style="color:var(--primary);"></i>
                 <span class="tab-label">ملفي الشخصي 👤</span>
+            </button>
+            <!-- data-nav-added="ai-assistant" -->
+            <button class="sidebar-nav-item nav-tab" data-section="ai-assistant" onclick="showSection('ai-assistant')" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(37, 99, 235, 0.16)); border: 1px solid rgba(56, 189, 248, 0.3); color: #0284c7; font-weight: 800;">
+                <i class="fas fa-robot" style="color:#0284c7;"></i>
+                <span class="tab-label">المساعد الذكي (Zoomy AI)</span>
             </button>
             <button class="sidebar-nav-item nav-tab" data-section="referral" onclick="showSection('referral')">
                 <i class="fas fa-link" style="color:var(--gold);"></i>
@@ -15337,6 +15347,21 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             </div>
             <i class="fas fa-chevron-left" style="font-size:0.8rem; opacity:0.5;"></i>
         </div>
+                <!-- data-nav-added="drawer" -->
+
+                <div class="mobile-drawer-menu-item" onclick="showSection('memorization'); closeMobileDrawer();">
+                    <div class="item-content">
+                        <i class="fas fa-microphone-lines" style="color:#059669;"></i>
+                        <span>المحفظ الذكي</span>
+                    </div>
+                </div>
+
+                <div class="mobile-drawer-menu-item" onclick="showSection('ai-assistant'); closeMobileDrawer();">
+                    <div class="item-content">
+                        <i class="fas fa-robot" style="color:#0284c7;"></i>
+                        <span>المساعد الذكي (Zoomy AI)</span>
+                    </div>
+                </div>
 
         <div class="mobile-drawer-menu-item" onclick="showSection('groups'); closeMobileDrawer();">
             <div class="item-content">
