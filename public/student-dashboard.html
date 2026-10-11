@@ -12819,7 +12819,8 @@ async function updateGroupsUnreadBadge() {
                     if (!g.latest_message_time) return;
 
                     // If currently chatting in this group, it's not unread
-                    if (activeStudentGroupId && String(activeStudentGroupId) === String(g.id)) {
+                                        var openGroup = (typeof window.activeStudentGroupId !== "undefined") ? window.activeStudentGroupId : null;
+                    if (openGroup && String(openGroup) === String(g.id)) {
                         return;
                     }
 
