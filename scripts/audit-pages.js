@@ -154,5 +154,43 @@ console.log('\n=== free AI points must stay at zero ===');
     report(tutor.indexOf('تجدد النقاط المجانية') === -1, 'ai-tutor no longer promises a free daily refill');
 }
 
+console.log('\n=== the connection banner must stay wired up ===');
+{
+    const mod = path.join(ROOT, 'public', 'js', 'connection.js');
+    report(fs.existsSync(mod), 'connection.js exists');
+    const src = fs.readFileSync(mod, 'utf8');
+    try { new vm.Script(src, { filename: 'connection.js' }); report(true, 'connection.js parses'); }
+    catch (e) { report(false, 'connection.js parses', e.message); }
+
+    [['listens to the browser events', /addEventListener\('offline'/],
+        ['learns from real requests', /markFailure/],
+        ['needs two failures, not one', /FAILURES_BEFORE_OFFLINE = 2/],
+        ['exposes isOnline', /isOnline: function/],
+        ['knows a network error by name', /isNetworkishError/],
+        ['the offline class matches the css', /zoomy-net-off'/]
+    ].forEach(function (p) { report(p[1].test(src), 'connection: ' + p[0]); });
+
+    ['student-dashboard.html', 'teacher-dashboard.html', 'ai-tutor.html', 'index.html'].forEach(function (page) {
+        const t = fs.readFileSync(path.join(ROOT, 'public', page), 'utf8');
+        const n = (t.match(/connection\.js/g) || []).length;
+        report(n === 1, page + ': loads connection.js once (' + n + ')');
+        report(/\.zoomy-net-banner\.zoomy-net-off \{/.test(t), page + ': the offline style is present');
+        report(/html\.zoomy-net-offline \.toast-container/.test(t),
+            page + ': the toasts step aside for the banner');
+    });
+
+    ['student-dashboard.html', 'teacher-dashboard.html'].forEach(function (page) {
+        const t = fs.readFileSync(path.join(ROOT, 'public', page), 'utf8');
+        const fn = t.substring(t.indexOf('async function fetchWithAuth'), t.indexOf('async function getCsrfToken'));
+        report(/isBackgroundRead/.test(fn), page + ': a background GET is told apart from an action');
+        report(!/window\.location\.reload\(\)/.test(fn), page + ': no auto page reload on failure');
+        report(!/تعذر إكمال العملية/.test(fn), page + ': no raw network text in the toast');
+        report(/ZoomyNet\.markSuccess/.test(fn) && /ZoomyNet\.markFailure/.test(fn),
+            page + ': requests report their outcome');
+        report(/if \(window\.ZoomyNet && window\.ZoomyNet\.isOnline\(\) === false\) return;/.test(t),
+            page + ': the toast stays silent while offline');
+    });
+}
+
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));
 process.exit(bad ? 1 : 0);

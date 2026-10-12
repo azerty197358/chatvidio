@@ -564,7 +564,8 @@ function appendOptimisticMessage(text, reply) {
             } catch (e) {}
         })();
     </script>
-    <script src="/js/image-compressor.js?v=1"></script>
+    <script src="/js/connection.js?v=1"></script>
+<script src="/js/image-compressor.js?v=1"></script>
 <script src="/js/anti-rapid-click.js"></script>
     <script src="/js/site-branding.js"></script>
     <script src="/js/mobile-navbar-swipe.js"></script>
@@ -4364,6 +4365,40 @@ function appendOptimisticMessage(text, reply) {
         }
         .owner-mini.vip { background: #fef3c7; color: #b45309; }
         .owner-mini.cert { background: #dbeafe; color: #1d4ed8; }
+
+        /* ===== حالة الاتصال بالإنترنت ===== */
+        .zoomy-net-banner {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translate(-50%, -140%);
+            z-index: 10050;
+            display: flex; align-items: center; gap: 10px;
+            padding: 11px 20px;
+            border-radius: 999px;
+            font-size: 0.88rem; font-weight: 700;
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+            opacity: 0;
+            transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease;
+            max-width: calc(100vw - 24px);
+            text-align: center;
+        }
+        .zoomy-net-banner.zoomy-net-show { transform: translate(-50%, 0); opacity: 1; }
+        .zoomy-net-banner.zoomy-net-off { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .zoomy-net-banner.zoomy-net-on  { background: linear-gradient(135deg, #10b981, #059669); }
+        .zoomy-net-banner i { font-size: 1rem; }
+        .zoomy-net-offline .zoomy-net-banner.zoomy-net-off i { animation: zoomyNetPulse 1.4s ease-in-out infinite; }
+        @keyframes zoomyNetPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        /* لا نركّب الإشعارات فوق الشريط: ندفعها تحته */
+        html.zoomy-net-offline .toast-container { top: 124px !important; }
+        @media (max-width: 768px) {
+            .zoomy-net-banner { top: 76px; font-size: 0.82rem; padding: 10px 16px; }
+            html.zoomy-net-offline .toast-container { top: 130px !important; }
+        }
 </style>
     </head>
 <body>
@@ -7600,13 +7635,24 @@ function appendOptimisticMessage(text, reply) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000); // زيادة المهلة إلى 120 ثانية لرفع الملفات الكبيره
         
+        // GET قراءة خلفية: فشله لا يستحق إزعاجاً. أما POST/PUT/DELETE
+        // فإجراء طلبه المستخدم فيستحق رسالة.
+        const method = String((options && options.method) || 'GET').toUpperCase();
+        const isBackgroundRead = method === 'GET';
         try {
             const response = await fetch(fullUrl, {
                 ...options,
                 headers: headers,
                 credentials: 'include',
                 signal: controller.signal
-            });
+            })
+.then(function (res) {
+    if (window.ZoomyNet && window.ZoomyNet.markSuccess) window.ZoomyNet.markSuccess();
+    return res;
+}, function (err) {
+    if (window.ZoomyNet && window.ZoomyNet.markFailure) window.ZoomyNet.markFailure();
+    throw err;
+});;;
             clearTimeout(timeoutId);
 
             if (response.status === 401) {
@@ -7622,14 +7668,12 @@ function appendOptimisticMessage(text, reply) {
             }
 
             if (response.status >= 500) {
-                const lastReload = sessionStorage.getItem('last_auto_reload');
-                const now = Date.now();
-                if (!lastReload || (now - parseInt(lastReload)) > 15000) {
-                    sessionStorage.setItem('last_auto_reload', now.toString());
-                    showToast('خطأ في الخادم، جاري تحديث الصفحة...', 'error');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
+                // كان يعيد تحميل الصفحة تلقائياً هنا، فتفقد المستخدم
+                // ما كتبته. الآن: صمت تماماً أثناء التحميل الخلفي،
+                // ورسالة واحدة هادئة عند إجراء صريح فقط.
+                logAppError('Server Error', errMsg, response.status, url);
+                if (!isBackgroundRead && !(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
+                    showToast(ZOOMY_ERROR_TEXT, 'error');
                 }
             }
 
@@ -7671,18 +7715,14 @@ function appendOptimisticMessage(text, reply) {
         } catch (err) {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
-                showToast('❌ انتهت مهلة الاتصال بالخادم', 'error');
+                if (!isBackgroundRead) showToast(ZOOMY_ERROR_TEXT, 'error');
                 throw new Error('انتهت مهلة الاتصال');
             }
-            if (!err.message.includes('انتهت صلاحية الجلسة') && !err.message.includes('حساب محظور')) {
-                const lastReload = sessionStorage.getItem('last_auto_reload');
-                const now = Date.now();
-                if (!lastReload || (now - parseInt(lastReload)) > 15000) {
-                    sessionStorage.setItem('last_auto_reload', now.toString());
-                    showToast('خطأ في الاتصال، جاري تحديث الصفحة...', 'error');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
+            if (!err.message.includes('انتهت صلاحية الجلسة') && !err.message.includes('حساب محظور') && !isBackgroundRead) {
+                // لا إعادة تحميل للصفحة أبداً: يفقد المستخدم ما كتبه.
+                logAppError('Fetch Error', err.message, null, url);
+                if (!(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
+                    showToast(ZOOMY_ERROR_TEXT, 'error');
                 }
             }
             throw err;
@@ -7990,6 +8030,9 @@ function showToast(message, type = 'success') {
             if (type === 'error') {
                 // لل��مطوّر فقط
                 try { console.warn('[Zoomy]', message); } catch (e) {}
+                // انقطاع الاتصال: الشريط يشرح الوضع، ورسالة فوقه
+                // لا تضيف شيئاً سوى إزعاج.
+                if (window.ZoomyNet && window.ZoomyNet.isOnline() === false) return;
                 shown = ZOOMY_ERROR_TEXT;
                 kind = 'info';
             } else if (zoomyQuietError(message)) {

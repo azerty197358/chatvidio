@@ -362,13 +362,20 @@
     if (typeof origFetch === 'function') {
         window.fetch = function (input, init) {
             var isFormPost = false;
+            var canRetry = false;
             try {
-                var method = (init && init.method) || (input && input.method) || 'GET';
-                isFormPost = String(method).toUpperCase() === 'POST' &&
+                var method = String(((init && init.method) || (input && input.method) || 'GET')).toUpperCase();
+                isFormPost = method === 'POST' &&
                     init && init.body && typeof FormData !== 'undefined' && init.body instanceof FormData;
-            } catch (e) { isFormPost = false; }
+                // القراءة لا تترك أثراً، فإعادتها آمنة تماماً. وهي أكثر
+                // ما يقع على تبديل التبويب، فإعادتها تُخفي غالباً
+                // الخادم النائم دون أن يرى المستخدم شيئاً.
+                canRetry = (method === 'GET' || method === 'HEAD') || isFormPost;
+            } catch (e) { isFormPost = false; canRetry = false; }
 
-            if (!isFormPost) return origFetch.apply(window, arguments);
+            if (!isFormPost && !canRetry) return origFetch.apply(window, arguments);
+
+            var backgroundRead = !isFormPost;
 
             var original = init;
             var attempt = 0;
@@ -383,14 +390,16 @@
                     // انقطاع الشبكة أو البوابة لم يوصل الطلب أصلاً: إعادة آمنة
                     if (triesLeft > 0) {
                         attempt++;
-                        try { console.warn('[Zoomy] لم يصل الطلب، إعادة محاولة ' + attempt); } catch (e) {}
+                        if (window.ZoomyNet && window.ZoomyNet.markFailure) window.ZoomyNet.markFailure();
+                                        try { console.warn('[Zoomy] لم يصل الطلب، إعادة محاولة ' + attempt); } catch (e) {}
                         return sleep(RETRY_DELAYS[RETRY_DELAYS.length - triesLeft] || RETRY_DELAYS[0])
                             .then(function () { return send(form, triesLeft - 1); });
                     }
                     throw err;
                 }).then(function (res) {
                     // 502/503/504 يعني أن الطلب لم يصل إلى التطبيق إطلاقاً
-                    if (GATEWAY_STATUSES.indexOf(res.status) !== -1 && triesLeft > 0) {
+                    if (window.ZoomyNet && window.ZoomyNet.markSuccess) window.ZoomyNet.markSuccess();
+                                        if (GATEWAY_STATUSES.indexOf(res.status) !== -1 && triesLeft > 0) {
                         attempt++;
                         try { console.warn('[Zoomy] الخادم مشغول (' + res.status + ')، إعادة محاولة ' + attempt); } catch (e) {}
                         return sleep(RETRY_DELAYS[RETRY_DELAYS.length - triesLeft] || RETRY_DELAYS[0])

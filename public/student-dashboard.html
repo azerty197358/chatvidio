@@ -457,6 +457,7 @@ function appendOptimisticMessage(text, reply) {
     <script src="/js/packages-student.js?v=1"></script>
 <script src="/js/student-groups.js?v=1"></script>
 <script src="/js/student-nav-search.js?v=1"></script>
+<script src="/js/connection.js?v=1"></script>
 <script src="/js/image-compressor.js?v=1"></script>
 <script src="/js/anti-rapid-click.js"></script>
     <script src="/js/site-branding.js"></script>
@@ -4247,7 +4248,41 @@ function appendOptimisticMessage(text, reply) {
                 pointer-events: auto !important;
             }
         }
-    </style>
+    
+        /* ===== حالة الاتصال بالإنترنت ===== */
+        .zoomy-net-banner {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translate(-50%, -140%);
+            z-index: 10050;
+            display: flex; align-items: center; gap: 10px;
+            padding: 11px 20px;
+            border-radius: 999px;
+            font-size: 0.88rem; font-weight: 700;
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+            opacity: 0;
+            transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease;
+            max-width: calc(100vw - 24px);
+            text-align: center;
+        }
+        .zoomy-net-banner.zoomy-net-show { transform: translate(-50%, 0); opacity: 1; }
+        .zoomy-net-banner.zoomy-net-off { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .zoomy-net-banner.zoomy-net-on  { background: linear-gradient(135deg, #10b981, #059669); }
+        .zoomy-net-banner i { font-size: 1rem; }
+        .zoomy-net-offline .zoomy-net-banner.zoomy-net-off i { animation: zoomyNetPulse 1.4s ease-in-out infinite; }
+        @keyframes zoomyNetPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        /* لا نركّب الإشعارات فوق الشريط: ندفعها تحته */
+        html.zoomy-net-offline .toast-container { top: 124px !important; }
+        @media (max-width: 768px) {
+            .zoomy-net-banner { top: 76px; font-size: 0.82rem; padding: 10px 16px; }
+            html.zoomy-net-offline .toast-container { top: 130px !important; }
+        }
+</style>
     </head>
 <body>
 <!-- ===== PLATFORM PRELOADER SPLASH SCREEN ===== -->
@@ -5784,11 +5819,22 @@ function appendOptimisticMessage(text, reply) {
             ...options.headers
         };
         
+        // GET قراءة خلفية: فشله لا يستحق إزعاجاً. أما POST/PUT/DELETE
+        // فإجراء طلبه المستخدم فيستحق رسالة.
+        const method = String((options && options.method) || 'GET').toUpperCase();
+        const isBackgroundRead = method === 'GET';
         try {
             const response = await fetch(fullUrl, {
                 ...options,
                 headers: headers
-            });
+            })
+.then(function (res) {
+    if (window.ZoomyNet && window.ZoomyNet.markSuccess) window.ZoomyNet.markSuccess();
+    return res;
+}, function (err) {
+    if (window.ZoomyNet && window.ZoomyNet.markFailure) window.ZoomyNet.markFailure();
+    throw err;
+});;;
 
             if (!response.ok) {
                 const clone = response.clone();
@@ -5817,8 +5863,12 @@ function appendOptimisticMessage(text, reply) {
                 if (response.status >= 500) {
                     // ✅ لا نقوم بإعادة تحميل الصفحة أبداً عند وجود خطأ — نعرض رسالة واضحة فقط
                     // حتى لا يفقد المستخدم بياناته أو عمليات الرفع الجارية.
-                    const serverMsg = (errorData && (errorData.error || errorData.message)) ? (errorData.error || errorData.message) : ('خطأ في الخادم (' + response.status + ')');
-                    showToast('⚠️ ' + serverMsg + ' — يمكنك المحاولة مرة أخرى', 'error');
+                    logAppError('Server Error', errMsg, response.status, url);
+                    // الخادم نائم أو مشغول: لا إعادة تحميل أبداً،
+                    // ولا إشعار أثناء تبديل التبويب.
+                    if (!isBackgroundRead && !(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
+                        showToast(ZOOMY_ERROR_TEXT, 'error');
+                    }
                 }
 
                 if (response.status === 403) {
@@ -5854,7 +5904,11 @@ function appendOptimisticMessage(text, reply) {
                 logAppError('Fetch Error', netErr.message, null, url);
                 // ✅ لا إعادة تحميل تلقائية للصفحة عند أخطاء الشبكة (مثل فشل رفع الملفات)
                 // نُظهر رسالة واضحة فقط ونترك المستخدم يُعيد المحاولة بنفسه.
-                showToast('⚠️ تعذر إكمال العملية: ' + (netErr.message || 'خطأ في الاتصال') + ' — يمكنك المحاولة مرة أخرى', 'error');
+                // انقطاع الاتصال: الشريط يتكفّل بالإخبار بلا إزعاج
+                // وب��ا إعادة تحميل للصفحة.
+                if (!(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
+                    showToast(ZOOMY_ERROR_TEXT, 'error');
+                }
             }
             throw netErr;
         }
@@ -6264,6 +6318,9 @@ function showToast(message, type = 'success') {
             if (type === 'error') {
                 // لل��مطوّر فقط
                 try { console.warn('[Zoomy]', message); } catch (e) {}
+                // انقطاع الاتصال: الشريط يشرح الوضع، ورسالة فوقه
+                // لا تضيف شيئاً سوى إزعاج.
+                if (window.ZoomyNet && window.ZoomyNet.isOnline() === false) return;
                 shown = ZOOMY_ERROR_TEXT;
                 kind = 'info';
             } else if (zoomyQuietError(message)) {

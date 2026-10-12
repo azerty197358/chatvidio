@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <script>
+    <script src="/js/connection.js?v=1"></script>
+<script>
         (function() {
             function handleGlobalError(errorMsg) {
                 try {
@@ -4612,7 +4613,41 @@
             background: rgba(255, 255, 255, 0.16);
             color: #ffffff;
         }
-    </style>
+    
+        /* ===== حالة الاتصال بالإنترنت ===== */
+        .zoomy-net-banner {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translate(-50%, -140%);
+            z-index: 10050;
+            display: flex; align-items: center; gap: 10px;
+            padding: 11px 20px;
+            border-radius: 999px;
+            font-size: 0.88rem; font-weight: 700;
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+            opacity: 0;
+            transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease;
+            max-width: calc(100vw - 24px);
+            text-align: center;
+        }
+        .zoomy-net-banner.zoomy-net-show { transform: translate(-50%, 0); opacity: 1; }
+        .zoomy-net-banner.zoomy-net-off { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .zoomy-net-banner.zoomy-net-on  { background: linear-gradient(135deg, #10b981, #059669); }
+        .zoomy-net-banner i { font-size: 1rem; }
+        .zoomy-net-offline .zoomy-net-banner.zoomy-net-off i { animation: zoomyNetPulse 1.4s ease-in-out infinite; }
+        @keyframes zoomyNetPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        /* لا نركّب الإشعارات فوق الشريط: ندفعها تحته */
+        html.zoomy-net-offline .toast-container { top: 124px !important; }
+        @media (max-width: 768px) {
+            .zoomy-net-banner { top: 76px; font-size: 0.82rem; padding: 10px 16px; }
+            html.zoomy-net-offline .toast-container { top: 130px !important; }
+        }
+</style>
 </head>
 <body>
     <!-- ===== PLATFORM PRELOADER SPLASH SCREEN WITH CINEMATIC SCATTERED ZOOMDZ ASSEMBLY ===== -->
@@ -6645,6 +6680,9 @@
             if (type === 'error') {
                 // للمطوّر فقط، لا شيء من هذا يظهر على الشاشة
                 try { console.warn('[Zoomy]', message); } catch (e) {}
+                // انقطاع الاتصال: الشريط يشرح الوضع، ورسالة فوقه
+                // لا تضيف شيئاً سوى إزعاج.
+                if (window.ZoomyNet && window.ZoomyNet.isOnline() === false) return;
                 shown = ZOOMY_ERROR_TEXT;
                 kind = 'warning';
             } else if (zoomyQuietError(message)) {
