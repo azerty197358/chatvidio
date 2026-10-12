@@ -13,7 +13,7 @@ const { supabase } = require('../config/database');
 const { authenticate, authorize, checkBanned, checkActiveStream, isOwner, validateOfferOwnership, validateStudentAccess, checkStreamActive, checkNoActiveStream } = require('../middleware/auth');
 const { getOne, insert, update, autoBookFreeSession, loadLocalTeacherFollowers } = require('../utils/helpers');
 const { verifyToken } = require('../utils/jwt');
-const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/googleMeet');
+const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/zoom');
 const { sendPushNotification } = require('../utils/notification');
 
 // ✅ استيراد نظام التحقق المستقل من وقت البث
@@ -200,30 +200,27 @@ const handleStreamStart = async (req, res) => {
         // ✅ تم إلغاء قيود الوقت للأستاذ لفتح البث متى شاء دون أي شروط زمنية
 
 
-        // ✅ إنشاء غرفة Agora.io
-        let roomName = offer.room_name;
-        let password = offer.room_password;
+        //  ✅ إنشاء اجتماع Zoom حقيقي عبر API
+        const { generateFreeStreamRoom } = require('../utils/zoom');
+        const zoomRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
+        const zoomUrl = zoomRoom && zoomRoom.url ? zoomRoom.url : null;
 
-        if (!roomName) {
-            const randomSuffix = crypto.randomBytes(8).toString('hex');
-            roomName = `zoomdz_session_${offer_id}_${randomSuffix}`;
-            password = crypto.randomBytes(4).toString('hex').toUpperCase();
-        }
-        
-        const roomUrl = `/api/teacher-agora/${offer_id}`;
-        
-        // ✅ حفظ بيانات البث في جدول الدروس
+        const roomUrl = `/api/teacher-zoom/${offer_id}`;
+        const roomName = zoomUrl || `zoomdz_session_${offer_id}_${crypto.randomBytes(8).toString('hex')}`;
+
+        //  ✅ حفظ بيانات البث في جدول الدروس
         await supabase
             .from('offers')
             .update({
-                stream_url: roomUrl,
-                stream_platform: 'agora',
+                stream_url: zoomUrl || roomUrl,
+                meet_url: zoomUrl || offer.meet_url,
+                stream_platform: 'zoom',
                 status: 'live',
                 stream_active: true,
                 is_paused: false,
                 stream_started_at: new Date().toISOString(),
                 room_name: roomName,
-                room_password: password
+                room_password: null
             })
             .eq('id', offer_id);
         
@@ -287,7 +284,8 @@ const handleStreamStart = async (req, res) => {
         res.json({
             success: true,
             room_url: roomUrl,
-            password: password,
+            zoom_url: zoomUrl,
+            password: '',
             room_name: roomName,
             duration: offer.duration,
             students_count: sessions?.length || 0,
@@ -572,21 +570,22 @@ router.get('/student-status/:offer_id/:student_id', authenticate, validateStuden
             activeCount = count || 0;
         } catch (e) {}
 
-        const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0 || offer.stream_platform === 'google_meet' || offer.stream_platform === 'jitsi';
+        const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0 || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || offer.stream_platform === 'jitsi';
 
-        let effectiveMeetUrl = (offer.meet_url && offer.meet_url.includes('meet.google.com') && !offer.meet_url.includes('jit.si'))
-            ? offer.meet_url
-            : ((offer.stream_url && offer.stream_url.includes('meet.google.com') && !offer.stream_url.includes('jit.si')) ? offer.stream_url : null);
+        const storedMeetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
+        let effectiveMeetUrl = storedMeetUrl;
 
         if (isFreeOffer && !effectiveMeetUrl) {
-            const autoRoom = generateFreeStreamRoom(offer.id, offer.subject_name);
+            const autoRoom = await generateFreeStreamRoom(offer.id, offer.subject_name);
             effectiveMeetUrl = autoRoom.url;
-            supabase.from('offers').update({
-                stream_url: effectiveMeetUrl,
-                meet_url: effectiveMeetUrl,
-                stream_platform: 'google_meet',
-                room_name: effectiveMeetUrl
-            }).eq('id', offer_id).then(() => {}).catch(() => {});
+            if (effectiveMeetUrl) {
+                supabase.from('offers').update({
+                    stream_url: effectiveMeetUrl,
+                    meet_url: effectiveMeetUrl,
+                    stream_platform: 'zoom',
+                    room_name: effectiveMeetUrl
+                }).eq('id', offer_id).then(() => {}).catch(() => {});
+            }
         }
 
         const canJoinStudent = isFreeOffer ? isActive : (isActive && (isInStream || isLive));
@@ -596,9 +595,9 @@ router.get('/student-status/:offer_id/:student_id', authenticate, validateStuden
             is_waiting: !canJoinStudent,
             is_paused: isPaused,
             is_free: isFreeOffer,
-            stream_platform: isFreeOffer ? 'google_meet' : (offer.stream_platform === 'jitsi' ? 'google_meet' : (offer.stream_platform || 'agora')),
+            stream_platform: isFreeOffer ? 'zoom' : (offer.stream_platform === 'jitsi' ? 'zoom' : (offer.stream_platform || 'zoom')),
             meet_url: effectiveMeetUrl,
-            stream_url: isFreeOffer ? effectiveMeetUrl : (offer.stream_url || `/api/join-agora/${offer_id}/${student_id}`),
+            stream_url: isFreeOffer ? effectiveMeetUrl : (offer.stream_url || `/api/join-zoom/${offer_id}/${student_id}`),
             room_password: offer.room_password || null,
             duration: offer.duration || 0,
             status: offer.status,
@@ -697,7 +696,7 @@ router.post('/add-all-students/:offer_id', authenticate, authorize(['teacher']),
                 .eq('student_id', studentId);
 
             // ✅ إشعار الطالب
-            const joinUrl = `/api/join-agora/${offer_id}/${studentId}`;
+            const joinUrl = `/api/join-zoom/${offer_id}/${studentId}`;
             await insert('notifications', {
                 user_id: studentId,
                 user_type: 'student',

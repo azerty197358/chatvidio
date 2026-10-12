@@ -1895,6 +1895,39 @@ app.post('/api/verify-agora-password', async (req, res) => {
 // ✅ صفحة دخول الأستاذ للبث عبر Zoom Video SDK
 // ============================================================
 
+function renderZoomRetryPage(subjectName) {
+    const safe = String(subjectName || 'الحصة').replace(/[<>&"]/g, function (c) {
+        return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c];
+    });
+    return '<!DOCTYPE html>' +
+        '<html dir="rtl" lang="ar">' +
+        '<head>' +
+        '<meta charset="UTF-8">' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+        '<title>' + safe + ' - ZoomDz</title>' +
+        '<style>' +
+        '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+        'body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg,#0b172a,#1e3a8a); font-family: Cairo, sans-serif; color: #fff; padding: 20px; }' +
+        '.card { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 40px 30px; text-align: center; max-width: 440px; width: 100%; }' +
+        '.icon { font-size: 56px; margin-bottom: 16px; }' +
+        'h1 { font-size: 22px; font-weight: 800; margin-bottom: 10px; }' +
+        'p { color: #cbd5e1; font-size: 15px; line-height: 1.9; margin-bottom: 24px; }' +
+        'button { background: #22c55e; color: #fff; border: none; padding: 14px 34px; font-size: 16px; font-weight: 800; border-radius: 12px; cursor: pointer; font-family: inherit; }' +
+        'button:active { transform: scale(0.97); }' +
+        'a { color: #93c5fd; font-weight: 700; text-decoration: none; }' +
+        '</style>' +
+        '</head>' +
+        '<body>' +
+        '<div class="card">' +
+        '<div class="icon">🎥</div>' +
+        '<h1>جاري تجهيز اجتماع Zoom</h1>' +
+        '<p>لم نتمكن من الوصول إلى Zoom في هذه اللحظة. تحقق من اتصالك بالإنترنت ثم أعد المحاولة.</p>' +
+        '<button onclick="location.reload()">إعادة المحاولة</button>' +
+        '<p style="margin-top:20px;margin-bottom:0;font-size:13px;"><a href="/student-dashboard.html">العودة للوحة التحكم</a></p>' +
+        '</div>' +
+        '</body>' +
+        '</html>';
+}
 const handleTeacherZoomView = async (req, res) => {
     try {
         let token = req.query.token;
@@ -1941,26 +1974,29 @@ const handleTeacherZoomView = async (req, res) => {
 
         // إذا كانت الحصة عبر Google Meet أو مجانية، التحويل فوراً لرابط Google Meet
         const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
-        let meetUrl = (offer.meet_url && offer.meet_url.includes('meet.google.com') && !offer.meet_url.includes('jit.si'))
-            ? offer.meet_url
-            : ((offer.stream_url && offer.stream_url.includes('meet.google.com') && !offer.stream_url.includes('jit.si')) ? offer.stream_url : null);
-        
-        if (isFree && !meetUrl) {
-            const { generateFreeStreamRoom } = require('./utils/googleMeet');
-            const autoRoom = generateFreeStreamRoom(offer.id, offer.subject_name);
+                const { generateFreeStreamRoom, formatMeetOrZoomUrl } = require('./utils/zoom');
+        let meetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
+
+        if (!meetUrl) {
+            const autoRoom = await generateFreeStreamRoom(offer.id, offer.subject_name);
             meetUrl = autoRoom.url;
-            // تحديث قاعدة البيانات في الخلفية
-            supabase.from('offers').update({
-                stream_url: meetUrl,
-                meet_url: meetUrl,
-                stream_platform: 'google_meet',
-                room_name: meetUrl
-            }).eq('id', offer.id).then(() => {}).catch(() => {});
+            if (meetUrl) {
+                // تحديث قاعدة البيانات في الخلفية
+                supabase.from('offers').update({
+                    stream_url: meetUrl,
+                    meet_url: meetUrl,
+                    stream_platform: 'zoom',
+                    room_name: meetUrl
+                }).eq('id', offer.id).then(() => {}).catch(() => {});
+            }
         }
 
-        if ((isFree || offer.stream_platform === 'google_meet') && meetUrl) {
+        if (meetUrl) {
             return res.redirect(meetUrl);
         }
+
+        //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة
+        return res.send(renderZoomRetryPage(offer.subject_name || 'الحصة'));
         
         const teacher = await getOne('teachers', 'id', teacherId);
         
@@ -3646,26 +3682,29 @@ const handleStudentZoomView = async (req, res) => {
 
         // إذا كانت الحصة عبر Google Meet أو مجانية، التحويل فوراً لرابط Google Meet
         const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
-        let meetUrl = (offer.meet_url && offer.meet_url.includes('meet.google.com') && !offer.meet_url.includes('jit.si'))
-            ? offer.meet_url
-            : ((offer.stream_url && offer.stream_url.includes('meet.google.com') && !offer.stream_url.includes('jit.si')) ? offer.stream_url : null);
-        
-        if (isFree && !meetUrl) {
-            const { generateFreeStreamRoom } = require('./utils/googleMeet');
-            const autoRoom = generateFreeStreamRoom(offer.id, offer.subject_name);
+                const { generateFreeStreamRoom, formatMeetOrZoomUrl } = require('./utils/zoom');
+        let meetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
+
+        if (!meetUrl) {
+            const autoRoom = await generateFreeStreamRoom(offer.id, offer.subject_name);
             meetUrl = autoRoom.url;
-            // تحديث قاعدة البيانات في الخلفية
-            supabase.from('offers').update({
-                stream_url: meetUrl,
-                meet_url: meetUrl,
-                stream_platform: 'google_meet',
-                room_name: meetUrl
-            }).eq('id', offer.id).then(() => {}).catch(() => {});
+            if (meetUrl) {
+                // تحديث قاعدة البيانات في الخلفية
+                supabase.from('offers').update({
+                    stream_url: meetUrl,
+                    meet_url: meetUrl,
+                    stream_platform: 'zoom',
+                    room_name: meetUrl
+                }).eq('id', offer.id).then(() => {}).catch(() => {});
+            }
         }
 
-        if ((isFree || offer.stream_platform === 'google_meet') && meetUrl) {
+        if (meetUrl) {
             return res.redirect(meetUrl);
         }
+
+        //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة
+        return res.send(renderZoomRetryPage(offer.subject_name || 'الحصة'));
         
         const student = await getOne('students', 'id', studentId);
         
@@ -3703,6 +3742,8 @@ app.get('/api/join-agora/:offer_id/:student_id', handleStudentZoomView);
 app.post('/api/join-agora/:offer_id/:student_id', handleStudentZoomView);
 app.get('/api/join-jitsi/:offer_id/:student_id', handleStudentZoomView);
 app.post('/api/join-jitsi/:offer_id/:student_id', handleStudentZoomView);
+app.get('/api/join-zoom/:offer_id', handleStudentZoomView);
+app.post('/api/join-zoom/:offer_id', handleStudentZoomView);
 app.get('/api/join-zoom/:offer_id/:student_id', handleStudentZoomView);
 app.post('/api/join-zoom/:offer_id/:student_id', handleStudentZoomView);
 

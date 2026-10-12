@@ -6609,7 +6609,7 @@ function appendOptimisticMessage(text, reply) {
                 <label style="display: block; font-weight: 700; color: #1e293b; margin-bottom: 6px; font-size: 0.82rem;">
                     1️⃣ إنشاء اجتماع Google Meet:
                 </label>
-                <button type="button" onclick="window.open('https://meet.google.com/new', '_blank')" style="width: 100%; padding: 11px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; box-shadow: 0 2px 6px rgba(37,99,235,0.25);">
+                <button type="button" onclick="window.open('https://zoom.us/home#/meeting/new', '_blank')" style="width: 100%; padding: 11px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; box-shadow: 0 2px 6px rgba(37,99,235,0.25);">
                     <i class="fab fa-google"></i> Google Meet
                 </button>
             </div>
@@ -11712,7 +11712,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     window.closeGoogleMeetHostModal = closeGoogleMeetHostModal;
 
     function openGoogleMeetNewRoom() {
-        window.open('https://meet.google.com/new', '_blank');
+        window.open('https://zoom.us/home#/meeting/new', '_blank');
     }
     window.openGoogleMeetNewRoom = openGoogleMeetNewRoom;
 
@@ -11743,7 +11743,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             }
 
             // ثانياً: بدء البث
-            const startRes = await fetchWithAuth('/api/stream/start-agora-stream', {
+            const startRes = await fetchWithAuth('/api/stream/start-zoom-stream', {
                 method: 'POST',
                 body: JSON.stringify({ offer_id: offerId, meet_url: updateData.meet_url })
             });
@@ -11782,7 +11782,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
         try {
             showToast('⏳ جاري تجهيز غرفة البث المباشر وإشعار الطلاب...', 'info');
-            const res = await fetchWithAuth('/api/stream/start-agora-stream', {
+            const res = await fetchWithAuth('/api/stream/start-zoom-stream', {
                 method: 'POST',
                 body: JSON.stringify({ offer_id: offerId })
             });
@@ -11792,11 +11792,13 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 return;
             }
             if (data.success) {
-                if (data.is_free || data.stream_platform === 'google_meet' || data.meet_url) {
-                    let roomUrl = (data.meet_url && data.meet_url.includes('meet.google.com') && !data.meet_url.includes('jit.si'))
-                        ? data.meet_url
-                        : ((data.stream_url && data.stream_url.includes('meet.google.com') && !data.stream_url.includes('jit.si')) ? data.stream_url : (data.room_url || 'https://meet.google.com/new'));
-                    showToast('🎉 تم إطلاق البث المباشر وإشعار جميع الطلاب برابط Google Meet!', 'success');
+                if (data.is_free || data.stream_platform === 'zoom' || data.stream_platform === 'google_meet' || data.meet_url || data.zoom_url) {
+                    let roomUrl = data.zoom_url
+                        || (data.meet_url && (data.meet_url.includes('zoom.us') || data.meet_url.includes('zoom.com') || (data.meet_url.includes('meet.google.com') && !data.meet_url.includes('jit.si'))) ? data.meet_url : null)
+                        || (data.stream_url && (data.stream_url.includes('zoom.us') || data.stream_url.includes('zoom.com') || (data.stream_url.includes('meet.google.com') && !data.stream_url.includes('jit.si'))) ? data.stream_url : null)
+                        || data.room_url
+                        || 'https://zoom.us/home#/meeting/new';
+                    showToast('🎉 تم إطلاق البث المباشر وإشعار جميع الطلاب برابط Zoom!', 'success');
                     try {
                         const newWindow = window.open(roomUrl, '_blank');
                         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
@@ -11812,7 +11814,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 showToast(`✅ تم فتح شاشة البث (الحصة رقم ${sessionNumber || 1}) بنجاح! اضغط على "👈 انقر هنا لإدخال الطلاب وبدء البث" لإتاحة الحضور للطلاب.`, 'success');
                 
                 const token = localStorage.getItem('token');
-                const teacherAgoraUrl = `/api/teacher-agora/${offerId}?token=${encodeURIComponent(token)}`;
+                const teacherAgoraUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
                 try {
                     const newWindow = window.open(teacherAgoraUrl, '_blank');
                     if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
@@ -11843,7 +11845,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             try {
                 const res = await fetchWithAuth(`/api/offer/${offerId}`);
                 const offer = await res.json();
-                if (offer && (offer.is_free || offer.stream_platform === 'google_meet' || (offer.meet_url && offer.meet_url.includes('meet.google.com')))) {
+                if (offer && (offer.is_free || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || (offer.meet_url && (offer.meet_url.includes('meet.google.com') || offer.meet_url.includes('zoom.us') || offer.meet_url.includes('zoom.com'))))) {
                     const meetUrl = offer.meet_url || offer.stream_url;
                     if (meetUrl) {
                         try {
@@ -11862,7 +11864,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 }
             } catch(oErr) {}
 
-            const agoraUrl = `/api/teacher-agora/${offerId}?token=${encodeURIComponent(token)}`;
+            const agoraUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
             try {
                 const newWindow = window.open(agoraUrl, '_blank');
                 if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {

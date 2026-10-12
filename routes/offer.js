@@ -21,7 +21,7 @@ const upload = multer({
 const { processStreamPayments, archiveStreamLog } = require('../utils/streamVerification');
 const { sendPushNotification } = require('../utils/notification');
 const { calculateBookingRefundDetails } = require('../utils/refundCalculator');
-const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/googleMeet');
+const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/zoom');
 
 // ✅ دالة مساعدة لحساب واسترجاع الوقت المتبقي للبث
 function calculateOfferRemainingSeconds(offer) {
@@ -423,7 +423,7 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
             room_password: defaultPassword,
             stream_url: null, // لا يتم تفعيل رابط البث النشط إلا بعد بدء الأستاذ للبث فعلياً
             meet_url: isFreeOffer && freeRoomDetails ? freeRoomDetails.url : null,
-            stream_platform: isFreeOffer ? (freeRoomDetails ? freeRoomDetails.platform : 'google_meet') : (stream_platform || 'agora'),
+            stream_platform: isFreeOffer ? (freeRoomDetails ? freeRoomDetails.platform : 'zoom') : (stream_platform || 'zoom'),
             status: 'upcoming',
             education_level: finalEducationLevel,
             thumbnail_url: thumbnailUrl,
@@ -985,8 +985,8 @@ router.get('/offers', async (req, res) => {
                 room_password: offer.room_password || null,
                 room_name: offer.room_name || null,
                 stream_url: offer.stream_url || null,
-                meet_url: offer.meet_url || (offer.stream_url && offer.stream_url.includes('meet.google.com') ? offer.stream_url : null),
-                stream_platform: isFree ? 'google_meet' : (offer.stream_platform || 'agora'),
+                meet_url: offer.meet_url || formatMeetOrZoomUrl(offer.stream_url),
+                stream_platform: isFree ? 'zoom' : (offer.stream_platform || 'zoom'),
                 total_seconds: offer.total_seconds || (sessionDuration * 60),
                 remaining_seconds: remainingSeconds,
                 is_paused: offer.is_paused || false,
@@ -1066,8 +1066,8 @@ duration: offer.duration,
                 status: offer.status,
                 education_level: offer.education_level,
                 stream_url: offer.stream_url || null,
-                meet_url: offer.meet_url || (offer.stream_url && offer.stream_url.includes('meet.google.com') ? offer.stream_url : null),
-                stream_platform: ((offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1) && parseFloat(offer.price || 0) === 0) ? 'google_meet' : (offer.stream_platform || 'agora'),
+                meet_url: offer.meet_url || formatMeetOrZoomUrl(offer.stream_url),
+                stream_platform: ((offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1) && parseFloat(offer.price || 0) === 0) ? 'zoom' : (offer.stream_platform || 'zoom'),
                 room_password: offer.room_password || null,
                 room_name: offer.room_name || null,
                 total_seconds: offer.total_seconds || (offer.duration * 60),
@@ -1195,8 +1195,8 @@ router.get(['/offer/:offer_id', '/teacher/offer/:offer_id'], async (req, res) =>
             stream_active: Boolean(offer.stream_active),
             education_level: offer.education_level,
             stream_url: offer.stream_url || null,
-            meet_url: offer.meet_url || (offer.stream_url && offer.stream_url.includes('meet.google.com') ? offer.stream_url : null),
-            stream_platform: isFree ? 'google_meet' : (offer.stream_platform || 'agora'),
+            meet_url: offer.meet_url || formatMeetOrZoomUrl(offer.stream_url),
+            stream_platform: isFree ? 'zoom' : (offer.stream_platform || 'zoom'),
             room_password: offer.room_password || null,
             room_name: offer.room_name || null,
             total_seconds: offer.total_seconds || (sessionDuration * 60),
@@ -1334,8 +1334,8 @@ router.get('/teacher/offers/:teacher_id', authenticate, authorize(['teacher']), 
                 room_name: offer.room_name || null,
                 room_password: offer.room_password || null,
                 stream_url: offer.stream_url || null,
-                meet_url: offer.meet_url || (offer.stream_url && offer.stream_url.includes('meet.google.com') ? offer.stream_url : null),
-                stream_platform: isFree ? 'google_meet' : (offer.stream_platform || 'agora'),
+                meet_url: offer.meet_url || formatMeetOrZoomUrl(offer.stream_url),
+                stream_platform: isFree ? 'zoom' : (offer.stream_platform || 'zoom'),
                 total_seconds: offer.total_seconds || (sessionDuration * 60),
                 remaining_seconds: remainingSeconds,
                 is_paused: offer.is_paused || false,

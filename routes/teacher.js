@@ -16,7 +16,7 @@ const { uploadToSupabase, validateUploadedFiles, getPublicImageUrl, processUserP
 const { isValidDzPhone } = require('../utils/validation');
 const { sendWithdrawalOtpEmail } = require('../utils/email');
 const { getViewCount, syncItemViews } = require('../utils/viewsTracker');
-const { generateFreeStreamRoom } = require('../utils/googleMeet');
+const { generateFreeStreamRoom } = require('../utils/zoom');
 const logger = require('../utils/logger');
 const memoryCache = require('../utils/cache');
 
@@ -1620,7 +1620,7 @@ router.get('/offers/:teacher_id', authenticate, authorize(['teacher']), [
                 room_password: offer.room_password || null,
                 meet_url: (offer.meet_url && !offer.meet_url.includes('jit.si')) ? offer.meet_url : ((offer.stream_url && !offer.stream_url.includes('jit.si')) ? offer.stream_url : null),
                 stream_url: (offer.stream_url && !offer.stream_url.includes('jit.si')) ? offer.stream_url : ((offer.meet_url && !offer.meet_url.includes('jit.si')) ? offer.meet_url : null),
-                stream_platform: isFree ? 'google_meet' : (offer.stream_platform === 'jitsi' ? 'google_meet' : (offer.stream_platform || 'agora')),
+                stream_platform: isFree ? 'zoom' : (offer.stream_platform === 'jitsi' ? 'zoom' : (offer.stream_platform || 'zoom')),
                 total_seconds: offer.total_seconds || (sessionDuration * 60),
                 remaining_seconds: offer.remaining_seconds || (sessionDuration * 60),
                 views_count: views,
@@ -1683,7 +1683,7 @@ router.get('/offer/:offer_id', authenticate, authorize(['teacher']), [
             ...offer,
             meet_url: cleanMeetUrl,
             stream_url: cleanStreamUrl,
-            stream_platform: isFreeOffer ? 'google_meet' : (offer.stream_platform === 'jitsi' ? 'google_meet' : (offer.stream_platform || 'agora')),
+            stream_platform: isFreeOffer ? 'zoom' : (offer.stream_platform === 'jitsi' ? 'zoom' : (offer.stream_platform || 'zoom')),
             views_count: views,
             views: views,
             room_password: offer.room_password || null,

@@ -15,7 +15,7 @@ const { authenticate, authorize, checkBanned } = require('../middleware/auth');
 const { getOne, insert, update, updateWithCondition, remove, isNameTaken, autoBookFreeSession } = require('../utils/helpers');
 const { uploadToSupabase, validateUploadedFiles, getPublicImageUrl, processUserProfile } = require('../utils/upload');
 const { isValidDzPhone } = require('../utils/validation');
-const { formatMeetOrZoomUrl } = require('../utils/googleMeet');
+const { formatMeetOrZoomUrl } = require('../utils/zoom');
 
 const fs = require('fs');
 const studentFollowersFilePath = path.join(__dirname, '../data/student_followers.json');
@@ -1453,10 +1453,10 @@ router.get('/stream-status/:offer_id/:student_id', authenticate, authorize(['stu
         const isActive = isLive || isPaused || inActiveStream;
         let meetUrl = formatMeetOrZoomUrl(offer.meet_url || offer.stream_url);
 
-        const streamPlatform = isFree ? (offer.stream_platform || 'google_meet') : (offer.stream_platform === 'jitsi' ? 'google_meet' : (offer.stream_platform || 'agora'));
+        const streamPlatform = isFree ? (offer.stream_platform || 'zoom') : (offer.stream_platform === 'jitsi' ? 'zoom' : (offer.stream_platform || 'zoom'));
         let streamUrl = meetUrl || offer.stream_url;
-        if (!streamUrl && streamPlatform === 'agora') {
-            streamUrl = `/api/join-agora/${offer_id}/${student_id}`;
+        if (!streamUrl) {
+            streamUrl = `/api/join-zoom/${offer_id}/${student_id}`;
         }
 
         // إتاحة الدخول للطالب طالما أن البث مباشر أو نشط أو تمت إضافته من قبل الأستاذ
