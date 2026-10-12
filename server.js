@@ -1992,7 +1992,9 @@ const handleTeacherZoomView = async (req, res) => {
         }
 
         if (meetUrl) {
-            return res.redirect(meetUrl);
+            //  الأستاذ يحصل على start_url (رابط المضيف مع zak)
+            const teacherStartUrl = offer.start_url || meetUrl;
+            return res.redirect(teacherStartUrl);
         }
 
         //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة
@@ -3700,7 +3702,9 @@ const handleStudentZoomView = async (req, res) => {
         }
 
         if (meetUrl) {
-            return res.redirect(meetUrl);
+            //  الأستاذ يحصل على start_url (رابط المضيف مع zak)
+            const teacherStartUrl = offer.start_url || meetUrl;
+            return res.redirect(teacherStartUrl);
         }
 
         //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة

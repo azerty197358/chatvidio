@@ -204,6 +204,7 @@ const handleStreamStart = async (req, res) => {
         const { generateFreeStreamRoom } = require('../utils/zoom');
         const zoomRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
         const zoomUrl = zoomRoom && zoomRoom.url ? zoomRoom.url : null;
+        const startUrl = zoomRoom && zoomRoom.start_url ? zoomRoom.start_url : null;
 
         const roomUrl = `/api/teacher-zoom/${offer_id}`;
         const roomName = zoomUrl || `zoomdz_session_${offer_id}_${crypto.randomBytes(8).toString('hex')}`;
@@ -214,6 +215,7 @@ const handleStreamStart = async (req, res) => {
             .update({
                 stream_url: zoomUrl || roomUrl,
                 meet_url: zoomUrl || offer.meet_url,
+                start_url: startUrl || zoomUrl,
                 stream_platform: 'zoom',
                 status: 'live',
                 stream_active: true,
@@ -260,8 +262,8 @@ const handleStreamStart = async (req, res) => {
                             // the dashboard routes the tap through offer_id, and the
                             // room url is what lets the student join from the bell
                             offer_id: offer_id,
-                            meet_url: roomUrl,
-                            stream_url: roomUrl,
+                            meet_url: zoomUrl,
+                            stream_url: zoomUrl,
                             is_free: false,
                             is_read: false,
                             created_at: new Date().toISOString()
@@ -285,6 +287,7 @@ const handleStreamStart = async (req, res) => {
             success: true,
             room_url: roomUrl,
             zoom_url: zoomUrl,
+            start_url: startUrl,
             password: '',
             room_name: roomName,
             duration: offer.duration,

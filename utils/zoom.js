@@ -122,9 +122,9 @@ async function createZoomMeetingViaApi(teacherId, subjectName = '', offerDate = 
             return {
                 success: true,
                 url: d.join_url,
+                start_url: d.start_url || '',
                 meeting_id: String(d.id || ''),
                 uuid: d.uuid || '',
-                start_url: d.start_url || '',
                 room_name: String(d.id || d.join_url),
                 platform: 'zoom',
                 is_free: true
@@ -234,6 +234,7 @@ async function generateZoomRoom(offerId = null, subjectName = '', customUrl = ''
         if (formatted) {
             return {
                 url: formatted,
+                start_url: formatted,
                 room_name: formatted,
                 platform: formatted.includes('zoom.') ? 'zoom' : 'google_meet',
                 is_free: true,
