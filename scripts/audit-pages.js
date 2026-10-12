@@ -192,5 +192,56 @@ console.log('\n=== the connection banner must stay wired up ===');
     });
 }
 
+console.log('\n=== the guide must stay complete ===');
+{
+    const docs = path.join(ROOT, 'public', 'docs.html');
+    report(fs.existsSync(docs), 'docs.html exists');
+    if (fs.existsSync(docs)) {
+        const t = fs.readFileSync(docs, 'utf8');
+        ['packages', 'courses', 'rest'].forEach(function (id) {
+            report(t.indexOf('id="' + id + '"') !== -1, 'docs: the ' + id + ' section exists');
+            report(t.indexOf('href="#' + id + '"') !== -1, 'docs: ' + id + ' is in the contents bar');
+        });
+        report(t.indexOf('location.reload') === -1, 'docs: reconnecting does not reload the page');
+        report(t.indexOf('/js/connection.js') !== -1, 'docs: uses the shared connection banner');
+
+        // نص دخيل لا مكان له في دليل عربي
+        const cjk = t.match(/[\u4e00-\u9fff]+/g);
+        report(!cjk, 'docs: no stray characters', (cjk || []).join(' '));
+        report(!/precipitate/.test(t), 'docs: no stray words');
+    }
+}
+
+console.log('\n=== writes must not repeat a known failure ===');
+{
+    const h = fs.readFileSync(path.join(ROOT, 'utils', 'helpers.js'), 'utf8');
+    try { new vm.Script(h, { filename: 'helpers.js' }); report(true, 'helpers.js parses'); }
+    catch (e) { report(false, 'helpers.js parses', e.message); }
+
+    report(/const MISSING_COLUMNS = new Map\(\);/.test(h), 'the server remembers missing columns');
+    report(!/while \(attempts < 10\)/.test(h), 'no ten-try write loop');
+    report(/stripKnownMissingColumns\(table, sanitizedData\);/.test(h), 'known-missing columns are stripped up front');
+    const ins = h.substring(h.indexOf('async function insert(table, data)'));
+    const upd = h.substring(h.indexOf('async function update(table, id, data)'));
+    const insEnd = ins.indexOf('async function update');
+    const body = ins.slice(0, insEnd > -1 ? insEnd : ins.length);
+    report(/retriesLeft > 0\)/.test(body) && /retriesLeft > 0\)/.test(upd),
+        'a write only retries when it can actually remove the column');
+    report(!/data: sanitizedData/.test(h),
+        'error logs carry column names, never row values');
+}
+
+console.log('\n=== polling must stop when nobody is looking ===');
+{
+    ['student-dashboard.html', 'teacher-dashboard.html'].forEach(function (page) {
+        const t = fs.readFileSync(path.join(ROOT, 'public', page), 'utf8');
+        report(/__zoomyIdlePaused/.test(t), page + ': intervals pause when the tab is hidden');
+        report((t.match(/if \(window\.__zoomyIdlePaused\) return;/g) || []).length === 1,
+            page + ': the idle guard is installed exactly once');
+        report(!/setInterval\(chatTypingAsk, 2500\)/.test(t) && !/setInterval\(groupChatTypingAsk, 2500\)/.test(t),
+            page + ': the typing poll is no longer every 2.5 seconds');
+    });
+}
+
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));
 process.exit(bad ? 1 : 0);

@@ -108,30 +108,86 @@ function extractMissingColumn(msg) {
     return null;
 }
 
+// ---------------------------------------------------------------------
+//  ذاكرة الأعمدة الناقصة
+//  ---------------------------------------------------------------------
+//  عند فشل الإدراج بسبب عمود غير موجود، نحفظه ولن نرسله مرة أخرى.
+//  هذا يحوّل عدة رحلات لكل طلب إلى رحلة واحدة فقط لكل جدول طوال
+//  عمر العملية: أكبر مصدر لاستهلاك قاعدة البيانات كان لدينا.
+const MISSING_COLUMNS = new Map();
+const MISSING_COLUMNS_TTL_MS = 30 * 60 * 1000;   // 30 دقيقة
+const MAX_COLUMN_RETRIES = 4;                    // تجاوزها بلا فائدة
+
+function rememberMissingColumn(table, column) {
+    if (!MISSING_COLUMNS.has(table)) {
+        MISSING_COLUMNS.set(table, { columns: new Set(), at: Date.now() });
+    }
+    const entry = MISSING_COLUMNS.get(table);
+    entry.columns.add(column);
+    entry.at = Date.now();
+}
+
+function missingColumnsFor(table) {
+    const entry = MISSING_COLUMNS.get(table);
+    if (!entry) return null;
+    //  نُنسيها بعد مدة حتى تُلتقط إن أضفت العمود لاحقاً
+    if (Date.now() - entry.at > MISSING_COLUMNS_TTL_MS) {
+        MISSING_COLUMNS.delete(table);
+        return null;
+    }
+    return entry.columns;
+}
+
+/** يحذف الأعمدة الناقصة قبل الإرسال: رحلة واحدة بدل رحلات كثيرة */
+function stripKnownMissingColumns(table, data) {
+    const known = missingColumnsFor(table);
+    if (!known || known.size === 0) return 0;
+    let removed = 0;
+    known.forEach(function (column) {
+        if (Object.prototype.hasOwnProperty.call(data, column)) {
+            delete data[column];
+            removed++;
+        }
+    });
+    return removed;
+}
+
+/** أسماء الأعمدة فقط - لا نطبع القيم، فهي قد تحوي بيانات حساسة */
+function columnNames(data) {
+    return Object.keys(data || {}).slice(0, 40).join(', ');
+}
 async function insert(table, data) {
     let sanitizedData = sanitizeObject(data);
-    let attempts = 0;
-    while (attempts < 10) {
+    stripKnownMissingColumns(table, sanitizedData);
+    let retriesLeft = MAX_COLUMN_RETRIES;
+    while (retriesLeft > 0) {
+        retriesLeft--;
         try {
             const { data: result, error } = await supabase.from(table).insert(sanitizedData).select();
             if (error) {
                 const missingCol = extractMissingColumn(error.message);
                 if (missingCol) {
                     logger.warn(`⚠️ العمود [${missingCol}] غير موجود في الجدول [${table}]، سيتم حذفه وإعادة المحاولة.`, { table });
-                    delete sanitizedData[missingCol];
-                    attempts++;
-                    continue;
+                    rememberMissingColumn(table, missingCol);
+                    //  نعيد المحاولة فقط إن كان بالإمكان فعلاً إزالة العمود،
+                    //  وإلا فنحن ندور في المكان نفسه بلا فائدة.
+                    if (Object.prototype.hasOwnProperty.call(sanitizedData, missingCol) && retriesLeft > 0) {
+                        delete sanitizedData[missingCol];
+                        continue;
+                    }
+                    logger.error(`عمود ناقص في جدول ${table} لا يمكن حذفه`, { table, missingCol });
+                    throw error;
                 }
                 logger.error(`خطأ في insert إلى جدول ${table}`, { 
-                    table, 
-                    data: sanitizedData,
+                    table,
+                    columns: columnNames(sanitizedData),
                     error: error.message 
                 });
                 throw error;
             }
             
             if (!result || result.length === 0) {
-                logger.error(`فشل إدخال البيانات في جدول ${table} - لا توجد نتائج`, { table, data: sanitizedData });
+                logger.error(`فشل إدخال البيانات في جدول ${table} - لا توجد نتائج`, { table, columns: columnNames(sanitizedData) });
                 return null;
             }
 
@@ -140,15 +196,16 @@ async function insert(table, data) {
         } catch (error) {
             const missingCol = extractMissingColumn(error.message);
             if (missingCol) {
-                logger.warn(`⚠️ استثناء: العمود [${missingCol}] غير موجود في الجدول [${table}]، سيتم حذفه وإعادة المحاولة.`, { table });
-                delete sanitizedData[missingCol];
-                attempts++;
-                continue;
+                rememberMissingColumn(table, missingCol);
+                if (Object.prototype.hasOwnProperty.call(sanitizedData, missingCol) && retriesLeft > 0) {
+                    delete sanitizedData[missingCol];
+                    continue;
+                }
             }
-            logger.error(`استثناء في insert إلى جدول ${table}`, { 
-                table, 
-                error: error.message,
-                stack: error.stack 
+            logger.error(`استثناء في insert إلى جدول ${table}`, {
+                table,
+                columns: columnNames(sanitizedData),
+                error: error.message
             });
             throw error;
         }
@@ -157,22 +214,30 @@ async function insert(table, data) {
 
 async function update(table, id, data) {
     let sanitizedData = sanitizeObject(data);
-    let attempts = 0;
-    while (attempts < 10) {
+    stripKnownMissingColumns(table, sanitizedData);
+    let retriesLeft = MAX_COLUMN_RETRIES;
+    while (retriesLeft > 0) {
+        retriesLeft--;
         try {
             const { data: result, error } = await supabase.from(table).update(sanitizedData).eq('id', id).select();
             if (error) {
                 const missingCol = extractMissingColumn(error.message);
                 if (missingCol) {
                     logger.warn(`⚠️ العمود [${missingCol}] غير موجود في الجدول [${table}]، سيتم حذفه وإعادة المحاولة لتحديث السجل.`, { table, id });
-                    delete sanitizedData[missingCol];
-                    attempts++;
-                    continue;
+                    rememberMissingColumn(table, missingCol);
+                    //  نعيد المحاولة فقط إن كان بالإمكان فعلاً إزالة العمود،
+                    //  وإلا فنحن ندور في المكان نفسه بلا فائدة.
+                    if (Object.prototype.hasOwnProperty.call(sanitizedData, missingCol) && retriesLeft > 0) {
+                        delete sanitizedData[missingCol];
+                        continue;
+                    }
+                    logger.error(`عمود ناقص في جدول ${table} لا يمكن حذفه`, { table, missingCol });
+                    throw error;
                 }
                 logger.error(`خطأ في update لجدول ${table}`, { 
-                    table, 
-                    id, 
-                    data: sanitizedData,
+                    table,
+                    id,
+                    columns: columnNames(sanitizedData),
                     error: error.message 
                 });
                 throw error;
@@ -188,16 +253,16 @@ async function update(table, id, data) {
         } catch (error) {
             const missingCol = extractMissingColumn(error.message);
             if (missingCol) {
-                logger.warn(`⚠️ استثناء: العمود [${missingCol}] غير موجود في الجدول [${table}]، سيتم حذفه وإعادة المحاولة لتحديث السجل.`, { table, id });
-                delete sanitizedData[missingCol];
-                attempts++;
-                continue;
+                rememberMissingColumn(table, missingCol);
+                if (Object.prototype.hasOwnProperty.call(sanitizedData, missingCol) && retriesLeft > 0) {
+                    delete sanitizedData[missingCol];
+                    continue;
+                }
             }
-            logger.error(`استثناء في update لجدول ${table}`, { 
-                table, 
-                id, 
-                error: error.message,
-                stack: error.stack 
+            logger.error(`استثناء في update إلى جدول ${table}`, {
+                table,
+                columns: columnNames(sanitizedData),
+                error: error.message
             });
             throw error;
         }
@@ -211,7 +276,7 @@ async function updateWithCondition(table, id, expectedBalanceField, expectedBala
 
         if (error) {
             logger.error(`خطأ في updateWithCondition لجدول ${table}`, { 
-                table, id, data: sanitizedData, error: error.message 
+                table, id, columns: columnNames(sanitizedData), error: error.message 
             });
             throw error;
         }
@@ -420,6 +485,8 @@ async function autoBookFreeSession(offerOrOfferId, studentId) {
 }
 
 module.exports = {
+    //  أعمدة ناقصة تعلّمها الخادم - مفيدة في تشخيص "لماذا لا يُحفظ الحقل"
+    missingColumnsFor: missingColumnsFor,
     sanitizeInput,
     sanitizeObject,
     generateVerificationToken,
