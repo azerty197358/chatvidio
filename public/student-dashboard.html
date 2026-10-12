@@ -3240,8 +3240,8 @@ function appendOptimisticMessage(text, reply) {
         .toast.info { background: var(--gradient-main); }
         .toast i { font-size: 1.2rem; flex-shrink: 0; }
 
-        /* ===== TOAST: ي��ب تحت الشريط العلوي على الجوال =====
-        /* الشريط العلوي مثبّت أعلى 60px وكان يغط�� الرسائل */
+        /* ===== TOAST: يظهر تحت الشريط العلوي على الجوال =====
+        /* الشريط العلوي مثبّت أعلى 60px وكان يغطي الرسائل */
         @media (max-width: 768px) {
             .toast-container {
                 top: 78px !important;
@@ -5922,7 +5922,6 @@ function appendOptimisticMessage(text, reply) {
                     // الخادم نائم أو مشغول: لا إعادة تحميل أبداً،
                     // ولا إشعار أثناء تبديل التبويب.
                     if (!isBackgroundRead && !(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
-                        showToast(ZOOMY_ERROR_TEXT, 'error');
                     }
                 }
 
@@ -5955,17 +5954,11 @@ function appendOptimisticMessage(text, reply) {
 
             return response;
         } catch (netErr) {
-            if (!netErr.message.includes('انتهت صلاحية الجلسة') && !netErr.message.includes('حساب محظور')) {
+            //  لا إشعار ولا إعادة تحميل: انقطاع الاتصال يعرضه الشريط،
+            //  وأي فشل آخر لا يقطع عمل المستخدم. التفصيل للمطوّر فقط.
+            if (!netErr.message || (!netErr.message.includes('انتهت صلاحية الجلسة') && !netErr.message.includes('حساب محظور'))) {
                 logAppError('Fetch Error', netErr.message, null, url);
-                // ✅ لا إعادة تحميل تلقائية للصفحة عند أخطاء الشبكة (مثل فشل رفع الملفات)
-                // نُظهر رسالة واضحة فقط ونترك المستخدم يُعيد المحاولة بنفسه.
-                // انقطاع الاتصال: الشريط يتكفّل بالإخبار بلا إزعاج
-                // وب��ا إعادة تحميل للصفحة.
-                if (!(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
-                    showToast(ZOOMY_ERROR_TEXT, 'error');
-                }
-            }
-            throw netErr;
+            }            throw netErr;
         }
     }
 
@@ -6336,8 +6329,7 @@ function appendOptimisticMessage(text, reply) {
         // ================================================================
     //  إخفاء رسائل الخطأ: أي خطأ يُسجَّل في console للمطوّر،
     //  وما يراه المستخدم سطر هادئ واحد لا يكشف أي تفصيل تقني.
-    // ================================================================
-    var ZOOMY_ERROR_TEXT = 'تعذّر إتمام العملية. حاول مرة أخرى من فضلك.';
+    // ================================================================// لا نص عرض بديل للخطأ: إشعار الخطأ لا يُرسَم على الشاشة
 
     function zoomyQuietError(text) {
         var t = String(text == null ? '' : text).toLowerCase();
@@ -6371,18 +6363,19 @@ function showToast(message, type = 'success') {
             let shown = message;
             let kind = type;
             if (type === 'error') {
-                // لل��مطوّر فقط
+                //  لا رسالة خطأ على الشاشة إطلاقاً.
+                //  التفصيل كامل في console للمطوّر، والمستخدم لا
+                //  يرى شيئاً ولا ينقطع عمله. شريط الاتصال هو ما
+                //  يخبره بالوضع إن كان الأمر اتصالاً.
                 try { console.warn('[Zoomy]', message); } catch (e) {}
-                // انقطاع الاتصال: الشريط يشرح الوضع، ورسالة فوقه
-                // لا تضيف شيئاً سوى إزعاج.
-                if (window.ZoomyNet && window.ZoomyNet.isOnline() === false) return;
-                shown = ZOOMY_ERROR_TEXT;
-                kind = 'info';
-            } else if (zoomyQuietError(message)) {
-                try { console.warn('[Zoomy]', message); } catch (e) {}
-                shown = ZOOMY_ERROR_TEXT;
+                return;
             }
-            toast.className = `toast ${kind}`;
+            //  حتى لو جاء نص تقني على إشعار نجاح، نكتفي بصمت
+            if (zoomyQuietError(message)) {
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                return;
+            }
+toast.className = `toast ${kind}`;
             toast.innerHTML = `<i class="fas ${icons[kind] || icons.info}"></i> ${shown}`;
             container.appendChild(toast);
             setTimeout(() => {
@@ -7575,7 +7568,7 @@ function showToast(message, type = 'success') {
                 loadNotifications();
             } else {
                 if (data.insufficient_balance) {
-                    showToast(` �️ رصيدك غير كافٍ! المبلغ المطلوب: ${data.needed} دج`, 'error');
+                    showToast(` ️ رصيدك غير كافٍ! المبلغ المطلوب: ${data.needed} دج`, 'error');
                 } else {
                     showToast(data.error || 'حدث خطأ في عملية الحجز', 'error');
                 }

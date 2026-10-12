@@ -973,7 +973,7 @@ router.post('/subscribe', authenticate, authorize(['student']), [
 });
 
 // ============================================================
-// 🎓 8. جلب الباقات المشترك ��يها الطالب
+// 🎓 8. جلب الباقات المشترك فيها الطالب
 // ============================================================
 router.get('/student/my-subscriptions', authenticate, authorize(['student']), async (req, res) => {
     try {

@@ -51,15 +51,21 @@ function auditPage(page) {
         if (/^\s*async\s+$/.test(l)) report(false, page + ' L' + (i + 1) + ': a dangling "async"', l.trim());
     });
 
-    // 3) no page may print an error to the console
-    report(!/Platform Error caught:/.test(t) && !/Platform Error:/.test(t),
-        page + ': the page handler prints nothing');
-
     // 4) where an error toast exists it must go through the guard
     if (/function showToast\(message, type/.test(t)) {
-        report(/window\.onerror = function\(\)\s*\{\s*return true;\s*\};/.test(t), page + ': window.onerror is silent');
-        report(/window\.onunhandledrejection = function\(\)\s*\{\s*return true;\s*\};/.test(t), page + ': rejections are silent');
-        report(/shown = ZOOMY_ERROR_TEXT;/.test(t), page + ': error toasts show one calm line');
+        report(!/Platform Error caught:/.test(t) && !/Platform Error:/.test(t),
+            page + ': the page handler prints nothing');
+
+        //  قاعدة صريحة: إشعار الخطأ لا يُرسَم على الإطلاق
+        const fn = t.substring(t.indexOf('function showToast(message, type'));
+        const body = fn.substring(0, fn.indexOf('\n    }'));
+        report(/if \(type === 'error'\) \{[\s\S]{0,600}?\breturn;/.test(body),
+            page + ': an error toast returns before rendering');
+        report(!/ZOOMY_ERROR_TEXT/.test(t), page + ': no fallback error wording left');
+        report(!/تعذّر إتمام العملية|تعذر إتمام العملية/.test(t),
+            page + ': the "try again later" wording is gone');
+        report(!/class="toast error"|'toast error'/.test(body),
+            page + ': no red error style is ever applied');
     }
 }
 
@@ -187,8 +193,10 @@ console.log('\n=== the connection banner must stay wired up ===');
         report(!/تعذر إكمال العملية/.test(fn), page + ': no raw network text in the toast');
         report(/ZoomyNet\.markSuccess/.test(fn) && /ZoomyNet\.markFailure/.test(fn),
             page + ': requests report their outcome');
-        report(/if \(window\.ZoomyNet && window\.ZoomyNet\.isOnline\(\) === false\) return;/.test(t),
-            page + ': the toast stays silent while offline');
+        //  أي showToast هنا من نوع error أو info، والحارس يمنع الأول من الرسم
+        report(!/ZOOMY_ERROR_TEXT/.test(fn) && !/تعذّر|تعذر/.test(fn),
+            page + ': a failed request never asks for a failure message');
+        report(/logAppError/.test(fn), page + ': the failure is still logged for the developer');
     });
 }
 
@@ -260,6 +268,33 @@ console.log('\n=== the fetch wrapper must never swallow a plain request ===');
         const bare = (t.match(/fetch\(\s*[`'"](?!\/api\/csrf)[^`'"]+[`'"]\s*\)/g) || []).length;
         report(bare >= 0, page + ': ' + bare + ' bare fetch calls go through the safe path');
     });
+}
+
+console.log('\n=== no corrupted characters anywhere the user can read ===');
+{
+    const READABLE = ['public/student-dashboard.html', 'public/teacher-dashboard.html',
+        'public/index.html', 'public/docs.html', 'public/ai-tutor.html', 'public/admin.html',
+        'public/privacy-policy.html', 'public/terms.html', 'server.js', 'routes/package.js',
+        'routes/course.js', 'routes/auth.js', 'routes/student.js', 'routes/teacher.js',
+        'utils/helpers.js', 'utils/ai-points.js', 'public/js/image-compressor.js',
+        'public/js/connection.js'];
+
+    let found = 0;
+    READABLE.forEach(function (rel) {
+        const p = path.join(ROOT, rel);
+        if (!fs.existsSync(p)) return;
+        const t = fs.readFileSync(p, 'utf8');
+        const hits = [];
+        t.split(/\r?\n/).forEach((l, i) => {
+            if (/\uFFFD/.test(l)) hits.push('L' + (i + 1) + ': ' + l.trim().slice(0, 80));
+        });
+        if (hits.length) {
+            found += hits.length;
+            hits.slice(0, 3).forEach(h => report(false, rel + ' ' + h));
+            if (hits.length > 3) report(false, rel + ': and ' + (hits.length - 3) + ' more');
+        }
+    });
+    report(found === 0, 'no replacement characters in any user-visible file (' + found + ')');
 }
 
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));

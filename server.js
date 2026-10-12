@@ -638,7 +638,7 @@ app.post('/api/mystery-box/verify-telegram', async (req, res) => {
                 } else {
                     return res.status(400).json({
                         success: false,
-                        error: `عذراً، يجب الانضمام لقناة الم��صة أولاً (${channelId})`
+                        error: `عذراً، يجب الانضمام لقناة المخصة أولاً (${channelId})`
                     });
                 }
             } catch (tgErr) {
@@ -659,7 +659,7 @@ app.post('/api/mystery-box/verify-telegram', async (req, res) => {
                 } else if (desc.includes('user_id must be integer')) {
                     return res.status(400).json({
                         success: false,
-                        error: `يرجى إدخال معرف التلغرام الرقمي الخاص بك (أرقام فقط م��ال: 123456789) عبر البوت @userinfobot`
+                        error: `يرجى إدخال معرف التلغرام الرقمي الخاص بك (أرقام فقط مال: 123456789) عبر البوت @userinfobot`
                     });
                 } else {
                     return res.status(400).json({
@@ -774,7 +774,7 @@ app.post('/api/mystery-box/claim', async (req, res) => {
                 amount: reward,
                 type: 'referral_gift',
                 status: 'completed',
-                description: `مكافأة إحالة ����ن صندوق الهدايا - ${reward} دج`,
+                description: `مكافأة إحالة منن صندوق الهدايا - ${reward} دج`,
                 created_at: new Date().toISOString()
             });
 
@@ -1066,7 +1066,7 @@ app.get('/course/:id', async (req, res) => {
             '3eme_as': 'ثالثة ثانوي (BAC)',
             'bac': 'ثالثة ثانوي (BAC)',
             'university': 'تعليم جامعي / عالي',
-            'other': 'مس��وى آخر'
+            'other': 'مستوى آخر'
         };
         const levelText = levelMap[course.education_level] || course.education_level || 'جميع المستويات';
         
@@ -1839,7 +1839,7 @@ function escapeHtml(text) {
 }
 
 // ============================================================
-// ✅ ��دء البث باستخدام Jitsi Meet
+// ✅ دء البث باستخدام Jitsi Meet
 // ============================================================
 
 // ============================================================
@@ -2838,7 +2838,7 @@ function generateTeacherZoomPage(offer, teacher, token) {
 
         async function switchCamera() {
             if (!localVideoTrack) {
-                alert('⚠️ الكاميرا مغلقة، يرجى تشغيل الكاميرا أولاً للتمكن من التبديل بين الكام��را الأمامية والخلفية.');
+                alert('⚠️ الكاميرا مغلقة، يرجى تشغيل الكاميرا أولاً للتمكن من التبديل بين الكاميرا الأمامية والخلفية.');
                 return;
             }
 
@@ -3490,7 +3490,7 @@ function generateTeacherZoomPage(offer, teacher, token) {
             setTimeout(() => { window.location.href = '/teacher-dashboard.html'; }, 300);
         }
 
-        // حفظ وإيق����ف الموقت تلقائياً عند إغلاق التبويب أو مغادرة الصفحة دون إنهاء البث
+        // حفظ وإيقإف الموقت تلقائياً عند إغلاق التبويب أو مغادرة الصفحة دون إنهاء البث
         window.addEventListener('pagehide', function() {
             if (isLeaving) return;
             isTimerPaused = true;
@@ -4079,7 +4079,7 @@ function generateStudentZoomPage(offer, student) {
 
                 if (rawErrStr.includes('PERMISSION_DENIED') || rawErrStr.includes('NotAllowedError') || rawErrStr.includes('Permission denied')) {
                     userFriendlyTitle = '📷🎤 الإذن بالوصول للميكروفون أو الكاميرا مرفوض';
-                    userFriendlyAdvice = '��رجى السما�� بفتح الكاميرا والميكروفون من إعدادات المتصفح وإعادة المحاولة.';
+                    userFriendlyAdvice = 'رجى السماب بفتح الكاميرا والميكروفون من إعدادات المتصفح وإعادة المحاولة.';
                 } else if (rawErrStr.includes('NotFoundError') || rawErrStr.includes('DevicesNotFoundError')) {
                     userFriendlyTitle = '🔌 لم يتم العثور على كاميرا أو ميكروفون';
                     userFriendlyAdvice = 'تأكد من توصيل الكاميرا والميكروفون بجهازك بشكل صحيح.';
@@ -4601,7 +4601,7 @@ app.use('/api', authRoutes);
 // ✅ 3. مسارات الإدارة (تحتاج مصادقة إدارية)
 app.use('/api/admin', adminRoutes);
 
-// ✅ 4. مسارات الأ��تاذ ��ا��طالب (ت��ت��ج مصادقة)
+// ✅ 4. مسارات الأاتاذ أواتطالب (تمتنج مصادقة)
 app.use('/api/teacher', authenticate, teacherRoutes);
 app.use('/api/student', authenticate, studentRoutes);
 
@@ -4659,7 +4659,7 @@ app.post('/api/ai/summarize', authenticate, requireRegisteredUser, async (req, r
             const { generateText } = await import('ai');
             const prompt = `أنت بروفيسور وعالم تربوي وأستاذ أطروحات متميز، خبير في المناهج الرسمية والبرامج التعليمية الجزائرية.
 الطالب يدخل المستوى: ${levelText}، الشعبة أو التخصص: ${specialty || 'غير محدد'}، والمادة: ${subject}.
-قبل الكتابة استخدم Google Search للعثور على ��صادر موثوقة وحديثة تخص هذا الدرس والمستوى، ثم تحقّق من توافقها. لا تخمّن ولا تنشئ معلومات عامة غير مستندة إلى المصادر. اذكر في نهاية الشرح المصادر التي اعتمدت عليها بروابطها إن توفرت.
+قبل الكتابة استخدم Google Search للعثور على بصادر موثوقة وحديثة تخص هذا الدرس والمستوى، ثم تحقّق من توافقها. لا تخمّن ولا تنشئ معلومات عامة غير مستندة إلى المصادر. اذكر في نهاية الشرح المصادر التي اعتمدت عليها بروابطها إن توفرت.
 المطلوب منك كتابة **شرح فعلي دقيق ومبسّط** لدرس: "${cleanLesson}".
 
 تعليمات صارمة لا تقبل التراجع لضمان فهم الطالب فهماً تاماً وعميقاً ومبسطاً:
@@ -4879,7 +4879,7 @@ app.post('/api/ai/chat', authenticate, requireRegisteredUser, async (req, res) =
 1. اذكر المعطيات بوضوح.
 2. حدد المنهجية المتبعة.
 3. اكتب الحل خطوة بخطوة مع شرح كل خطوة.
-4. اكتب القواني�� والمعادلات الرياضية أو الفيزيائية بشكل كامل وصحيح باستخدام صيغة LaTeX ووضعها بين علامتي دولار مزدوجة $$ للمعادلات الكبيرة المنفصلة (مثال: $$ROI = \\left( \\frac{0.80}{1.00} \\right) \\times 100\\%$$) أو علامة دولار مفردة $ للمعادلات المدمجة داخل السطر.
+4. اكتب القوانين والمعادلات الرياضية أو الفيزيائية بشكل كامل وصحيح باستخدام صيغة LaTeX ووضعها بين علامتي دولار مزدوجة $$ للمعادلات الكبيرة المنفصلة (مثال: $$ROI = \\left( \\frac{0.80}{1.00} \\right) \\times 100\\%$$) أو علامة دولار مفردة $ للمعادلات المدمجة داخل السطر.
 5. تحقق من صحة الحل بشكل مختصر في النهاية.
 
 إذا أرسل الطالب صورة، فحلل محتواها بدقة واشرح تفاصيلها تبعا لأسئلته. وإذا لم تكن الصورة تعليمية أو واضحة، فاطلب منه بلطف رفع صورة أوضح لمساعدته.`;
@@ -5152,7 +5152,7 @@ app.post('/api/ai/platform-assistant', authenticate, requireRegisteredUser, asyn
         } else if (q.includes('شحن') || q.includes('رصيد') || q.includes('دفع') || q.includes('تعبئة')) {
             fallbackMsg = `💳 **دليل شحن الرصيد في منصة ZoomDz:**
 - يمكنك شحن محفظتك للاشتراك في الحصص والدورات عبر:
-  1. 📱 **بريدي موب (BaridiMob)** أو **البطاقة الذه��ية / CIB**.
+  1. 📱 **بريدي موب (BaridiMob)** أو **البطاقة الذهةية / CIB**.
   2. 🧾 **رفع وصل التحويل (Reçu):** قم بالتحويل ثم ارفع صورة الوصل في قسم المعاملات ليتم اعتماد رصيدك فوراً.
 - كما يمكنك الحصول على رصيد مجاني يومياً عبر **صندوق الهدايا 🎁** و**نظام الإحالة 🏆**.
 
@@ -5183,7 +5183,7 @@ app.post('/api/ai/platform-assistant', authenticate, requireRegisteredUser, asyn
         });
     } catch (err) {
         console.error('Platform Assistant Error:', err);
-        return res.status(500).json({ success: false, error: 'حدث خطأ أث��اء معالجة الطلب' });
+        return res.status(500).json({ success: false, error: 'حدث خطأ أثباء معالجة الطلب' });
     }
 });
 
@@ -5217,7 +5217,7 @@ app.post('/api/ai/solve-image', authenticate, requireRegisteredUser, async (req,
             return res.json({
                 success: false,
                 noExercise: true,
-                message: 'الصور�� غير واضحة أو تالفة. يرجى التقاط أو رفع صورة واضحة لنص تمرين أو مسألة مدرسية.'
+                message: 'الصورج غير واضحة أو تالفة. يرجى التقاط أو رفع صورة واضحة لنص تمرين أو مسألة مدرسية.'
             });
         }
 
@@ -5228,7 +5228,7 @@ app.post('/api/ai/solve-image', authenticate, requireRegisteredUser, async (req,
                 const { GoogleGenAI } = require('@google/genai');
                 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-                const prompt = `أنت مصحح ومحلل أكاديمي فائق الدقة لمنصة ZoomDz التعليمية للطو�� (${levelText}).
+                const prompt = `أنت مصحح ومحلل أكاديمي فائق الدقة لمنصة ZoomDz التعليمية للطوس (${levelText}).
 مهمتك الصارمة الأولى هي فحص وتصنيف الصورة المرفقة قبل أي شيء:
 
 1. تصنيف محتوى الصورة:
@@ -5455,7 +5455,7 @@ app.get('/api/teacher/me', authenticate, authorize(['teacher']), async (req, res
             .single();
         
         if (error || !teacher) {
-            console.error('❌ خطأ في ��لب بيانات الأستاذ:', error);
+            console.error('❌ خطأ في ملب بيانات الأستاذ:', error);
             return res.status(404).json({ 
                 success: false, 
                 error: 'الأستاذ غير موجود' 
@@ -5696,7 +5696,7 @@ app.get('/api/teacher/balance/:teacherId', authenticate, authorize(['teacher']),
                 .order('created_at', { ascending: false });
 
             if (sessionsError) {
-                console.error('❌ خطأ في جلب جل��ات الأستاذ:', sessionsError);
+                console.error('❌ خطأ في جلب جلات الأستاذ:', sessionsError);
             } else if (sessions) {
                 allSessions = sessions.map(s => {
                     const offer = offersMap.get(s.offer_id);
@@ -5760,7 +5760,7 @@ app.get('/api/student/balance/:studentId', authenticate, authorize(['student']),
         const studentId = parseInt(req.params.studentId);
         
         if (req.user.userId !== studentId) {
-            return res.status(403).json({ success: false, error: 'غير ��صرح به' });
+            return res.status(403).json({ success: false, error: 'غير صرح به' });
         }
         
         const { data: student, error } = await supabase
@@ -5868,7 +5868,7 @@ app.get('/api/teacher/offers/:teacherId', authenticate, authorize(['teacher']), 
         });
         res.json(syncedOffers);
     } catch (error) {
-        console.error('❌ خطأ في جلب دروس ا��أستاذ:', error.message);
+        console.error('❌ خطأ في جلب دروس اأستاذ:', error.message);
         res.status(500).json({ success: false, error: 'حدث خطأ في الخادم' });
     }
 });
@@ -7314,7 +7314,7 @@ if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
         console.log(`🚀 الخادم يعمل على http://localhost:${PORT}`);
         console.log('='.repeat(60));
         console.log('📅 التاريخ:', new Date().toLocaleString('ar-EG'));
-        console.log('�� نظام البث: Jitsi Meet (مجاني 100%)');
+        console.log(' نظام البث: Jitsi Meet (مجاني 100%)');
         console.log('✅ مسارات المصادقة: /api/student/register و /api/teacher/register');
         console.log('✅ مسارات /me: /api/student/me و /api/teacher/me');
         console.log('='.repeat(60));

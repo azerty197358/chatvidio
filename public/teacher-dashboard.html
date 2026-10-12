@@ -3499,8 +3499,8 @@ function appendOptimisticMessage(text, reply) {
         .toast.info { background: var(--gradient-main); }
         .toast i { font-size: 1.1rem; flex-shrink: 0; }
 
-        /* ===== TOAST: ي��ب تحت الشريط العلوي على الجوال =====
-        /* الشريط العلوي مثبّت أعلى 60px وكان يغط�� الرسائل */
+        /* ===== TOAST: يظهر تحت الشريط العلوي على الجوال =====
+        /* الشريط العلوي مثبّت أعلى 60px وكان يغطي الرسائل */
         @media (max-width: 768px) {
             .toast-container {
                 top: 78px !important;
@@ -7728,7 +7728,6 @@ function appendOptimisticMessage(text, reply) {
                 // ورسالة واحدة هادئة عند إجراء صريح فقط.
                 logAppError('Server Error', errMsg, response.status, url);
                 if (!isBackgroundRead && !(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
-                    showToast(ZOOMY_ERROR_TEXT, 'error');
                 }
             }
 
@@ -7770,14 +7769,13 @@ function appendOptimisticMessage(text, reply) {
         } catch (err) {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
-                if (!isBackgroundRead) showToast(ZOOMY_ERROR_TEXT, 'error');
+                if (!isBackgroundRead) { /* لا رسالة خطأ على الشاشة */ }
                 throw new Error('انتهت مهلة الاتصال');
             }
             if (!err.message.includes('انتهت صلاحية الجلسة') && !err.message.includes('حساب محظور') && !isBackgroundRead) {
                 // لا إعادة تحميل للصفحة أبداً: يفقد المستخدم ما كتبه.
                 logAppError('Fetch Error', err.message, null, url);
                 if (!(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
-                    showToast(ZOOMY_ERROR_TEXT, 'error');
                 }
             }
             throw err;
@@ -8048,8 +8046,7 @@ function appendOptimisticMessage(text, reply) {
         // ================================================================
     //  إخفاء رسائل الخطأ: أي خطأ يُسجَّل في console للمطوّر،
     //  وما يراه المستخدم سطر هادئ واحد لا يكشف أي تفصيل تقني.
-    // ================================================================
-    var ZOOMY_ERROR_TEXT = 'تعذّر إتمام العملية. حاول مرة أخرى من فضلك.';
+    // ================================================================// لا نص عرض بديل للخطأ: إشعار الخطأ لا يُرسَم على الشاشة
 
     function zoomyQuietError(text) {
         var t = String(text == null ? '' : text).toLowerCase();
@@ -8083,18 +8080,19 @@ function showToast(message, type = 'success') {
             let shown = message;
             let kind = type;
             if (type === 'error') {
-                // لل��مطوّر فقط
+                //  لا رسالة خطأ على الشاشة إطلاقاً.
+                //  التفصيل كامل في console للمطوّر، والمستخدم لا
+                //  يرى شيئاً ولا ينقطع عمله. شريط الاتصال هو ما
+                //  يخبره بالوضع إن كان الأمر اتصالاً.
                 try { console.warn('[Zoomy]', message); } catch (e) {}
-                // انقطاع الاتصال: الشريط يشرح الوضع، ورسالة فوقه
-                // لا تضيف شيئاً سوى إزعاج.
-                if (window.ZoomyNet && window.ZoomyNet.isOnline() === false) return;
-                shown = ZOOMY_ERROR_TEXT;
-                kind = 'info';
-            } else if (zoomyQuietError(message)) {
-                try { console.warn('[Zoomy]', message); } catch (e) {}
-                shown = ZOOMY_ERROR_TEXT;
+                return;
             }
-            toast.className = `toast ${kind}`;
+            //  حتى لو جاء نص تقني على إشعار نجاح، نكتفي بصمت
+            if (zoomyQuietError(message)) {
+                try { console.warn('[Zoomy]', message); } catch (e) {}
+                return;
+            }
+toast.className = `toast ${kind}`;
             toast.innerHTML = `<i class="fas ${icons[kind] || icons.info}"></i> ${shown}`;
             container.appendChild(toast);
             setTimeout(() => {
@@ -17653,7 +17651,7 @@ ${activeChatGroupIsOwner ? `
                     </div>
 
                     <div style="display: flex; justify-content: space-around; background: #f8fafc; padding: 10px; border-radius: 14px; border: 1px solid #e2e8f0; margin-bottom: 14px;">
-                        ${['👍', '❤️', '😂', '�', '😢', '👏', '🔥'].map(emoji => `
+                        ${['👍', '❤️', '😂', '😐', '😢', '👏', '🔥'].map(emoji => `
                             <span onclick="sendGroupMsgReaction('${msgId}', '${emoji}'); hideGroupMsgActionSheet();" style="font-size: 1.5rem; cursor: pointer; transition: transform 0.15s;" onmouseenter="this.style.transform='scale(1.3)'" onmouseleave="this.style.transform='scale(1)'">${emoji}</span>
                         `).join('')}
                     </div>

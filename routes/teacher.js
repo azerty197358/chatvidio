@@ -700,7 +700,7 @@ router.get('/public/teaching-levels', async (req, res) => {
         const levelMap = {
             'primary_all': 'التعليم الابتدائي',
             'primary_1': 'السنة الأولى ابتدائي',
-            'primary_2': 'السنة الثانية ابت��ائي',
+                        'primary_2': 'السنة الثانية ابتدائي',
             'primary_3': 'السنة الثالثة ابتدائي',
             'primary_4': 'السنة الرابعة ابتدائي',
             'primary_5': 'السنة الخامسة ابتدائي',
@@ -1288,7 +1288,7 @@ router.post('/withdraw-request', authenticate, authorize(['teacher']), [
             return res.status(403).json({ success: false, error: 'غير مصرح لك بطلب السحب' });
         }
 
-        // �� التحقق من صحة رمز التحقق OTP
+            // التحقق من صحة رمز التحقق OTP
         const storedOtp = withdrawalOtpStore.get(parseInt(teacher_id));
         if (!storedOtp) {
             return res.status(400).json({
@@ -1833,7 +1833,7 @@ router.get('/students/:teacher_id', authenticate, authorize(['teacher']), [
         const teacher_id = parseInt(req.params.teacher_id);
 
         if (req.user.userId !== teacher_id && req.user.role !== 'admin' && req.user.email !== ADMIN_EMAIL) {
-            return res.status(403).json({ success: false, error: 'غير مصرح لك ب��رس هذه المعلومات' });
+            return res.status(403).json({ success: false, error: 'غير مصرح لك بعرض هذه المعلومات' });
         }
 
         const { data: offers, error: offersError } = await supabase
@@ -1876,7 +1876,7 @@ router.get('/students/:teacher_id', authenticate, authorize(['teacher']), [
             .order('created_at', { ascending: false });
 
         if (sessionsError) {
-            logger.error('خطأ في ��لب الجلسات:', sessionsError.message);
+            logger.error('خطأ في جلب الجلسات:', sessionsError.message);
             return res.status(500).json([]);
         }
 
@@ -1911,7 +1911,7 @@ router.post('/complete-profile', authenticate, authorize(['teacher']), upload.fi
     body('teacher_id').optional(),
     body('phone').optional({ checkFalsy: true }).trim().custom((val) => {
         if (!isValidDzPhone(val)) {
-            throw new Error('⚠️ رقم الهاتف يجب أن يكون برقم جزائري ��حيح (مثال: 0550123456 أو 0660123456 أو 0770123456)');
+            throw new Error('رقم الهاتف يجب أن يكون برقم جزائري صحيح (مثال: 0550123456 أو 0660123456 أو 0770123456)');
         }
         return true;
     }),
@@ -2230,7 +2230,7 @@ router.get('/teacher/plan-releases/:teacher_id', authenticate, authorize(['teach
 // ✅ تحرير مستحقات حصة مكتملة يدوياً أو بعد انتهاء الجلسة
 // ============================================================
 router.post('/teacher/complete-session-escrow', authenticate, authorize(['teacher']), [
-    body('offer_id').isInt().withMessage('��عرف الدرس غير صالح'),
+    body('offer_id').isInt().withMessage('معرف الدرس غير صالح'),
     body('session_number').optional().isInt().withMessage('رقم الحصة غير صالح')
 ], async (req, res) => {
     try {
@@ -2443,7 +2443,7 @@ router.post('/teacher/upload-verification-docs', authenticate, authorize(['teach
 });
 
 // ============================================================
-// 🚀 طلب ترويج وتواصل مباشر مع مؤسس المنصة (خا�� بأساتذة VIP)
+// 🚀 طلب ترويج وتواصل مباشر مع مؤسس المنصة (خا بأساتذة VIP)
 // ============================================================
 router.post('/teacher/request-founder-promo', authenticate, authorize(['teacher']), async (req, res) => {
     try {
