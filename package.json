@@ -6,11 +6,12 @@
   "scripts": {
     "start": "node dist/server.cjs",
     "dev": "PORT=3000 tsx server.js",
-    "prebuild": "node scripts/audit-pages.js && node scripts/test-ai-points.js && node scripts/test-db-writes.js",
+    "prebuild": "node scripts/audit-pages.js && node scripts/test-ai-points.js && node scripts/test-db-writes.js && node scripts/test-fetch-wrapper.js",
     "build": "vite build && esbuild server.js --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "check:pages": "node scripts/audit-pages.js",
     "check:ai-points": "node scripts/test-ai-points.js",
     "check:db-writes": "node scripts/test-db-writes.js",
+    "check:fetch": "node scripts/test-fetch-wrapper.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

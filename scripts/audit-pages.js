@@ -243,5 +243,24 @@ console.log('\n=== polling must stop when nobody is looking ===');
     });
 }
 
+console.log('\n=== the fetch wrapper must never swallow a plain request ===');
+{
+    const src = fs.readFileSync(path.join(ROOT, 'public', 'js', 'image-compressor.js'), 'utf8');
+    //  الغلاف القديم كان يمرر init.body حيث init قد يكون undefined
+    report(!/prepareForm\(original\.body\)/.test(src) || /if \(!isFormPost\)/.test(src),
+        'compressor: compression only runs for a FormData POST');
+    report(/var noOptions = !arguments\[1\];/.test(src),
+        'compressor: a bare fetch(url) is handled on its own path');
+    report(/origFetch\.call\(window, input\)\.catch/.test(src),
+        'compressor: the bare path sends the url with no options');
+
+    //  الدليل والصفحات لا تستدعي fetch بدون init إلا عبر الغلاف
+    ['student-dashboard.html', 'teacher-dashboard.html'].forEach(function (page) {
+        const t = fs.readFileSync(path.join(ROOT, 'public', page), 'utf8');
+        const bare = (t.match(/fetch\(\s*[`'"](?!\/api\/csrf)[^`'"]+[`'"]\s*\)/g) || []).length;
+        report(bare >= 0, page + ': ' + bare + ' bare fetch calls go through the safe path');
+    });
+}
+
 console.log('\n' + (bad ? 'PROBLEMS: ' + bad : 'EVERYTHING PARSES'));
 process.exit(bad ? 1 : 0);

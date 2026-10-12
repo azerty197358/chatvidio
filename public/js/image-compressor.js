@@ -359,25 +359,63 @@
     }
 
     var origFetch = window.fetch;
+
     if (typeof origFetch === 'function') {
-        window.fetch = function (input, init) {
-            var isFormPost = false;
-            var canRetry = false;
+        /** تأخير قصير قبل إعادة المحاولة */
+        function backoff(triesLeft) {
+            return RETRY_DELAYS[RETRY_DELAYS.length - triesLeft] || RETRY_DELAYS[0];
+        }
+
+        /**
+         *  طلب بلا كائن إعدادات - وهو الغالب في القوائم.
+         *  يُرسَل كما هو تماماً، مع إعادة محاولة فقط إن لم تصل البوابة.
+         */
+        window.fetch = function (input) {
+            var method = 'GET';
             try {
-                var method = String(((init && init.method) || (input && input.method) || 'GET')).toUpperCase();
+                method = String((arguments[1] && arguments[1].method) ||
+                    (input && input.method) || 'GET').toUpperCase();
+            } catch (e) {}
+
+            var noOptions = !arguments[1];
+            if (noOptions && method !== 'GET' && method !== 'HEAD') {
+                return origFetch.apply(window, arguments);
+            }
+
+            if (noOptions) {
+                var plainTries = 0;
+                function sendPlain(triesLeft) {
+                    return origFetch.call(window, input).catch(function (err) {
+                        if (triesLeft > 0) {
+                            plainTries++;
+                            if (window.ZoomyNet && window.ZoomyNet.markFailure) window.ZoomyNet.markFailure();
+                            return sleep(backoff(triesLeft)).then(function () { return sendPlain(triesLeft - 1); });
+                        }
+                        throw err;
+                    }).then(function (res) {
+                        if (window.ZoomyNet && window.ZoomyNet.markSuccess) window.ZoomyNet.markSuccess();
+                        if (GATEWAY_STATUSES.indexOf(res.status) !== -1 && triesLeft > 0) {
+                            plainTries++;
+                            return sleep(backoff(triesLeft)).then(function () { return sendPlain(triesLeft - 1); });
+                        }
+                        return res;
+                    });
+                }
+                return sendPlain(RETRY_DELAYS.length);
+            }
+
+            //  من هنا فصاعداً هناك كائن إعدادات
+            var original = arguments[1];
+            var isFormPost = false;
+            try {
                 isFormPost = method === 'POST' &&
-                    init && init.body && typeof FormData !== 'undefined' && init.body instanceof FormData;
-                // القراءة لا تترك أثراً، فإعادتها آمنة تماماً. وهي أكثر
-                // ما يقع على تبديل التبويب، فإعادتها تُخفي غالباً
-                // الخادم النائم دون أن يرى المستخدم شيئاً.
-                canRetry = (method === 'GET' || method === 'HEAD') || isFormPost;
-            } catch (e) { isFormPost = false; canRetry = false; }
+                    original.body && typeof FormData !== 'undefined' && original.body instanceof FormData;
+            } catch (e) { isFormPost = false; }
 
-            if (!isFormPost && !canRetry) return origFetch.apply(window, arguments);
+            if (!isFormPost && method !== 'GET' && method !== 'HEAD') {
+                return origFetch.apply(window, arguments);
+            }
 
-            var backgroundRead = !isFormPost;
-
-            var original = init;
             var attempt = 0;
 
             function send(form, triesLeft) {
@@ -387,26 +425,29 @@
                 }
                 next.body = form;
                 return origFetch.call(window, input, next).catch(function (err) {
-                    // انقطاع الشبكة أو البوابة لم يوصل الطلب أصلاً: إعادة آمنة
+                    // انقطاع الشبكة: الطلب لم يصل، والإعادة آمنة
                     if (triesLeft > 0) {
                         attempt++;
                         if (window.ZoomyNet && window.ZoomyNet.markFailure) window.ZoomyNet.markFailure();
-                                        try { console.warn('[Zoomy] لم يصل الطلب، إعادة محاولة ' + attempt); } catch (e) {}
-                        return sleep(RETRY_DELAYS[RETRY_DELAYS.length - triesLeft] || RETRY_DELAYS[0])
-                            .then(function () { return send(form, triesLeft - 1); });
+                        try { console.warn('[Zoomy] لم يصل الطلب، إعادة محاولة ' + attempt); } catch (e) {}
+                        return sleep(backoff(triesLeft)).then(function () { return send(form, triesLeft - 1); });
                     }
                     throw err;
                 }).then(function (res) {
-                    // 502/503/504 يعني أن الطلب لم يصل إلى التطبيق إطلاقاً
+                    // 502/503/504: الطلب لم يصل إلى التطبيق إطلاقاً
                     if (window.ZoomyNet && window.ZoomyNet.markSuccess) window.ZoomyNet.markSuccess();
-                                        if (GATEWAY_STATUSES.indexOf(res.status) !== -1 && triesLeft > 0) {
+                    if (GATEWAY_STATUSES.indexOf(res.status) !== -1 && triesLeft > 0) {
                         attempt++;
                         try { console.warn('[Zoomy] الخادم مشغول (' + res.status + ')، إعادة محاولة ' + attempt); } catch (e) {}
-                        return sleep(RETRY_DELAYS[RETRY_DELAYS.length - triesLeft] || RETRY_DELAYS[0])
-                            .then(function () { return send(form, triesLeft - 1); });
+                        return sleep(backoff(triesLeft)).then(function () { return send(form, triesLeft - 1); });
                     }
                     return res;
                 });
+            }
+
+            if (!isFormPost) {
+                //  GET/HTTP عادي: نمرّر الجسم كما هو بلا ضغط
+                return send(original.body, RETRY_DELAYS.length);
             }
 
             return prepareForm(original.body).then(function (form) {
