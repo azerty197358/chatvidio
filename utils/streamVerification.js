@@ -779,9 +779,20 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
 
         const { data: students } = await supabase
             .from('sessions')
-            .select('student_id, id')
+            .select('student_id, id, payment_amount')
             .eq('offer_id', offerId)
             .in('payment_status', ['pending_stream', 'paid']);
+
+        // ✅ منع الاسترداد المزدوج: إن لم يبقَ أي مبلغ معلق (تم استرداده عند إنهاء البث سابقاً)
+        //    لا نكرر الاسترداد عند إعادة الاستدعاء (مثلاً عند حذف الدرس بعد إنهاء البث)
+        if (!students || students.length === 0) {
+            return {
+                success: true,
+                already_processed: true,
+                session_number: currentSessionNum,
+                amount_refunded: 0
+            };
+        }
 
         for (const session of (students || [])) {
             const { data: student } = await supabase
@@ -819,7 +830,16 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
                     created_at: new Date().toISOString()
                 });
         }
-        
+
+        // ✅ تعليم الجلسات كمستردة لمنع أي استرداد مكرر لاحقاً (عند حذف الدرس بعد إنهاء البث مثلاً)
+        try {
+            await supabase
+                .from('sessions')
+                .update({ payment_status: 'refunded' })
+                .eq('offer_id', offerId)
+                .in('id', (students || []).map(s => s.id));
+        } catch (e) {}
+
   const amountToRefundTotal = teacherSharePerSession * (students?.length || 0);
   const { data: teacher } = await supabase
             .from('teachers')
@@ -854,8 +874,7 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
   is_escrow_released: true,
   updated_at: new Date().toISOString()
   })
-  .eq('id', targetSession.id)
-  .eq('is_escrow_released', false);
+  .eq('id', targetSession.id);
         }
 
         const newCompletedCount = Math.min(totalSessions, (offer.completed_sessions_count || 0) + 1);
@@ -915,6 +934,11 @@ async function processEarlyEndRefund(offerId) {
 
     if (sessionsError) {
         logger.error('خطأ في جلب الجلسات:', sessionsError);
+        return;
+    }
+
+    // ✅ منع التكرار: إن لم تبقَ جلسات معلقة فالمبالغ استُرددت بالفعل (عند الإنهاء ثم الحذف)
+    if (!sessions || sessions.length === 0) {
         return;
     }
 

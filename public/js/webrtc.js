@@ -34,6 +34,7 @@
     let onParticipantLeftCallback = null;
     let onConnectionStateCallback = null;
     let onChatMessageCallback = null;
+    let onModerationCallback = null;
     let onScreenShareCallback = null;
 
     function getSignalingUrl() {
@@ -146,6 +147,14 @@
         switch (msg.type) {
             case 'joined':
                 console.log('[ZoomyRTC] Joined room:', msg.roomId, 'Participants:', msg.participants.length);
+                //  الأستاذ ينشئ اتصالاً بالمشاركين الموجودين مسبقاً (طالب دخل قبل الأستاذ)
+                if (currentRole === 'teacher' && Array.isArray(msg.participants)) {
+                    msg.participants.forEach(function (p) {
+                        if (p && p.userId !== currentUserId && p.role === 'student') {
+                            createPeerConnection(p.userId, true);
+                        }
+                    });
+                }
                 break;
 
             case 'participant-joined':
@@ -181,6 +190,11 @@
 
             case 'chat-message':
                 if (onChatMessageCallback) onChatMessageCallback(msg);
+                break;
+
+            case 'mute-student':
+                //  حدث إدارة (كتم/فك كتم طالب) يبثه الخادم عبر REST API
+                if (onModerationCallback) onModerationCallback(msg);
                 break;
 
             case 'screen-share-start':
@@ -529,6 +543,7 @@
     function onParticipantLeft(cb) { onParticipantLeftCallback = cb; }
     function onConnectionState(cb) { onConnectionStateCallback = cb; }
     function onChatMessage(cb) { onChatMessageCallback = cb; }
+    function onModeration(cb) { onModerationCallback = cb; }
     function onScreenShare(cb) { onScreenShareCallback = cb; }
 
     // Export
@@ -552,6 +567,7 @@
         onParticipantLeft,
         onConnectionState,
         onChatMessage,
+        onModeration,
         onScreenShare
     };
 })();

@@ -15,6 +15,14 @@ const { getOne, insert, update, autoBookFreeSession, loadLocalTeacherFollowers }
 const { verifyToken } = require('../utils/jwt');
 const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/webrtc');
 const { sendPushNotification } = require('../utils/notification');
+const { broadcastToRoom } = require('../utils/signaling');
+
+// ✅ بث رسالة إلى غرفة البث المفتوحة (WebRTC) — يربط REST API بالـ WebSocket
+function broadcastToLiveRoom(offerId, message) {
+    try {
+        broadcastToRoom(`offer_${offerId}`, message);
+    } catch (e) {}
+}
 
 // ✅ استيراد نظام التحقق المستقل من وقت البث
 const { 
@@ -2130,6 +2138,19 @@ const streamMessagesStore = new Map(); // offer_id -> Array of message objects
 const mutedStudentsStore = new Map();  // offer_id -> Set of student_ids
 const teacherPingStore = new Map();     // offer_id -> timestamp (ms)
 
+// ✅ جلب قائمة المحكم عليهم (مع تحميلها من قاعدة البيانات مرة واحدة عند أول طلب بعد إعادة تشغيل الخادم)
+async function getMutedSet(offerId) {
+    if (!mutedStudentsStore.has(offerId)) {
+        const set = new Set();
+        try {
+            const { data } = await supabase.from('stream_mutes').select('student_id').eq('offer_id', offerId);
+            (data || []).forEach(r => set.add(parseInt(r.student_id)));
+        } catch (e) {}
+        mutedStudentsStore.set(offerId, set);
+    }
+    return mutedStudentsStore.get(offerId);
+}
+
 async function handleSendChatMessage(req, res) {
     try {
         const { offer_id, message } = req.body;
@@ -2142,8 +2163,8 @@ async function handleSendChatMessage(req, res) {
         }
 
         if (role === 'student') {
-            const mutedSet = mutedStudentsStore.get(offerId);
-            if (mutedSet && mutedSet.has(userId)) {
+            const mutedSet = await getMutedSet(offerId);
+            if (mutedSet.has(userId) || mutedSet.has(parseInt(userId))) {
                 return res.status(403).json({ 
                     success: false, 
                     error: 'تم كتمك من قبل الأستاذ في هذه الحصة، لا يمكنك إرسال رسائل' 
@@ -2195,6 +2216,17 @@ async function handleSendChatMessage(req, res) {
                 created_at: msgObj.created_at
             });
         } catch (e) {}
+
+        // ✅ بث الرسالة فورياً إلى غرفة البث المفتوحة (WebRTC) — بدون أي استطلاع من المتصفحات
+        broadcastToLiveRoom(offerId, {
+            type: 'chat-message',
+            msgId: msgObj.id,
+            text: msgObj.message,
+            sender: msgObj.sender_name,
+            senderId: msgObj.sender_id,
+            senderRole: msgObj.sender_role,
+            timestamp: Date.now()
+        });
 
         res.json({ success: true, message: msgObj });
     } catch (error) {
@@ -2256,8 +2288,8 @@ async function handleGetChatMessages(req, res) {
             } catch (e) {}
         }
 
-        const mutedSet = mutedStudentsStore.get(offerId) || new Set();
-        const isMuted = role === 'student' && mutedSet.has(userId);
+        const mutedSet = await getMutedSet(offerId);
+        const isMuted = role === 'student' && (mutedSet.has(userId) || mutedSet.has(parseInt(userId)));
         const mutedStudentsList = Array.from(mutedSet);
 
         // ✅ حساب الطلاب المتواجدين الحقيقيين في الوقت الفعلي (استثناء الأستاذ، وآخر ping خلال 10 ثوانٍ)
@@ -2405,10 +2437,8 @@ router.post('/chat/mute', authenticate, authorize(['teacher']), async (req, res)
             return res.status(403).json({ success: false, error: 'غير مصرح لك بالتحكم في كتم هذا البث' });
         }
 
-        if (!mutedStudentsStore.has(offerId)) {
-            mutedStudentsStore.set(offerId, new Set());
-        }
-        const mutedSet = mutedStudentsStore.get(offerId);
+        const mutedSet = await getMutedSet(offerId);
+        const wasMuted = mutedSet.has(studentId);
 
         if (mute) {
             mutedSet.add(studentId);
@@ -2417,12 +2447,19 @@ router.post('/chat/mute', authenticate, authorize(['teacher']), async (req, res)
         }
 
         try {
-            if (mute) {
+            if (mute && !wasMuted) {
                 await supabase.from('stream_mutes').insert({ offer_id: offerId, student_id: studentId, created_at: new Date().toISOString() });
-            } else {
+            } else if (!mute) {
                 await supabase.from('stream_mutes').delete().eq('offer_id', offerId).eq('student_id', studentId);
             }
         } catch (e) {}
+
+        // ✅ إشعار جميع المشاركين فوراً بتغيّر حالة الكتم (الطالب المكتوم يُقفل حقل الكتابة مباشرة)
+        broadcastToLiveRoom(offerId, {
+            type: 'mute-student',
+            target: studentId,
+            muted: !!mute
+        });
 
         const mutedList = Array.from(mutedSet);
         res.json({
@@ -2441,7 +2478,7 @@ router.post('/chat/mute', authenticate, authorize(['teacher']), async (req, res)
 router.get('/chat/muted-students/:offer_id', authenticate, authorize(['teacher']), async (req, res) => {
     try {
         const offerId = parseInt(req.params.offer_id);
-        const mutedSet = mutedStudentsStore.get(offerId) || new Set();
+        const mutedSet = await getMutedSet(offerId);
         res.json({
             success: true,
             muted_students: Array.from(mutedSet)

@@ -129,9 +129,9 @@ function attachSignalingServer(httpServer) {
                     broadcastToRoom(info.roomId, message, ws);
                     break;
 
-                case 'chat-message':
-                    broadcastToRoom(info.roomId, message);
-                    break;
+                //  ملاحظة: الرسائل الكتابية (chat-message) لا تمر عبر WebSocket مباشرة
+                //  بل عبر REST API (/api/stream/chat/send) لضمان الحفظ في قاعدة البيانات
+                //  وإنفاذ كتم الأستاذ — ثم يُرسل الخادم النسخة النهائية عبر broadcastToRoom
 
                 case 'ping':
                     ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
@@ -159,4 +159,4 @@ function attachSignalingServer(httpServer) {
     return wss;
 }
 
-module.exports = { attachSignalingServer };
+module.exports = { attachSignalingServer, broadcastToRoom };

@@ -384,32 +384,9 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
             });
         }
 
-        // ✅ التحقق الإجباري من رابط البث المباشر (Google Meet أو Zoom) للعروض المجانية
-        let freeRoomDetails = null;
-        if (isFreeOffer) {
-            const customMeet = req.body.meet_url || req.body.stream_url;
-            if (!customMeet || typeof customMeet !== 'string' || !customMeet.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'عذراً، يجب إضافة رابط البث المباشر (Google Meet) أولاً لإنشاء العرض المجاني'
-                });
-            }
-            const formatted = formatMeetOrZoomUrl(customMeet.trim());
-            if (!formatted) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'رابط البث المباشر غير صالح. يرجى إدخال رابط Google Meet أو Zoom صحيح (مثال: https://meet.google.com/xxx-yyyy-zzz)'
-                });
-            }
-            const isZoom = formatted.includes('zoom.us') || formatted.includes('zoom.com');
-            freeRoomDetails = {
-                url: formatted,
-                room_name: formatted,
-                platform: isZoom ? 'zoom' : 'google_meet',
-                is_free: true,
-                is_custom: true
-            };
-        }
+        // ✅ العروض المجانية: غرفة بث WebRTC مدمجة داخل المنصة — بدون أي رابط خارجي (Zoom / Google Meet)
+        // رابط الغرفة يُحتسب من معرّف الدرس تلقائياً عند بدء البث: /live-room.html?room=offer_<id>
+        const freeRoomDetails = isFreeOffer ? { platform: 'webrtc', is_free: true, is_custom: false } : null;
 
         // ✅ إدخال الدرس في قاعدة البيانات
         const newOffer = {
@@ -419,11 +396,11 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
             offer_date: offerDateFormatted,
             price: isFreeOffer ? 0 : parsedPrice,
             is_free: isFreeOffer,
-            room_name: isFreeOffer && freeRoomDetails ? freeRoomDetails.room_name : room_name,
+            room_name: isFreeOffer ? null : room_name,
             room_password: defaultPassword,
             stream_url: null, // لا يتم تفعيل رابط البث النشط إلا بعد بدء الأستاذ للبث فعلياً
-            meet_url: isFreeOffer && freeRoomDetails ? freeRoomDetails.url : null,
-            stream_platform: isFreeOffer ? (freeRoomDetails ? freeRoomDetails.platform : 'zoom') : (stream_platform || 'zoom'),
+            meet_url: null, // العروض المجانية تستخدم دائماً غرفة المنصة المدمجة (WebRTC)
+            stream_platform: isFreeOffer ? 'webrtc' : (stream_platform || 'webrtc'),
             status: 'upcoming',
             education_level: finalEducationLevel,
             thumbnail_url: thumbnailUrl,
