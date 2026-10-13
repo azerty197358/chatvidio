@@ -1509,13 +1509,15 @@ router.delete('/offer/delete/:offer_id', authenticate, authorize(['teacher']), [
             'stream_verification', 
             'stream_chat_messages', 
             'stream_mutes',
+            'stream_sessions',
+            'stream_subscriptions',
             'sessions'
         ];
         for (const table of tables) {
             try {
                 await supabase.from(table).delete().eq('offer_id', offer_id);
             } catch (e) {
-                logger.error(`خطأ في حذف بيانا�� ${table}:`, e.message);
+                logger.error(`خطأ في حذف بيانات ${table}:`, e.message);
             }
         }
 
@@ -1526,15 +1528,29 @@ router.delete('/offer/delete/:offer_id', authenticate, authorize(['teacher']), [
             logger.error('خطأ في حذف الإشعارات:', e.message);
         }
 
-        // ✅ حذف الدرس
-        const { error: deleteError } = await supabase
+        // ✅ حذف الدرس مع التحقق الفعلي من حذف الصف (يمنع "نجاحاً" وهمياً)
+        const { data: deletedRows, error: deleteError } = await supabase
             .from('offers')
             .delete()
-            .eq('id', offer_id);
+            .eq('id', offer_id)
+            .select('id');
 
         if (deleteError) {
             logger.error('❌ خطأ في حذف الدرس:', deleteError);
             return res.status(500).json({ success: false, error: deleteError.message });
+        }
+
+        // ⚠️ إن لم يُحذف أي صف فالكتابة محجوبة (صلاحيات/RLS) — لا نعرض نجاحاً وهمياً
+        if (!deletedRows || deletedRows.length === 0) {
+            const { data: stillThere } = await supabase
+                .from('offers')
+                .select('id')
+                .eq('id', offer_id)
+                .maybeSingle();
+            if (stillThere) {
+                logger.error(`❌ فشل حذف الدرس ${offer_id} صامتاً (0 صف محذوف) — شغّل schema_write_access_fix.sql في Supabase`);
+                return res.status(500).json({ success: false, error: 'تعذر حذف الدرس من قاعدة البيانات' });
+            }
         }
 
         res.json({ 

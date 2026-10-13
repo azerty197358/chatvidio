@@ -48,6 +48,78 @@ function parseOfferStartDate(dateStr) {
 }
 
 // ============================================================
+// ✅ أدوات مرونة الكتابة في قاعدة البيانات (لمنع الفشل الصامت)
+// ============================================================
+// تحديث حالة الدرس مع التحقق الفعلي من نجاح الكتابة.
+// إن فشل التحديث الكامل (عمود مفقود في جدول offers مثلاً) تُعد المحاولة
+// بأعمدة أقل فأقل حتى ينجح تغيير الحالة حتماً.
+async function updateOfferStreamState(offerId, fields) {
+    const startedAt = fields.stream_started_at || new Date().toISOString();
+    const attempts = [
+        fields,
+        {
+            status: fields.status,
+            stream_active: fields.stream_active,
+            stream_started_at: startedAt,
+            stream_url: fields.stream_url,
+            meet_url: fields.meet_url
+        },
+        { status: fields.status, stream_active: fields.stream_active, stream_started_at: startedAt },
+        { status: fields.status }
+    ];
+
+    for (let i = 0; i < attempts.length; i++) {
+        try {
+            const { data, error } = await supabase
+                .from('offers')
+                .update(attempts[i])
+                .eq('id', offerId)
+                .select('id');
+            if (!error && data && data.length > 0) {
+                return true;
+            }
+            if (error) {
+                logger.warn(`تحديث حالة الدرس ${offerId} فشل (محاولة ${i + 1}): ${error.message}`);
+            }
+        } catch (e) {
+            logger.warn(`استثناء أثناء تحديث حالة الدرس ${offerId} (محاولة ${i + 1}): ${e.message}`);
+        }
+    }
+    logger.error(`❌ تعذر تغيير حالة الدرس ${offerId} رغم محاولات متعددة — تحقق من صلاحيات الكتابة في قاعدة البيانات (شغّل schema_write_access_fix.sql)`);
+    return false;
+}
+
+// إدراج إشعار بشكل مرن: إن فشل الإدراج الكامل (عمود مفقود في جدول
+// notifications) تُعد المحاولة بأقل عدد من الأعمدة حتى يصل الإشعار حتماً.
+async function insertNotificationResilient(row) {
+    const base = {
+        user_id: row.user_id,
+        user_type: row.user_type || 'student',
+        title: row.title,
+        message: row.message,
+        is_read: false,
+        created_at: row.created_at || new Date().toISOString()
+    };
+    const attempts = [
+        row,
+        Object.assign({}, base, { offer_id: row.offer_id }),
+        base
+    ];
+
+    for (let i = 0; i < attempts.length; i++) {
+        try {
+            const { error } = await supabase.from('notifications').insert(attempts[i]);
+            if (!error) return true;
+            logger.warn(`إدراج إشعار للمستخدم ${row.user_id} فشل (محاولة ${i + 1}): ${error.message}`);
+        } catch (e) {
+            logger.warn(`استثناء أثناء إدراج إشعار للمستخدم ${row.user_id} (محاولة ${i + 1}): ${e.message}`);
+        }
+    }
+    logger.error(`❌ تعذر إدراج إشعار للمستخدم ${row.user_id} — تحقق من جدول notifications (شغّل schema_write_access_fix.sql)`);
+    return false;
+}
+
+// ============================================================
 // ✅ بدء البث باستخدام Jitsi Meet (مع نظام التحقق المستقل)
 // ============================================================
 // ✅ بدء البث باستخدام Zoom Video SDK (مع نظام التحقق المستقل)
@@ -85,20 +157,17 @@ const handleStreamStart = async (req, res) => {
             const meetUrl = localRoom.url;
             const platform = 'webrtc';
 
-            // ✅ حفظ بيانات البث المجاني في جدول الدروس
-            await supabase
-                .from('offers')
-                .update({
-                    stream_url: meetUrl,
-                    meet_url: meetUrl,
-                    stream_platform: platform,
-                    status: 'live',
-                    stream_active: true,
-                    is_paused: false,
-                    stream_started_at: new Date().toISOString(),
-                    room_name: meetUrl
-                })
-                .eq('id', offer_id);
+            // ✅ حفظ بيانات البث المجاني في جدول الدروس (مع التحقق الفعلي من نجاح التحديث)
+            await updateOfferStreamState(offer_id, {
+                stream_url: meetUrl,
+                meet_url: meetUrl,
+                stream_platform: platform,
+                status: 'live',
+                stream_active: true,
+                is_paused: false,
+                stream_started_at: new Date().toISOString(),
+                room_name: meetUrl
+            });
 
             // ✅ تسجيل بداية البث من الخادم (نظام التحقق المستقل)
             await recordStreamStart(offer_id, req.user.userId);
@@ -155,7 +224,7 @@ const handleStreamStart = async (req, res) => {
             }
             for (const sId of targetStudents) {
                 try {
-                    await supabase.from('notifications').insert({
+                    await insertNotificationResilient({
                         user_id: sId,
                         user_type: 'student',
                         title: notifTitle,
@@ -202,22 +271,19 @@ const handleStreamStart = async (req, res) => {
         const roomUrl = `/api/teacher-zoom/${offer_id}`;
         const roomName = zoomUrl || `zoomdz_session_${offer_id}_${crypto.randomBytes(8).toString('hex')}`;
 
-        //  ✅ حفظ بيانات البث في جدول الدروس
-        await supabase
-            .from('offers')
-            .update({
-                stream_url: zoomUrl || roomUrl,
-                meet_url: zoomUrl || offer.meet_url,
-                start_url: startUrl || zoomUrl,
-                stream_platform: 'webrtc',
-                status: 'live',
-                stream_active: true,
-                is_paused: false,
-                stream_started_at: new Date().toISOString(),
-                room_name: roomName,
-                room_password: null
-            })
-            .eq('id', offer_id);
+        //  ✅ حفظ بيانات البث في جدول الدروس (مع التحقق الفعلي من نجاح التحديث)
+        // ملاحظة: أُزيل start_url (كان خاصاً بـ Zoom ولا وجود له في WebRTC)،
+        // وتحديث الحالة يتم بأعمدة أقل تدريجياً حتى ينجح حتماً حتى لو كان عمود ما مفقوداً.
+        await updateOfferStreamState(offer_id, {
+            stream_url: zoomUrl || roomUrl,
+            meet_url: zoomUrl || offer.meet_url,
+            stream_platform: 'webrtc',
+            status: 'live',
+            stream_active: true,
+            is_paused: false,
+            stream_started_at: new Date().toISOString(),
+            room_name: roomName
+        });
         
         // ✅ تسجيل بداية البث من الخادم (نظام التحقق المستقل)
         await recordStreamStart(offer_id, req.user.userId);
@@ -245,22 +311,21 @@ const handleStreamStart = async (req, res) => {
                     const notifTitle = 'بدأ الدرس الآن!';
                     const notifMessage = `الدرس المباشر "${offer.subject_name || 'مادة'}" قد بدأ. انضم الآن ولا تفوّته!`;
 
-                    await supabase
-                        .from('notifications')
-                        .insert({
-                            user_id: session.student_id,
-                            user_type: 'student',
-                            title: notifTitle,
-                            message: notifMessage,
-                            // the dashboard routes the tap through offer_id, and the
-                            // room url is what lets the student join from the bell
-                            offer_id: offer_id,
-                            meet_url: zoomUrl,
-                            stream_url: zoomUrl,
-                            is_free: false,
-                            is_read: false,
-                            created_at: new Date().toISOString()
-                        });
+                    await insertNotificationResilient({
+                        user_id: session.student_id,
+                        user_type: 'student',
+                        title: notifTitle,
+                        message: notifMessage,
+                        // the dashboard routes the tap through offer_id, and the
+                        // room url is what lets the student join from the bell
+                        offer_id: offer_id,
+                        meet_url: zoomUrl,
+                        stream_url: zoomUrl,
+                        is_free: false,
+                        stream_platform: 'webrtc',
+                        is_read: false,
+                        created_at: new Date().toISOString()
+                    });
 
                     const { data: paidStudent } = await supabase
                         .from('students')

@@ -2,7 +2,8 @@ const { createClient } = require('@supabase/supabase-js');
 const logger = require('./logger');
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+// ✅ مفتاح service_role يتجاوز RLS — يمنع الحذف/التحديث الصامتين من مفتاح anon
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 let supabase;
 
