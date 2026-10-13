@@ -13,7 +13,7 @@ const { supabase } = require('../config/database');
 const { authenticate, authorize, checkBanned, checkActiveStream, isOwner, validateOfferOwnership, validateStudentAccess, checkStreamActive, checkNoActiveStream } = require('../middleware/auth');
 const { getOne, insert, update, autoBookFreeSession, loadLocalTeacherFollowers } = require('../utils/helpers');
 const { verifyToken } = require('../utils/jwt');
-const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/zoom');
+const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/webrtc');
 const { sendPushNotification } = require('../utils/notification');
 
 // ✅ استيراد نظام التحقق المستقل من وقت البث
@@ -84,13 +84,12 @@ const handleStreamStart = async (req, res) => {
             let meetUrl = formatMeetOrZoomUrl(reqMeetUrl || offer.meet_url || offer.stream_url);
 
             if (!meetUrl) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'الرجاء إدخال رابط بث صحيح (Google Meet أو Zoom) لبدء الحصة المجانية.'
-                });
+                //  WebRTC: لا حاجة لرابط خارجي — تُنشأ غرفة محلية فوراً
+                const localRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
+                meetUrl = localRoom.url;
             }
 
-            const platform = meetUrl.includes('zoom.us') || meetUrl.includes('zoom.com') ? 'zoom' : 'google_meet';
+            const platform = (meetUrl && meetUrl.includes('/live-room.html')) ? 'webrtc' : (meetUrl.includes('zoom.us') || meetUrl.includes('zoom.com') ? 'zoom' : 'google_meet');
 
             // ✅ حفظ بيانات البث المجاني في جدول الدروس
             await supabase
@@ -201,7 +200,7 @@ const handleStreamStart = async (req, res) => {
 
 
         //  ✅ إنشاء اجتماع Zoom حقيقي عبر API
-        const { generateFreeStreamRoom } = require('../utils/zoom');
+        const { generateFreeStreamRoom } = require('../utils/webrtc');
         const zoomRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
         const zoomUrl = zoomRoom && zoomRoom.url ? zoomRoom.url : null;
         const startUrl = zoomRoom && zoomRoom.start_url ? zoomRoom.start_url : null;
@@ -216,7 +215,7 @@ const handleStreamStart = async (req, res) => {
                 stream_url: zoomUrl || roomUrl,
                 meet_url: zoomUrl || offer.meet_url,
                 start_url: startUrl || zoomUrl,
-                stream_platform: 'zoom',
+                stream_platform: 'webrtc',
                 status: 'live',
                 stream_active: true,
                 is_paused: false,
@@ -573,7 +572,7 @@ router.get('/student-status/:offer_id/:student_id', authenticate, validateStuden
             activeCount = count || 0;
         } catch (e) {}
 
-        const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0 || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || offer.stream_platform === 'jitsi';
+        const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0 || offer.stream_platform === 'webrtc' || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || offer.stream_platform === 'jitsi';
 
         const storedMeetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
         let effectiveMeetUrl = storedMeetUrl;
@@ -585,7 +584,7 @@ router.get('/student-status/:offer_id/:student_id', authenticate, validateStuden
                 supabase.from('offers').update({
                     stream_url: effectiveMeetUrl,
                     meet_url: effectiveMeetUrl,
-                    stream_platform: 'zoom',
+                    stream_platform: 'webrtc',
                     room_name: effectiveMeetUrl
                 }).eq('id', offer_id).then(() => {}).catch(() => {});
             }
@@ -598,7 +597,7 @@ router.get('/student-status/:offer_id/:student_id', authenticate, validateStuden
             is_waiting: !canJoinStudent,
             is_paused: isPaused,
             is_free: isFreeOffer,
-            stream_platform: isFreeOffer ? 'zoom' : (offer.stream_platform === 'jitsi' ? 'zoom' : (offer.stream_platform || 'zoom')),
+            stream_platform: isFreeOffer ? 'webrtc' : ((offer.stream_platform === 'jitsi' || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet') ? 'webrtc' : (offer.stream_platform || 'webrtc')),
             meet_url: effectiveMeetUrl,
             stream_url: isFreeOffer ? effectiveMeetUrl : (offer.stream_url || `/api/join-zoom/${offer_id}/${student_id}`),
             room_password: offer.room_password || null,

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>غرفة البث المباشر - ZoomDz</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Cairo', sans-serif;
+            background: #0b0f19;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .room-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 18px;
+            background: #111827;
+            border-bottom: 1px solid #1f2937;
+            flex-shrink: 0;
+        }
+        .room-header .title { font-weight: 700; font-size: 15px; }
+        .room-header .status {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; color: #94a3b8;
+        }
+        .status-dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: #f59e0b;
+            transition: background .3s;
+        }
+        .status-dot.live { background: #22c55e; }
+        .video-area {
+            flex: 1;
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+            overflow: auto;
+            grid-template-columns: 1fr;
+            grid-auto-rows: min-content;
+        }
+        .video-area.has-remotes {
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        }
+        .video-tile {
+            position: relative;
+            background: #1f2937;
+            border-radius: 14px;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+            box-shadow: 0 4px 18px rgba(0,0,0,.35);
+        }
+        .video-tile.instructor {
+            grid-column: 1 / -1;
+            aspect-ratio: 16 / 8;
+            border: 2px solid #3b82f6;
+        }
+        .video-tile video {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            background: #000;
+            transform: scaleX(-1);
+        }
+        .video-tile.instructor video { transform: none; }
+        .video-tile .label {
+            position: absolute;
+            bottom: 8px; right: 10px;
+            background: rgba(0,0,0,.6);
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .video-tile .waiting {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 8px; color: #64748b; font-size: 14px;
+        }
+        .room-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 14px;
+            background: #111827;
+            border-top: 1px solid #1f2937;
+            flex-shrink: 0;
+            flex-wrap: wrap;
+        }
+        .ctrl-btn {
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 4px;
+            min-width: 68px; padding: 10px 12px;
+            background: #1f2937;
+            color: #fff;
+            border: none; border-radius: 14px;
+            cursor: pointer;
+            font-family: 'Cairo', sans-serif;
+            font-size: 12px; font-weight: 600;
+            transition: background .2s, transform .1s;
+        }
+        .ctrl-btn:hover { background: #374151; transform: translateY(-1px); }
+        .ctrl-btn.off { background: #7f1d1d; }
+        .ctrl-btn.active { background: #1d4ed8; }
+        .ctrl-btn.leave { background: #b91c1c; }
+        .ctrl-btn.leave:hover { background: #dc2626; }
+        .ctrl-btn svg { width: 22px; height: 22px; }
+        .participants-pill {
+            position: fixed;
+            top: 62px; left: 14px;
+            background: rgba(17,24,39,.9);
+            border: 1px solid #1f2937;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        @media (max-width: 640px) {
+            .video-area.has-remotes { grid-template-columns: 1fr; }
+            .ctrl-btn { min-width: 58px; padding: 8px 8px; font-size: 11px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="room-header">
+        <div class="title" id="roomTitle">غرفة البث المباشر</div>
+        <div class="status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">جاري الاتصال...</span>
+        </div>
+    </div>
+
+    <div class="participants-pill" id="participantsPill">المشاركون: 1</div>
+
+    <div class="video-area" id="videoArea">
+        <div class="video-tile instructor" id="localTile">
+            <video id="localVideo" autoplay playsinline muted></video>
+            <div class="label" id="localLabel">أنت</div>
+        </div>
+    </div>
+
+    <div class="room-controls">
+        <button class="ctrl-btn" id="btnMic" title="الميكروفون">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+            <span>الميكروفون</span>
+        </button>
+        <button class="ctrl-btn" id="btnCam" title="الكاميرا">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            <span>الكاميرا</span>
+        </button>
+        <button class="ctrl-btn" id="btnScreen" title="مشاركة الشاشة">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span>مشاركة الشاشة</span>
+        </button>
+        <button class="ctrl-btn leave" id="btnLeave" title="مغادرة">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span>مغادرة</span>
+        </button>
+    </div>
+
+    <script src="/js/webrtc.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        var params = new URLSearchParams(window.location.search);
+        var roomId = params.get('room') || '';
+        var role = params.get('role') === 'teacher' ? 'teacher' : 'student';
+
+        if (!roomId) {
+            window.location.href = role === 'teacher' ? '/teacher-dashboard.html' : '/student-dashboard.html';
+            return;
+        }
+
+        var token = localStorage.getItem('token') || params.get('token') || '';
+        var userId = role + '_' + Math.random().toString(36).slice(2, 9);
+        var localStream = null;
+        var connected = false;
+
+        var localVideo = document.getElementById('localVideo');
+        var localLabel = document.getElementById('localLabel');
+        var videoArea = document.getElementById('videoArea');
+        var statusDot = document.getElementById('statusDot');
+        var statusText = document.getElementById('statusText');
+        var participantsPill = document.getElementById('participantsPill');
+        var roomTitle = document.getElementById('roomTitle');
+
+        roomTitle.textContent = role === 'teacher' ? 'غرفة البث (الأستاذ)' : 'غرفة البث (طالب)';
+
+        function setStatus(text, live) {
+            statusText.textContent = text;
+            statusDot.className = 'status-dot' + (live ? ' live' : '');
+        }
+
+        function updatePill(n) {
+            participantsPill.textContent = 'المشاركون: ' + n;
+        }
+
+        //  عنصر فيديو عن بعيد
+        var remoteTiles = {};
+        function addRemoteTile(userId, label) {
+            if (remoteTiles[userId]) return remoteTiles[userId];
+            var tile = document.createElement('div');
+            tile.className = 'video-tile' + (role === 'student' && label === 'الأستاذ' ? ' instructor' : '');
+            var vid = document.createElement('video');
+            vid.autoplay = true; vid.playsInline = true;
+            var lab = document.createElement('div');
+            lab.className = 'label';
+            lab.textContent = label || userId;
+            tile.appendChild(vid);
+            tile.appendChild(lab);
+            videoArea.appendChild(tile);
+            videoArea.classList.add('has-remotes');
+            remoteTiles[userId] = { tile: tile, video: vid };
+            return remoteTiles[userId];
+        }
+
+        function removeRemoteTile(userId) {
+            var t = remoteTiles[userId];
+            if (t) {
+                t.tile.remove();
+                delete remoteTiles[userId];
+            }
+            if (Object.keys(remoteTiles).length === 0) {
+                videoArea.classList.remove('has-remotes');
+            }
+        }
+
+        //  أحداث مكتبة WebRTC
+        ZoomyRTC.onRemoteStream(function (userId, stream) {
+            var entry = addRemoteTile(userId, userId.indexOf('teacher_') === 0 ? 'الأستاذ' : 'طالب');
+            entry.video.srcObject = stream;
+        });
+
+        ZoomyRTC.onParticipantJoined(function () {
+            setStatus('متصل', true);
+        });
+
+        ZoomyRTC.onParticipantLeft(function (userId) {
+            removeRemoteTile(userId);
+        });
+
+        ZoomyRTC.onConnectionState(function (state) {
+            if (state === 'connected') {
+                connected = true;
+                setStatus('متصل', true);
+            } else if (state === 'disconnected') {
+                setStatus('جاري إعادة الاتصال...', false);
+            }
+        });
+
+        //  بدء الكاميرا والميكروفون ثم الاتصال
+        ZoomyRTC.startMedia().then(function (stream) {
+            localStream = stream;
+            localVideo.srcObject = stream;
+            localLabel.textContent = role === 'teacher' ? 'أنت (الأستاذ)' : 'أنت';
+
+            return ZoomyRTC.connect(roomId, userId, role, token);
+        }).then(function () {
+            connected = true;
+            setStatus('متصل', true);
+        }).catch(function () {
+            //  لا رسائل أخطاء إطلاقاً — حالة هادئة فقط
+            setStatus('بانتظار السماح بالوصول...', false);
+        });
+
+        //  أزرار التحكم
+        document.getElementById('btnMic').addEventListener('click', function () {
+            ZoomyRTC.toggleCameraMic && ZoomyRTC.toggleCameraMic('audio');
+            var s = ZoomyRTC.getLocalStream();
+            if (s) {
+                var a = s.getAudioTracks()[0];
+                if (a) {
+                    a.enabled = !a.enabled;
+                    this.classList.toggle('off', !a.enabled);
+                }
+            }
+        });
+
+        document.getElementById('btnCam').addEventListener('click', function () {
+            var s = ZoomyRTC.getLocalStream();
+            if (s) {
+                var v = s.getVideoTracks()[0];
+                if (v) {
+                    v.enabled = !v.enabled;
+                    this.classList.toggle('off', !v.enabled);
+                }
+            }
+        });
+
+        var sharing = false;
+        document.getElementById('btnScreen').addEventListener('click', function () {
+            var btn = this;
+            if (!sharing) {
+                ZoomyRTC.shareScreen().then(function () {
+                    sharing = true;
+                    btn.classList.add('active');
+                }).catch(function () {});
+            } else {
+                ZoomyRTC.stopScreenShare().then(function () {
+                    sharing = false;
+                    btn.classList.remove('active');
+                }).catch(function () {});
+            }
+        });
+
+        document.getElementById('btnLeave').addEventListener('click', function () {
+            try { ZoomyRTC.disconnect(); } catch (e) {}
+            window.location.href = role === 'teacher' ? '/teacher-dashboard.html' : '/student-dashboard.html';
+        });
+
+        window.addEventListener('beforeunload', function () {
+            try { ZoomyRTC.disconnect(); } catch (e) {}
+        });
+    })();
+    </script>
+</body>
+</html>

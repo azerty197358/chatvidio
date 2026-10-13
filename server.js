@@ -1972,33 +1972,11 @@ const handleTeacherZoomView = async (req, res) => {
             return res.status(400).send('البث لم يبدأ أو تم إنهاؤه');
         }
 
-        // إذا كانت الحصة عبر Google Meet أو مجانية، التحويل فوراً لرابط Google Meet
-        const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
-                const { generateFreeStreamRoom, formatMeetOrZoomUrl } = require('./utils/zoom');
-        let meetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
+        //  WebRTC: تحويل الأستاذ إلى غرفة البث المحلية
+        const { buildRoomId } = require('./utils/webrtc');
+        return res.redirect('/live-room.html?room=' + encodeURIComponent(buildRoomId(offer.id)) + '&role=teacher');
 
-        if (!meetUrl) {
-            const autoRoom = await generateFreeStreamRoom(offer.id, offer.subject_name);
-            meetUrl = autoRoom.url;
-            if (meetUrl) {
-                // تحديث قاعدة البيانات في الخلفية
-                supabase.from('offers').update({
-                    stream_url: meetUrl,
-                    meet_url: meetUrl,
-                    stream_platform: 'zoom',
-                    room_name: meetUrl
-                }).eq('id', offer.id).then(() => {}).catch(() => {});
-            }
-        }
 
-        if (meetUrl) {
-            //  الأستاذ يحصل على start_url (رابط المضيف مع zak)
-            const teacherStartUrl = offer.start_url || meetUrl;
-            return res.redirect(teacherStartUrl);
-        }
-
-        //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة
-        return res.send(renderZoomRetryPage(offer.subject_name || 'الحصة'));
         
         const teacher = await getOne('teachers', 'id', teacherId);
         
@@ -3682,33 +3660,11 @@ const handleStudentZoomView = async (req, res) => {
             supabase.from('offers').update({ status: 'live', is_paused: false, stream_active: true }).eq('id', offerId).then(() => {}).catch(() => {});
         }
 
-        // إذا كانت الحصة عبر Google Meet أو مجانية، التحويل فوراً لرابط Google Meet
-        const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
-                const { generateFreeStreamRoom, formatMeetOrZoomUrl } = require('./utils/zoom');
-        let meetUrl = formatMeetOrZoomUrl(offer.meet_url) || formatMeetOrZoomUrl(offer.stream_url);
+        //  WebRTC: تحويل الطالب إلى غرفة البث المحلية
+        const { buildRoomId } = require('./utils/webrtc');
+        return res.redirect('/live-room.html?room=' + encodeURIComponent(buildRoomId(offer.id)) + '&role=student');
 
-        if (!meetUrl) {
-            const autoRoom = await generateFreeStreamRoom(offer.id, offer.subject_name);
-            meetUrl = autoRoom.url;
-            if (meetUrl) {
-                // تحديث قاعدة البيانات في الخلفية
-                supabase.from('offers').update({
-                    stream_url: meetUrl,
-                    meet_url: meetUrl,
-                    stream_platform: 'zoom',
-                    room_name: meetUrl
-                }).eq('id', offer.id).then(() => {}).catch(() => {});
-            }
-        }
 
-        if (meetUrl) {
-            //  الأستاذ يحصل على start_url (رابط المضيف مع zak)
-            const teacherStartUrl = offer.start_url || meetUrl;
-            return res.redirect(teacherStartUrl);
-        }
-
-        //  تعذّر تجهيز رابط Zoom: صفحة هادئة تطلب إعادة المحاولة
-        return res.send(renderZoomRetryPage(offer.subject_name || 'الحصة'));
         
         const student = await getOne('students', 'id', studentId);
         
@@ -7353,13 +7309,13 @@ async function ensureProfilesBucket() {
 module.exports = app;
 
 if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
-    app.listen(PORT, '0.0.0.0', () => {
+    const httpServer = app.listen(PORT, '0.0.0.0', () => {
         console.log(`Server running on http://localhost:${PORT}`);
         console.log(`Server running on port ${PORT}`);
         console.log(`🚀 الخادم يعمل على http://localhost:${PORT}`);
         console.log('='.repeat(60));
         console.log('📅 التاريخ:', new Date().toLocaleString('ar-EG'));
-        console.log(' نظام البث: Jitsi Meet (مجاني 100%)');
+        console.log(' نظام البث: WebRTC محلّي (مجاني 100%)');
         console.log('✅ مسارات المصادقة: /api/student/register و /api/teacher/register');
         console.log('✅ مسارات /me: /api/student/me و /api/teacher/me');
         console.log('='.repeat(60));
@@ -7373,4 +7329,11 @@ if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
         startCleanupCron();
         startVipExpiryCron();
     });
+
+    //  إرفاق خادم إشارات WebRTC على نفس الخادم الرئيسي (/ws-signaling)
+    try {
+        require('./utils/signaling').attachSignalingServer(httpServer);
+    } catch (sigErr) {
+        console.warn('Signaling attach skipped:', sigErr.message);
+    }
 }

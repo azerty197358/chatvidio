@@ -6267,9 +6267,9 @@ function appendOptimisticMessage(text, reply) {
             const data = await res.json();
             if (data.can_join && data.stream_url) {
                 const rawUrl = data.meet_url || data.stream_url;
-                const isGoogleMeetOrZoom = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com'))) || data.stream_platform === 'google_meet' || data.stream_platform === 'zoom' || data.is_free;
+                const isGoogleMeetOrZoom = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com') || rawUrl.includes('live-room.html'))) || data.stream_platform === 'google_meet' || data.stream_platform === 'zoom' || data.stream_platform === 'webrtc' || data.is_free;
                 if (isGoogleMeetOrZoom) {
-                    let meetUrl = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com'))) ? rawUrl : null;
+                    let meetUrl = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com') || rawUrl.includes('live-room.html'))) ? rawUrl : null;
                     if (!meetUrl) {
                         meetUrl = rawUrl || `/api/join-zoom/${offerId}/${studentId}`;
                     }
@@ -7467,9 +7467,9 @@ toast.className = `toast ${kind}`;
             const data = await res.json();
             if (data.can_join && data.stream_url) {
                 const rawUrl = data.meet_url || data.stream_url;
-                const isGoogleMeetOrZoom = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com'))) || data.stream_platform === 'google_meet' || data.stream_platform === 'zoom' || data.is_free;
+                const isGoogleMeetOrZoom = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com') || rawUrl.includes('live-room.html'))) || data.stream_platform === 'google_meet' || data.stream_platform === 'zoom' || data.stream_platform === 'webrtc' || data.is_free;
                 if (isGoogleMeetOrZoom) {
-                    let meetUrl = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com'))) ? rawUrl : null;
+                    let meetUrl = (rawUrl && (rawUrl.includes('meet.google.com') || rawUrl.includes('zoom.us') || rawUrl.includes('zoom.com') || rawUrl.includes('live-room.html'))) ? rawUrl : null;
                     if (!meetUrl) {
                         meetUrl = rawUrl || `/api/join-zoom/${offerId}/${studentId}`;
                     }
@@ -8815,9 +8815,9 @@ toast.className = `toast ${kind}`;
         const offerObj = (window.latestOffersData || []).find(o => o.id == offerId);
         if (offerObj) {
             const rawLink = offerObj.meet_url || offerObj.stream_url;
-            const isGoogleMeetOrZoom = (rawLink && (rawLink.includes('meet.google.com') || rawLink.includes('zoom.us') || rawLink.includes('zoom.com'))) || offerObj.stream_platform === 'google_meet' || offerObj.stream_platform === 'zoom' || offerObj.is_free;
+            const isGoogleMeetOrZoom = (rawLink && (rawLink.includes('meet.google.com') || rawLink.includes('zoom.us') || rawLink.includes('zoom.com') || rawLink.includes('live-room.html'))) || offerObj.stream_platform === 'google_meet' || offerObj.stream_platform === 'zoom' || offerObj.stream_platform === 'webrtc' || offerObj.is_free;
             if (isGoogleMeetOrZoom) {
-                const meetUrl = (rawLink && (rawLink.includes('meet.google.com') || rawLink.includes('zoom.us') || rawLink.includes('zoom.com'))) ? rawLink : 'https://zoom.us/home#/meeting/new';
+                const meetUrl = (rawLink && (rawLink.includes('meet.google.com') || rawLink.includes('zoom.us') || rawLink.includes('zoom.com') || rawLink.includes('live-room.html'))) ? rawLink : ('/api/join-zoom/' + offerId + '/' + studentId);
                 try {
                     const newWindow = window.open(meetUrl, '_blank');
                     if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {

@@ -15,7 +15,7 @@ const { authenticate, authorize, checkBanned } = require('../middleware/auth');
 const { getOne, insert, update, updateWithCondition, remove, isNameTaken, autoBookFreeSession } = require('../utils/helpers');
 const { uploadToSupabase, validateUploadedFiles, getPublicImageUrl, processUserProfile } = require('../utils/upload');
 const { isValidDzPhone } = require('../utils/validation');
-const { formatMeetOrZoomUrl } = require('../utils/zoom');
+const { formatMeetOrZoomUrl } = require('../utils/webrtc');
 
 const fs = require('fs');
 const studentFollowersFilePath = path.join(__dirname, '../data/student_followers.json');

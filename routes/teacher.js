@@ -16,7 +16,7 @@ const { uploadToSupabase, validateUploadedFiles, getPublicImageUrl, processUserP
 const { isValidDzPhone } = require('../utils/validation');
 const { sendWithdrawalOtpEmail } = require('../utils/email');
 const { getViewCount, syncItemViews } = require('../utils/viewsTracker');
-const { generateFreeStreamRoom } = require('../utils/zoom');
+const { generateFreeStreamRoom } = require('../utils/webrtc');
 const logger = require('../utils/logger');
 const memoryCache = require('../utils/cache');
 

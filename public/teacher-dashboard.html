@@ -11792,13 +11792,16 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 return;
             }
             if (data.success) {
-                if (data.is_free || data.stream_platform === 'zoom' || data.stream_platform === 'google_meet' || data.meet_url || data.zoom_url) {
+                if (data.is_free || data.stream_platform === 'webrtc' || data.stream_platform === 'zoom' || data.stream_platform === 'google_meet' || data.meet_url || data.zoom_url) {
                     let roomUrl = data.zoom_url
-                        || (data.meet_url && (data.meet_url.includes('zoom.us') || data.meet_url.includes('zoom.com') || (data.meet_url.includes('meet.google.com') && !data.meet_url.includes('jit.si'))) ? data.meet_url : null)
-                        || (data.stream_url && (data.stream_url.includes('zoom.us') || data.stream_url.includes('zoom.com') || (data.stream_url.includes('meet.google.com') && !data.stream_url.includes('jit.si'))) ? data.stream_url : null)
+                        || (data.meet_url && (data.meet_url.includes('live-room.html') || data.meet_url.includes('zoom.us') || data.meet_url.includes('zoom.com') || (data.meet_url.includes('meet.google.com') && !data.meet_url.includes('jit.si'))) ? data.meet_url : null)
+                        || (data.stream_url && (data.stream_url.includes('live-room.html') || data.stream_url.includes('zoom.us') || data.stream_url.includes('zoom.com') || (data.stream_url.includes('meet.google.com') && !data.stream_url.includes('jit.si'))) ? data.stream_url : null)
                         || data.room_url
-                        || 'https://zoom.us/home#/meeting/new';
-                    showToast('🎉 تم إطلاق البث المباشر وإشعار جميع الطلاب برابط Zoom!', 'success');
+                        || ('/live-room.html?room=offer_' + offerId + '&role=teacher');
+                    if (roomUrl && roomUrl.includes('live-room.html') && roomUrl.indexOf('role=') === -1) {
+                        roomUrl += (roomUrl.includes('?') ? '&' : '?') + 'role=teacher';
+                    }
+                    showToast('🎉 تم إطلاق البث المباشر وإشعار جميع الطلاب بغرفة البث!', 'success');
                     try {
                         const newWindow = window.open(roomUrl, '_blank');
                         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
@@ -11845,8 +11848,11 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             try {
                 const res = await fetchWithAuth(`/api/offer/${offerId}`);
                 const offer = await res.json();
-                if (offer && (offer.is_free || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || (offer.meet_url && (offer.meet_url.includes('meet.google.com') || offer.meet_url.includes('zoom.us') || offer.meet_url.includes('zoom.com'))))) {
-                    const meetUrl = offer.meet_url || offer.stream_url;
+                if (offer && (offer.is_free || offer.stream_platform === 'webrtc' || offer.stream_platform === 'zoom' || offer.stream_platform === 'google_meet' || (offer.meet_url && (offer.meet_url.includes('meet.google.com') || offer.meet_url.includes('zoom.us') || offer.meet_url.includes('zoom.com') || offer.meet_url.includes('live-room.html'))))) {
+                    let meetUrl = offer.meet_url || offer.stream_url || ('/live-room.html?room=offer_' + offerId + '&role=teacher');
+                    if (meetUrl.includes('live-room.html') && meetUrl.indexOf('role=') === -1) {
+                        meetUrl += (meetUrl.includes('?') ? '&' : '?') + 'role=teacher';
+                    }
                     if (meetUrl) {
                         try {
                             const newWindow = window.open(meetUrl, '_blank');

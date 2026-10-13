@@ -21,7 +21,7 @@ const upload = multer({
 const { processStreamPayments, archiveStreamLog } = require('../utils/streamVerification');
 const { sendPushNotification } = require('../utils/notification');
 const { calculateBookingRefundDetails } = require('../utils/refundCalculator');
-const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/zoom');
+const { generateFreeStreamRoom, generateGoogleMeetRoom, formatGoogleMeetUrl, formatMeetOrZoomUrl, createGoogleMeetRoomViaApi, GOOGLE_MEET_HOST_CREATE_URL } = require('../utils/webrtc');
 
 // ✅ دالة مساعدة لحساب واسترجاع الوقت المتبقي للبث
 function calculateOfferRemainingSeconds(offer) {
