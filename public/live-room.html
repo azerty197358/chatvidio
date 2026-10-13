@@ -67,8 +67,31 @@
             object-fit: cover;
             background: #000;
             transform: scaleX(-1);
+            transform-origin: center;
         }
         .video-tile.instructor video { transform: none; }
+        /* زر ملء الشاشة على البلاطة + دعم الزووم */
+        .tile-fs-btn {
+            position: absolute;
+            top: 8px; left: 10px;
+            width: 30px; height: 30px;
+            background: rgba(0,0,0,.55);
+            color: #fff;
+            border: none; border-radius: 8px;
+            font-size: 15px; line-height: 1;
+            cursor: pointer;
+            z-index: 6;
+        }
+        .tile-fs-btn:hover { background: rgba(0,0,0,.8); }
+        .video-tile:fullscreen,
+        .video-tile:-webkit-full-screen {
+            width: 100vw; height: 100vh;
+            border-radius: 0;
+            aspect-ratio: auto;
+            background: #000;
+        }
+        .video-tile:fullscreen video,
+        .video-tile:-webkit-full-screen video { object-fit: contain; }
         .video-tile .label {
             position: absolute;
             bottom: 8px; right: 10px;
@@ -125,7 +148,21 @@
             align-items: center; justify-content: center;
             padding: 0 3px;
         }
-        .chat-badge.show { display: flex; }
+        .chat-badge.show { display: flex; animation: badgePop .28s ease; }
+        @keyframes badgePop {
+            0% { transform: scale(.5); }
+            70% { transform: scale(1.18); }
+            100% { transform: scale(1); }
+        }
+        .ctrl-btn.alert {
+            background: #7f1d1d;
+            animation: alertPulse 1.4s infinite;
+        }
+        @keyframes alertPulse {
+            0% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); }
+            70% { box-shadow: 0 0 0 9px rgba(239,68,68,0); }
+            100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+        }
         .participants-pill {
             position: fixed;
             top: 62px; left: 14px;
@@ -186,6 +223,16 @@
             margin-bottom: 2px;
         }
         .chat-msg.mine .msg-meta { color: #bfdbfe; }
+        .chat-msg .who { font-weight: 700; }
+        .chat-msg .role-chip {
+            font-size: 0.58rem;
+            padding: 0 6px;
+            border-radius: 20px;
+            font-weight: 700;
+            line-height: 1.5;
+        }
+        .chat-msg .role-chip.teacher { background: #fbbf24; color: #1f2937; }
+        .chat-msg .role-chip.student { background: rgba(255,255,255,.15); color: #e5e7eb; }
         .chat-msg .muted-tag { color: #fca5a5; font-weight: 700; }
         .chat-msg .mute-btn {
             background: none; border: none;
@@ -292,7 +339,7 @@
     <!-- ===== لوحة الدردشة ===== -->
     <div class="chat-panel" id="chatPanel">
         <div class="chat-head">
-            <span>💬 الدردشة المباشرة</span>
+            <span id="chatTitle">💬 الدردشة المباشرة</span>
             <button id="chatClose" title="إغلاق">&times;</button>
         </div>
         <div class="chat-messages" id="chatMessages">
@@ -355,6 +402,7 @@
         var chatInputRow = document.getElementById('chatInputRow');
         var chatMuteHint = document.getElementById('chatMuteHint');
         var chatBadge = document.getElementById('chatBadge');
+        var btnChatEl = document.getElementById('btnChat');
 
         roomTitle.textContent = role === 'teacher' ? 'غرفة البث (الأستاذ)' : 'غرفة البث (مشاهد)';
 
@@ -374,6 +422,64 @@
 
         //  عنصر فيديو عن بعيد
         var remoteTiles = {};
+
+        // ===== تكبير الفيديو: ملء الشاشة + زووم بالقرص (Pinch) والنقر المزدوج =====
+        function toggleTileFullscreen(tile, vid) {
+            try {
+                if (document.fullscreenElement || document.webkitFullscreenElement) {
+                    if (document.exitFullscreen) document.exitFullscreen();
+                    return;
+                }
+                if (tile.requestFullscreen) {
+                    tile.requestFullscreen().catch(function () {});
+                } else if (tile.webkitRequestFullscreen) {
+                    tile.webkitRequestFullscreen();
+                } else if (vid.webkitEnterFullscreen) {
+                    vid.webkitEnterFullscreen(); // iOS Safari
+                }
+            } catch (e) {}
+        }
+
+        function setupTileZoom(tile, vid) {
+            var zoom = 1;
+            var mirrored = !tile.classList.contains('instructor');
+            function apply() {
+                vid.style.transform = (mirrored ? 'scaleX(-1) ' : '') + (zoom !== 1 ? 'scale(' + zoom.toFixed(3) + ')' : '');
+            }
+            function touchDist(t) {
+                var dx = t[0].clientX - t[1].clientX;
+                var dy = t[0].clientY - t[1].clientY;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+            var startDist = 0, startZoom = 1;
+            tile.addEventListener('touchstart', function (e) {
+                if (e.touches.length === 2) {
+                    startDist = touchDist(e.touches);
+                    startZoom = zoom;
+                }
+            }, { passive: true });
+            tile.addEventListener('touchmove', function (e) {
+                if (e.touches.length === 2 && startDist > 0) {
+                    e.preventDefault(); // منع تكبير الصفحة — الزووم على الفيديو فقط
+                    var z = startZoom * (touchDist(e.touches) / startDist);
+                    zoom = Math.min(4, Math.max(1, z));
+                    apply();
+                }
+            }, { passive: false });
+            tile.addEventListener('touchend', function (e) {
+                if (e.touches.length < 2) startDist = 0;
+            });
+            var lastTap = 0;
+            tile.addEventListener('click', function () {
+                var now = Date.now();
+                if (now - lastTap < 320) {
+                    zoom = (zoom > 1) ? 1 : 2.5;
+                    apply();
+                }
+                lastTap = now;
+            });
+        }
+
         function addRemoteTile(userId, label) {
             if (remoteTiles[userId]) return remoteTiles[userId];
             var tile = document.createElement('div');
@@ -383,8 +489,19 @@
             var lab = document.createElement('div');
             lab.className = 'label';
             lab.textContent = label || userId;
+            var fsBtn = document.createElement('button');
+            fsBtn.className = 'tile-fs-btn';
+            fsBtn.type = 'button';
+            fsBtn.title = 'ملء الشاشة (نقرة مزدوجة على الفيديو للتكبير)';
+            fsBtn.textContent = '⛶';
+            fsBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                toggleTileFullscreen(tile, vid);
+            });
             tile.appendChild(vid);
             tile.appendChild(lab);
+            tile.appendChild(fsBtn);
+            setupTileZoom(tile, vid);
             videoArea.appendChild(tile);
             videoArea.classList.add('has-remotes');
             remoteTiles[userId] = { tile: tile, video: vid };
@@ -472,6 +589,7 @@
             if (chatLog.length > 200) {
                 chatLog.shift();
             }
+            updateChatTitleFromTeacher(msg);
             if (!skipRender) renderChat();
             if (!chatPanelOpen) {
                 unreadCount++;
@@ -479,12 +597,24 @@
             }
         }
 
+        //  إظهار اسم الأستاذ الحقيقي في عنوان الدردشة للطالب
+        var chatTitleEl = document.getElementById('chatTitle');
+        function updateChatTitleFromTeacher(msg) {
+            if (role !== 'student' || !msg) return;
+            if (msg.senderRole !== 'teacher') return;
+            var n = String(msg.sender || '').trim();
+            if (!n || n === 'الأستاذ') return;
+            chatTitleEl.textContent = '💬 الدردشة مع الأستاذ: ' + n;
+        }
+
         function updateChatBadge() {
             if (unreadCount > 0) {
                 chatBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
                 chatBadge.classList.add('show');
+                btnChatEl.classList.add('alert'); // وميض يجذب الانتظار لوجود رسائل جديدة
             } else {
                 chatBadge.classList.remove('show');
+                btnChatEl.classList.remove('alert');
             }
         }
 
@@ -511,9 +641,15 @@
                 var meta = document.createElement('div');
                 meta.className = 'msg-meta';
                 var who = document.createElement('span');
-                who.textContent = (isMine ? 'أنت' : (msg.sender || (isTeacherSender ? 'الأستاذ' : 'طالب')))
-                    + (isTeacherSender ? ' 🎓' : '');
+                who.className = 'who';
+                var senderName = String(msg.sender || '').trim();
+                who.textContent = (isMine ? 'أنت' : (senderName || (isTeacherSender ? 'الأستاذ' : 'طالب')));
                 meta.appendChild(who);
+                // شارة الدور بجانب الاسم (أستاذ / طالب)
+                var roleChip = document.createElement('span');
+                roleChip.className = 'role-chip' + (isTeacherSender ? ' teacher' : ' student');
+                roleChip.textContent = isTeacherSender ? 'أستاذ' : 'طالب';
+                meta.appendChild(roleChip);
 
                 if (role === 'teacher' && !isTeacherSender && msg.senderId != null) {
                     var muted = isMutedStudent(msg.senderId);

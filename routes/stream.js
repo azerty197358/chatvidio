@@ -2373,6 +2373,32 @@ async function handleGetChatMessages(req, res) {
             } catch (e) {}
         }
 
+        // ✅ إصلاح أسماء الأستاذ العامة في الرسائل القديمة ('الأستاذ') — عرض اسمه الحقيقي
+        const genericTeacherIds = msgs
+            .filter(m => m.sender_role === 'teacher' && (!m.sender_name || m.sender_name === 'الأستاذ') && m.sender_id)
+            .map(m => m.sender_id);
+
+        if (genericTeacherIds.length > 0) {
+            const uniqueTIds = Array.from(new Set(genericTeacherIds));
+            try {
+                const { data: tList } = await supabase
+                    .from('teachers')
+                    .select('id, full_name, name')
+                    .in('id', uniqueTIds);
+
+                if (tList && tList.length > 0) {
+                    const tMap = new Map();
+                    tList.forEach(t => tMap.set(t.id, t.full_name || t.name));
+                    msgs = msgs.map(m => {
+                        if (m.sender_role === 'teacher' && (!m.sender_name || m.sender_name === 'الأستاذ') && tMap.has(m.sender_id)) {
+                            return { ...m, sender_name: tMap.get(m.sender_id) || 'الأستاذ' };
+                        }
+                        return m;
+                    });
+                }
+            } catch (e) {}
+        }
+
         res.json({
             success: true,
             messages: msgs,
