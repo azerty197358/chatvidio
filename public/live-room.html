@@ -257,19 +257,55 @@
             }
         });
 
-        //  بدء الكاميرا والميكروفون ثم الاتصال
-        ZoomyRTC.startMedia().then(function (stream) {
+        //  عرض الفيديو المحلي بشكل مضمون (تشغيل صريح + مراقبة)
+        function attachLocalStream(stream) {
             localStream = stream;
             localVideo.srcObject = stream;
+            localVideo.muted = true;
+            var p = localVideo.play();
+            if (p && p.catch) p.catch(function () {});
+
+            var vTrack = stream.getVideoTracks()[0];
             localLabel.textContent = role === 'teacher' ? 'أنت (الأستاذ)' : 'أنت';
 
+            //  إن لم يصل فيديو خلال 3 ثوانٍ (أو مسار ميّت) → إعادة طلب الكاميرا تلقائياً
+            if (!vTrack || vTrack.readyState !== 'live') {
+                setTimeout(retryVideo, 1500);
+            } else {
+                setTimeout(function () {
+                    if (localVideo.videoWidth === 0) retryVideo();
+                }, 3000);
+            }
+        }
+
+        var videoRetries = 0;
+        function retryVideo() {
+            if (videoRetries >= 5) return;
+            videoRetries++;
+            ZoomyRTC.ensureVideo().then(function (track) {
+                if (track) {
+                    attachLocalStream(ZoomyRTC.getLocalStream());
+                } else {
+                    setTimeout(retryVideo, 2500);
+                }
+            });
+        }
+
+        //  بدء الكاميرا والميكروفون ثم الاتصال
+        ZoomyRTC.startMedia().then(function (stream) {
+            attachLocalStream(stream);
             return ZoomyRTC.connect(roomId, userId, role, token);
         }).then(function () {
             connected = true;
             setStatus('متصل', true);
+            //  تحقق أخير من وجود فيديو بعد الاتصال
+            setTimeout(function () {
+                if (localVideo.videoWidth === 0) retryVideo();
+            }, 2000);
         }).catch(function () {
-            //  لا رسائل أخطاء إطلاقاً — حالة هادئة فقط
+            //  لا رسائل أخطاء إطلاقاً — حالة هادئة فقط + محاولة استعادة الكاميرا
             setStatus('بانتظار السماح بالوصول...', false);
+            setTimeout(retryVideo, 1500);
         });
 
         //  أزرار التحكم

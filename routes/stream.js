@@ -80,16 +80,10 @@ const handleStreamStart = async (req, res) => {
         const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0;
 
         if (isFreeOffer) {
-            let reqMeetUrl = req.body && (req.body.meet_url || req.body.stream_url) ? (req.body.meet_url || req.body.stream_url) : null;
-            let meetUrl = formatMeetOrZoomUrl(reqMeetUrl || offer.meet_url || offer.stream_url);
-
-            if (!meetUrl) {
-                //  WebRTC: لا حاجة لرابط خارجي — تُنشأ غرفة محلية فوراً
-                const localRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
-                meetUrl = localRoom.url;
-            }
-
-            const platform = (meetUrl && meetUrl.includes('/live-room.html')) ? 'webrtc' : (meetUrl.includes('zoom.us') || meetUrl.includes('zoom.com') ? 'zoom' : 'google_meet');
+            //  الحصص المجانية: غرفة WebRTC محلية دائماً — بدون أي رابط خارجي
+            const localRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
+            const meetUrl = localRoom.url;
+            const platform = 'webrtc';
 
             // ✅ حفظ بيانات البث المجاني في جدول الدروس
             await supabase

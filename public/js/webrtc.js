@@ -311,41 +311,42 @@
     }
 
     async function startMedia(constraints) {
-        try {
-            const defaultConstraints = {
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                },
-                video: {
-                    width: { ideal: 1280, max: 1920 },
-                    height: { ideal: 720, max: 1080 },
-                    frameRate: { ideal: 30, max: 60 }
-                }
-            };
-            const finalConstraints = constraints || defaultConstraints;
-            localStream = await navigator.mediaDevices.getUserMedia(finalConstraints);
-            console.log('[ZoomyRTC] Local media started:', 
-                localStream.getVideoTracks().length, 'video,',
-                localStream.getAudioTracks().length, 'audio');
-            return localStream;
-        } catch (e) {
-            console.error('[ZoomyRTC] getUserMedia error:', e.message);
-            // محاولة بدون فيديو
+        if (constraints) {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
                 return localStream;
-            } catch (e2) {
-                console.error('[ZoomyRTC] Audio only also failed:', e2.message);
-                throw e;
+            } catch (e) {
+                console.warn('[ZoomyRTC] custom constraints failed, trying defaults');
             }
         }
+
+        //  سلسلة محاولات: فيديو كامل ثم فيديو بسيط ثم صوت فقط
+        const attempts = [
+            {
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+            },
+            { audio: true, video: { width: { ideal: 640 }, height: { ideal: 480 } } },
+            { audio: true, video: true },
+            { audio: true }
+        ];
+
+        for (let i = 0; i < attempts.length; i++) {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+                console.log('[ZoomyRTC] Local media started:',
+                    localStream.getVideoTracks().length, 'video,',
+                    localStream.getAudioTracks().length, 'audio');
+                return localStream;
+            } catch (e) {
+                console.warn('[ZoomyRTC] getUserMedia attempt ' + (i + 1) + ' failed:', e.message);
+            }
+        }
+        throw new Error('MEDIA_UNAVAILABLE');
     }
 
     async function replaceTrack(track) {
         if (!localStream) return;
-        const sender = localStream.getVideoTracks()[0];
         for (const [userId, pc] of peerConnections) {
             const senders = pc.getSenders();
             for (const s of senders) {
@@ -353,6 +354,39 @@
                     await s.replaceTrack(track);
                 }
             }
+        }
+    }
+
+    /**
+     *  ضمان وجود مسار فيديو حي: إن لم يُوجد (تعذّر في أول مرة)
+     *  يُعاد طلب الكاميرا ويُستبدل المسار في كل الاتصالات الحالية
+     */
+    async function ensureVideo() {
+        const current = localStream && localStream.getVideoTracks()[0];
+        if (current && current.readyState === 'live' && current.enabled) {
+            return current;
+        }
+        try {
+            const camStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+            });
+            const track = camStream.getVideoTracks()[0];
+            if (!track) return null;
+            if (current) {
+                if (localStream) localStream.removeTrack(current);
+                current.stop();
+            }
+            if (localStream) {
+                localStream.addTrack(track);
+            } else {
+                localStream = camStream;
+            }
+            await replaceTrack(track);
+            console.log('[ZoomyRTC] Video track restored');
+            return track;
+        } catch (e) {
+            console.warn('[ZoomyRTC] ensureVideo failed:', e.message);
+            return null;
         }
     }
 
@@ -502,6 +536,7 @@
         connect,
         disconnect,
         startMedia,
+        ensureVideo,
         toggleCamera,
         toggleMicrophone,
         shareScreen,

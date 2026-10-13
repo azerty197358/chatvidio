@@ -6600,7 +6600,7 @@ function appendOptimisticMessage(text, reply) {
                 <i class="fas fa-crown" style="color: #f59e0b;"></i> أنت المضيف والمتحكم بالكامل في الاجتماع
             </div>
             <p style="margin: 0; font-size: 0.8rem; color: #334155; line-height: 1.5;">
-                لكي تكون <strong>المضيف (Host)</strong> بصلاحيات قبول الطلاب والتحكم الكامل، افتح Google Meet أو Zoom بحسابك أولاً، ثم الصق الرابط أدناه لإشعار الطلاب وبدء الحصة فوراً.
+                الحصة تعمل <strong>داخل المنصة مباشرة</strong> بغرفة WebRTC — الأستاذ والطلاب يدخلون من نفس الموقع بدون أي تطبيق خارجي. الحقل أدناه <strong>اختياري</strong> تماماً: اتركه فارغاً لاستخدام غرفة المنصة، أو الصق رابط Google Meet / Zoom خارجي إن أردت.
             </p>
         </div>
 
@@ -6625,11 +6625,11 @@ function appendOptimisticMessage(text, reply) {
 
         <div style="margin-bottom: 16px;">
             <label for="meetHostUrlInput" style="display: block; font-weight: 700; color: #1e293b; margin-bottom: 6px; font-size: 0.88rem;">
-                2️⃣ الصق رابط أو رمز الاجتماع هنا:
+                2️⃣ (اختياري) الصق رابط اجتماع خارجي هنا:
             </label>
             <input type="text" id="meetHostUrlInput" placeholder="مثال: https://meet.google.com/xxx-yyyy-zzz أو https://us06web.zoom.us/j/..." style="width: 100%; padding: 11px 12px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-family: 'Cairo', sans-serif; font-size: 0.88rem;">
             <small style="color: #64748b; font-size: 0.74rem; margin-top: 4px; display: block;">
-                * سيتم حفظ هذا الرابط الصالح وإرساله فوراً في إشعار لجميع المتابعين والطلاب.
+                * اتركه فارغاً لاستخدام غرفة المنصة المدمجة (موصى به). إذا لصقت رابطاً سيُحفظ ويُرسل في إشعار لجميع المتابعين والطلاب.
             </small>
         </div>
 
@@ -11723,36 +11723,40 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         const sessionNumber = document.getElementById('meetHostSessionNumber').value || 1;
         const meetUrl = document.getElementById('meetHostUrlInput').value.trim();
 
-        if (!meetUrl) {
-            showToast('⚠️ يرجى لصق رابط Google Meet أو Zoom لكي ينضم الطلاب إليه', 'warning');
-            document.getElementById('meetHostUrlInput').focus();
-            return;
-        }
-
         try {
-            showToast('⏳ جاري حفظ الرابط وإطلاق البث المباشر...', 'info');
-            // أولاً: حفظ الرابط في الدرس
-            const updateRes = await fetchWithAuth(`/api/offer/${offerId}/update-meet-url`, {
-                method: 'POST',
-                body: JSON.stringify({ meet_url: meetUrl, notify_students: true })
-            });
-            const updateData = await updateRes.json();
-            if (!updateData.success) {
-                showToast(updateData.error || '❌ تعذر حفظ الرابط، تأكد من صحة الرابط', 'error');
-                return;
+            showToast('⏳ جاري إطلاق البث المباشر...', 'info');
+
+            //  رابط خارجي اختياري — بدونه تُستخدم غرفة WebRTC المحلية
+            if (meetUrl) {
+                const updateRes = await fetchWithAuth(`/api/offer/${offerId}/update-meet-url`, {
+                    method: 'POST',
+                    body: JSON.stringify({ meet_url: meetUrl, notify_students: true })
+                });
+                const updateData = await updateRes.json();
+                if (!updateData.success) {
+                    showToast(updateData.error || '❌ تعذر حفظ الرابط، تأكد من صحة الرابط', 'error');
+                    return;
+                }
             }
 
-            // ثانياً: بدء البث
+            //  بدء البث — الخادم ينشئ غرفة WebRTC محلية ويُشعر الطلاب
             const startRes = await fetchWithAuth('/api/stream/start-zoom-stream', {
                 method: 'POST',
-                body: JSON.stringify({ offer_id: offerId, meet_url: updateData.meet_url })
+                body: JSON.stringify({ offer_id: offerId, meet_url: meetUrl || undefined })
             });
             const startData = await startRes.json();
             
             closeGoogleMeetHostModal();
+            if (!startData.success) {
+                showToast('❌ تعذر بدء البث، حاول مرة أخرى', 'error');
+                return;
+            }
             showToast('🎉 تم إطلاق البث المجاني وإشعار جميع الطلاب والمتابعين برابط الدخول!', 'success');
             
-            const targetMeetUrl = updateData.meet_url || meetUrl;
+            let targetMeetUrl = startData.room_url || startData.meet_url || ('/live-room.html?room=offer_' + offerId + '&role=teacher');
+            if (targetMeetUrl.includes('live-room.html') && targetMeetUrl.indexOf('role=') === -1) {
+                targetMeetUrl += (targetMeetUrl.includes('?') ? '&' : '?') + 'role=teacher';
+            }
             try {
                 const newWindow = window.open(targetMeetUrl, '_blank');
                 if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
@@ -11864,7 +11868,16 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                         }
                         return;
                     } else {
-                        openGoogleMeetHostModal(offerId);
+                        //  لا يوجد رابط خارجي → غرفة WebRTC المحلية
+                        const localRoomUrl = '/live-room.html?room=offer_' + offerId + '&role=teacher';
+                        try {
+                            const rw = window.open(localRoomUrl, '_blank');
+                            if (!rw || rw.closed || typeof rw.closed === 'undefined') {
+                                window.location.href = localRoomUrl;
+                            }
+                        } catch(e) {
+                            window.location.href = localRoomUrl;
+                        }
                         return;
                     }
                 }
