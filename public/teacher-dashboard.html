@@ -14940,7 +14940,8 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         const roleBadge = c.author_role === 'teacher' 
             ? '<span style="background: #dbeafe; color: #1e40af; font-size: 0.72rem; padding: 2px 8px; border-radius: 12px; font-weight: 800; margin-right: 6px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #bfdbfe;"><i class="fas fa-chalkboard-teacher"></i> أستاذ</span>' 
             : '<span style="background: #f1f5f9; color: #475569; font-size: 0.72rem; padding: 2px 8px; border-radius: 12px; font-weight: 700; margin-right: 6px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #e2e8f0;"><i class="fas fa-user-graduate"></i> طالب</span>';
-        const canDelete = c.user_id === userData?.id || userData?.role === 'teacher';
+        // زر الحذف يظهر لصاحب التعليق فقط (لا يحق لأي أستاذ آخر حذف تعليقات زملائه)
+        const canDelete = String(c.user_id) === String(userData?.id);
         const profileClick = c.author_role === 'teacher' ? `showTeacherProfileFromPost(${c.user_id})` : `showStudentProfile(${c.user_id})`;
         
         let repliesHtml = '';

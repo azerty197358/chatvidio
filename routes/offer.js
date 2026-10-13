@@ -1445,14 +1445,36 @@ router.delete('/offer/delete/:offer_id', authenticate, authorize(['teacher']), [
             return res.status(403).json({ success: false, error: 'غير مصرح لك بحذف هذا الدرس' });
         }
 
-        // ✅ التحقق مما إذا كان العرض منتهياً بالكامل لجميع الحصص
+        // ✅ التحقق مما إذا كان الدرس منتهياً (مطابق لتعريف الشارة "منتهية" في اللوحة)
+        // حتى لا يعرض اللوحة "منتهية" بينما يرفض الخادم الحذف
+        const totalSessions = Number(offer.total_sessions || 1);
+        const completedSessions = Number(offer.completed_sessions_count ?? offer.completed_sessions ?? 0);
+        const isFinished = totalSessions > 0 && completedSessions >= totalSessions;
+        const isMultiSessionRemaining = totalSessions > 1 && completedSessions < totalSessions;
+
+        // انتهاء مبني على الوقت: الموعد المقرر انقضى تماماً (بتوقيت الجزائر +01:00)
+        let scheduledTimePassed = false;
+        try {
+            if (offer.offer_date) {
+                let ds = String(offer.offer_date).trim();
+                if (!ds.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(ds)) {
+                    ds = ds.replace(' ', 'T') + '+01:00';
+                }
+                const startMs = new Date(ds).getTime();
+                if (!isNaN(startMs)) {
+                    const durationMin = Number(offer.duration_minutes || offer.session_duration || offer.duration || 60);
+                    scheduledTimePassed = (startMs + durationMin * 60 * 1000) < Date.now();
+                }
+            }
+        } catch (e) {}
+
         const isEnded = Boolean(
-            offer.status === 'ended' || 
-            (offer.completed_sessions_count !== null && 
-             offer.completed_sessions_count !== undefined && 
-             offer.total_sessions !== null && 
-             offer.total_sessions !== undefined && 
-             offer.completed_sessions_count >= offer.total_sessions)
+            ['ended', 'completed', 'cancelled'].includes(offer.status) ||
+            isFinished ||
+            (!!offer.completed_at && !isMultiSessionRemaining) ||
+            !!offer.force_ended_at ||
+            offer.terminated === true ||
+            (scheduledTimePassed && !isMultiSessionRemaining)
         );
 
         if (!isEnded) {

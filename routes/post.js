@@ -1330,7 +1330,7 @@ router.post('/comment', authenticate, authorize(['student', 'teacher']), [
 });
 
 // ============================================================
-// 6. حذف تعليق (لصاحب التعليق أو صاحب المنشور)
+// 6. حذف تعليق (لصاحب التعليق أو الإدارة فقط)
 // ============================================================
 router.delete('/comment/:comment_id', authenticate, async (req, res) => {
     try {
@@ -1348,14 +1348,13 @@ router.delete('/comment/:comment_id', authenticate, async (req, res) => {
 
         const post = await getOne('posts', 'id', comment.post_id);
 
-        // الصلاحية: صاحب التعليق أو الأستاذ صاحب المنشور أو الإدارة
-        const isCommentAuthor = (comment.user_id && comment.user_id === userId && comment.user_type === userType) ||
-                                (userType === 'student' && comment.student_id === userId) ||
-                                (userType === 'teacher' && comment.teacher_id === userId);
-        const isPostOwner = (userType === 'teacher' && post && post.teacher_id === userId);
+        // الصلاحية: صاحب التعليق أو الإدارة فقط — لا يحق لغير كليهما حذف التعليق
+        // (مقارنة نصية حتى لا تفشل بسبب اختلاف النوع رقم/نص من قاعدة البيانات)
+        const isCommentAuthor = String(comment.user_id) === String(userId) &&
+                                String(comment.user_type || '') === String(userType || '');
         const isAdmin = userType === 'admin';
 
-        if (!isCommentAuthor && !isPostOwner && !isAdmin) {
+        if (!isCommentAuthor && !isAdmin) {
             return res.status(403).json({ success: false, error: 'غير مصرح لك بحذف هذا التعليق' });
         }
 
