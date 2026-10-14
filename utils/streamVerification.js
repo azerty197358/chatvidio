@@ -229,14 +229,23 @@ async function recordStreamEnd(offerId, teacherId) {
  * التحقق من اكتمال البث للمحفظة
  */
 async function verifyStreamCompletion(offerId) {
-    const { data: offer, error: offerError } = await supabase
-        .from('offers')
-        .select('id, duration, total_seconds, remaining_seconds, stream_started_at, teacher_id, subject_name, price')
-        .eq('id', offerId)
-        .single();
+    // ✅ جلب متدرّج الأعمدة: يضمن حساب الإكتمال حتى لو غاب عمود واحد من جدول offers
+    let offer = null;
+    const offerSelects = [
+        'id, duration, total_seconds, remaining_seconds, stream_started_at, teacher_id, subject_name, price',
+        'id, duration, remaining_seconds, stream_started_at, teacher_id, subject_name, price',
+        'id, duration, stream_started_at, teacher_id, subject_name, price',
+        'id'
+    ];
+    for (const cols of offerSelects) {
+        try {
+            const { data, error } = await supabase.from('offers').select(cols).eq('id', offerId).single();
+            if (!error && data) { offer = data; break; }
+        } catch (e) {}
+    }
 
-    if (offerError || !offer) {
-        logger.error(`verifyStreamCompletion: error fetching offer ${offerId}:`, offerError ? offerError.message : 'Not found');
+    if (!offer) {
+        logger.error(`verifyStreamCompletion: لا يمكن جلب الدرس ${offerId}`);
         return { complete: false, completion_percentage: 0, error: 'الدرس غير موجود' };
     }
 
@@ -244,8 +253,9 @@ async function verifyStreamCompletion(offerId) {
     const durationMins = offer.duration || 60;
     const expectedDuration = Number(offer.total_seconds || (durationMins * 60)) || 3600;
     
-    // نسبة الإنجاز المطلوبة (50 دقيقة من أصل 60 دقيقة = 5/6 من المدة)
-    const completionRatio = 50 / 60;
+    // ✅ نسبة الإنجاز المطلوبة: 90% من المدة المخطط لها (ضمان حقوق الطالب —
+    // إذا لم يكتمل 90% من وقت البث عند الإنهاء يتم استرداد المبلغ كاملاً للطالب)
+    const completionRatio = 0.9;
     const requiredDuration = expectedDuration * completionRatio;
 
     // 2. حساب الوقت المنقضي بناءً على موقت الأستاذ المقاس بالسيرفر
@@ -278,7 +288,7 @@ async function verifyStreamCompletion(offerId) {
     // تأكيد ألا يتجاوز الوقت الفعلي مدة البث الكلية
     actualDuration = Math.min(expectedDuration, actualDuration);
 
-    // التحقق من أن الاستاذ أتم 50 دقيقة على الأقل
+    // التحقق من أن الأستاذ أتم 90% على الأقل من مدة البث المخططة
     const isComplete = actualDuration >= requiredDuration;
 
     let completionPercentage = (actualDuration / expectedDuration) * 100;
@@ -324,14 +334,23 @@ async function verifyStreamCompletion(offerId) {
  * معالجة المدفوعات حسب وقت البث الفعلي
  */
 async function processStreamPayments(offerId, earlyEnd = false) {
-    const { data: offer, error: offerError } = await supabase
-        .from('offers')
-        .select('id, teacher_id, price, subject_name, is_free, price_per_session, total_sessions, plan_type')
-        .eq('id', offerId)
-        .single();
+    // ✅ جلب متدرّج الأعمدة: الاسترداد لا يجب أن يتوقف أبداً بسبب غياب عمود واحد
+    let offer = null;
+    const offerSelects = [
+        'id, teacher_id, price, subject_name, is_free, price_per_session, total_sessions, plan_type',
+        'id, teacher_id, price, subject_name, is_free',
+        'id, teacher_id, price, subject_name',
+        'id, teacher_id, price'
+    ];
+    for (const cols of offerSelects) {
+        try {
+            const { data, error } = await supabase.from('offers').select(cols).eq('id', offerId).single();
+            if (!error && data) { offer = data; break; }
+        } catch (e) {}
+    }
 
-    if (offerError || !offer) {
-        logger.error('خطأ في جلب الدرس:', offerError);
+    if (!offer) {
+        logger.error(`خطأ في جلب الدرس ${offerId} — تم تجاهل معالجة المدفوعات لهذه الدورة`);
         return;
     }
 
@@ -349,10 +368,18 @@ async function processStreamPayments(offerId, earlyEnd = false) {
     let actualSeconds = 0;
 
     if (!earlyEnd) {
-        const completion = await verifyStreamCompletion(offerId);
-        isCompleted = completion.complete;
-        completionPctRounded = Math.round(completion.completion_percentage);
-        actualSeconds = completion.actual_seconds;
+        try {
+            const completion = await verifyStreamCompletion(offerId);
+            isCompleted = completion.complete;
+            completionPctRounded = Math.round(completion.completion_percentage);
+            actualSeconds = completion.actual_seconds;
+        } catch (e) {
+            // ✅ في أي خطأ غير متوقع: نفترض أن البث غير مكتمل ⇒ استرداد للطالب (حماية حقوقه أولاً)
+            logger.error('verifyStreamCompletion فشل — معاملات عدم الاكتمال (استرداد):', e.message);
+            isCompleted = false;
+            completionPctRounded = 0;
+            actualSeconds = 0;
+        }
     }
 
     if (isMultiSession) {
@@ -410,13 +437,25 @@ async function processStreamPayments(offerId, earlyEnd = false) {
         return await processEarlyEndRefund(offerId);
     }
 
-    const { data: sessions, error: sessionsError } = await supabase
-        .from('sessions')
-        .select('id, student_id, payment_amount, payment_status')
-        .eq('offer_id', offerId)
-        .eq('payment_status', 'pending_stream');
+    // ✅ جلب متدرّج الأعمدة — لا يجوز أن يتوقف الاسترداد بسبب غياب عمود واحد
+    let sessions = null;
+    const sessionSelects = [
+        'id, student_id, payment_amount, payment_status',
+        'id, student_id, payment_amount',
+        'id, student_id'
+    ];
+    for (const cols of sessionSelects) {
+        try {
+            const { data, error } = await supabase
+                .from('sessions')
+                .select(cols)
+                .eq('offer_id', offerId)
+                .eq('payment_status', 'pending_stream');
+            if (!error && data) { sessions = data; break; }
+        } catch (e) {}
+    }
 
-    if (sessionsError) return;
+    if (!sessions) return;
 
     for (const session of (sessions || [])) {
         if (isCompleted) {

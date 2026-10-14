@@ -2138,6 +2138,26 @@ const streamMessagesStore = new Map(); // offer_id -> Array of message objects
 const mutedStudentsStore = new Map();  // offer_id -> Set of student_ids
 const teacherPingStore = new Map();     // offer_id -> timestamp (ms)
 
+// ✅ تنظيف اسم المعروض: بدون HTML أو أحرف تحكم، بحد أقصى 40 حرفاً
+function sanitizeSenderName(raw) {
+    if (typeof raw !== 'string') return '';
+    let n = raw.replace(/[\u0000-\u001F\u007F<>]/g, '').trim();
+    if (n.length > 40) n = n.slice(0, 40);
+    if (!n || n === 'undefined' || n === 'null' || n === 'طالب' || n === 'الأستاذ') return '';
+    return n;
+}
+
+// ✅ اختيار أفضل اسم معروض من صف قاعدة البيانات (يتحمل غياب الأعمدة بفضل select('*'))
+function pickDisplayName(row) {
+    if (!row || typeof row !== 'object') return '';
+    const candidates = [row.full_name, row.fullname, row.name, row.username, row.display_name];
+    for (const c of candidates) {
+        const n = sanitizeSenderName(c);
+        if (n) return n;
+    }
+    return '';
+}
+
 // ✅ جلب قائمة المحكم عليهم (مع تحميلها من قاعدة البيانات مرة واحدة عند أول طلب بعد إعادة تشغيل الخادم)
 async function getMutedSet(offerId) {
     if (!mutedStudentsStore.has(offerId)) {
@@ -2172,20 +2192,23 @@ async function handleSendChatMessage(req, res) {
             }
         }
 
-        let senderName = req.body.sender_name || req.user.full_name || req.user.name;
-        if (!senderName || senderName === 'طالب' || senderName.trim() === '') {
+        // ✅ اسم المرسل: قاعدة البيانات أولاً (الأكثر موثوقية)، ثم اسم يرسله العميل احتياطياً، ثم اسم عام
+        let senderName = '';
+        try {
             if (role === 'teacher') {
-                const { data: t } = await supabase.from('teachers').select('full_name, name').eq('id', userId).maybeSingle();
-                if (t?.full_name) senderName = t.full_name;
-                else if (t?.name) senderName = t.name;
-            } else {
-                const { data: s } = await supabase.from('students').select('full_name, name, username').eq('id', userId).maybeSingle();
-                if (s?.full_name) senderName = s.full_name;
-                else if (s?.name) senderName = s.name;
-                else if (s?.username) senderName = s.username;
+                const { data: t } = await supabase.from('teachers').select('*').eq('id', userId).maybeSingle();
+                senderName = pickDisplayName(t);
+            } else if (role === 'student' && Number(userId) > 0) {
+                const { data: s } = await supabase.from('students').select('*').eq('id', userId).maybeSingle();
+                senderName = pickDisplayName(s);
             }
+        } catch (e) {}
+        if (!senderName) {
+            senderName = sanitizeSenderName(req.body && req.body.sender_name)
+                || sanitizeSenderName(req.user && req.user.full_name)
+                || sanitizeSenderName(req.user && req.user.name);
         }
-        if (!senderName || senderName === 'طالب') {
+        if (!senderName) {
             senderName = (role === 'teacher' ? 'الأستاذ' : 'طالب');
         }
 
@@ -2357,12 +2380,15 @@ async function handleGetChatMessages(req, res) {
             try {
                 const { data: stdList } = await supabase
                     .from('students')
-                    .select('id, full_name, name, username')
+                    .select('*')
                     .in('id', uniqueIds);
 
                 if (stdList && stdList.length > 0) {
                     const stdMap = new Map();
-                    stdList.forEach(s => stdMap.set(s.id, s.full_name || s.name || s.username));
+                    stdList.forEach(s => {
+                        const n = pickDisplayName(s);
+                        if (n) stdMap.set(s.id, n);
+                    });
                     msgs = msgs.map(m => {
                         if (m.sender_role === 'student' && (!m.sender_name || m.sender_name === 'طالب') && stdMap.has(m.sender_id)) {
                             return { ...m, sender_name: stdMap.get(m.sender_id) };
@@ -2383,12 +2409,15 @@ async function handleGetChatMessages(req, res) {
             try {
                 const { data: tList } = await supabase
                     .from('teachers')
-                    .select('id, full_name, name')
+                    .select('*')
                     .in('id', uniqueTIds);
 
                 if (tList && tList.length > 0) {
                     const tMap = new Map();
-                    tList.forEach(t => tMap.set(t.id, t.full_name || t.name));
+                    tList.forEach(t => {
+                        const n = pickDisplayName(t);
+                        if (n) tMap.set(t.id, n);
+                    });
                     msgs = msgs.map(m => {
                         if (m.sender_role === 'teacher' && (!m.sender_name || m.sender_name === 'الأستاذ') && tMap.has(m.sender_id)) {
                             return { ...m, sender_name: tMap.get(m.sender_id) || 'الأستاذ' };

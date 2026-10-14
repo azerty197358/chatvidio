@@ -36,6 +36,19 @@
             transition: background .3s;
         }
         .status-dot.live { background: #22c55e; }
+        .room-header .timer-chip {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #38bdf8;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 3px 12px;
+            border-radius: 20px;
+            direction: ltr;
+            white-space: nowrap;
+        }
+        .room-header .timer-chip.expired { color: #f87171; border-color: #7f1d1d; }
+        .room-header .timer-chip.done { color: #4ade80; border-color: #14532d; }
         .video-area {
             flex: 1;
             display: grid;
@@ -293,6 +306,7 @@
 <body>
     <div class="room-header">
         <div class="title" id="roomTitle">غرفة البث المباشر</div>
+        <div class="timer-chip" id="timerChip" style="display:none;">⏱ --:--</div>
         <div class="status">
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">جاري الاتصال...</span>
@@ -605,6 +619,9 @@
             var n = String(msg.sender || '').trim();
             if (!n || n === 'الأستاذ') return;
             chatTitleEl.textContent = '💬 الدردشة مع الأستاذ: ' + n;
+            // ✅ إظهار اسم الأستاذ الحقيقي على بلاطة الفيديو أيضاً
+            var lab = document.querySelector('.video-tile.instructor .label');
+            if (lab) lab.textContent = n;
         }
 
         function updateChatBadge() {
@@ -698,6 +715,11 @@
             streamEndedOverlay.classList.add('show');
             updateViewerPlaceholder();
             setStatus('انتهى البث', false);
+            if (timerAnchorRemaining === null) {
+                timerAnchorRemaining = 0;
+                timerAnchorAt = Date.now();
+            }
+            renderTimer();
             updateMuteHint();
         }
 
@@ -717,11 +739,79 @@
             });
         }
 
+        // ===== موقت البث التنازلي (يظهر للأستاذ والطالب) =====
+        var timerChip = document.getElementById('timerChip');
+        var timerTotal = 3600;
+        var timerAnchorRemaining = null; // آخر قيمة محفوظة من الخادم
+        var timerAnchorAt = 0;           // لحظة حفظها
+        var timerFrozen = false;         // البث متوقف مؤقتاً
+
+        function fmtTimer(s) {
+            s = Math.max(0, Math.round(s));
+            var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            var mm = (m < 10 ? '0' : '') + m, ss = (sec < 10 ? '0' : '') + sec;
+            return h > 0 ? (h + ':' + mm + ':' + ss) : (mm + ':' + ss);
+        }
+
+        function currentRemaining() {
+            if (timerAnchorRemaining === null) return null;
+            if (timerFrozen || streamEnded) return Math.max(0, timerAnchorRemaining);
+            return Math.max(0, timerAnchorRemaining - (Date.now() - timerAnchorAt) / 1000);
+        }
+
+        function syncTimerFrom(data) {
+            if (data && data.total_seconds != null && !isNaN(Number(data.total_seconds)) && Number(data.total_seconds) > 0) {
+                timerTotal = Number(data.total_seconds);
+            }
+            if (data && data.remaining_seconds != null && !isNaN(Number(data.remaining_seconds))) {
+                timerAnchorRemaining = Math.max(0, Number(data.remaining_seconds));
+                timerAnchorAt = Date.now();
+            } else if (timerAnchorRemaining === null) {
+                // لا توجد قيمة محفوظة بعد — نبدأ من المدة الكاملة للحصة
+                timerAnchorRemaining = timerTotal;
+                timerAnchorAt = Date.now();
+            }
+            timerFrozen = !!(data && data.stream_status === 'paused');
+            renderTimer();
+        }
+
+        function renderTimer() {
+            var rem = currentRemaining();
+            if (rem === null) { timerChip.style.display = 'none'; return; }
+            timerChip.style.display = 'inline-block';
+            timerChip.classList.remove('expired', 'done');
+            if (streamEnded) {
+                timerChip.textContent = '⏱ انتهى وقت الحصة';
+                timerChip.classList.add('done');
+                return;
+            }
+            var pct = timerTotal > 0 ? Math.min(100, Math.floor(((timerTotal - rem) / timerTotal) * 100)) : 0;
+            timerChip.textContent = '⏱ ' + fmtTimer(rem) + ' (' + pct + '%)';
+            if (rem <= 0) timerChip.classList.add('expired');
+        }
+
+        // ✅ مزامنة الوقت المتبقي مع الخادم (الأستاذ فقط) — يضمن دقة حساب نسبة الإكتمال والاسترداد عند الإنهاء
+        function syncTimerToServer() {
+            if (role !== 'teacher' || !offerId || streamEnded) return;
+            var rem = currentRemaining();
+            if (rem === null) return;
+            api('/api/stream/sync-timer/' + offerId, {
+                method: 'POST',
+                body: JSON.stringify({ remaining_seconds: Math.round(rem), is_paused: false })
+            }).catch(function () {});
+        }
+
+        // نبض ثانية واحدة لتحديث العرض (يتوقف تلقائياً عند إخفاء التبويب)
+        setInterval(function () {
+            if (!document.hidden) renderTimer();
+        }, 1000);
+
         //  جلب الحالة والرسائل + تحديث التواجد (استطلاع كل 15 ثانية — يتوقف عند إخفاء التبويب)
         function refreshChatState() {
             if (!offerId || !token) return Promise.resolve();
             return api('/api/stream/chat/messages/' + offerId).then(function (data) {
                 if (!data) return;
+                syncTimerFrom(data);
                 if (data.stream_ended) { markStreamEnded(); return; }
                 if (Array.isArray(data.messages)) {
                     data.messages.forEach(function (m) { ingestMessage(m, true); });
@@ -744,7 +834,10 @@
         function startPolling() {
             stopPolling();
             pollTimer = setInterval(function () {
-                if (!document.hidden) refreshChatState();
+                if (!document.hidden) {
+                    refreshChatState();
+                    syncTimerToServer();
+                }
             }, 15000);
         }
         function stopPolling() {
@@ -754,10 +847,28 @@
             if (document.hidden) {
                 stopPolling();
             } else {
+                renderTimer();
                 refreshChatState();
+                syncTimerToServer();
                 startPolling();
             }
         });
+
+        // ✅ اسم المستخدم المحلي — يُرسل احتياطياً لضمان ظهور الاسم الصحيح في الدردشة
+        // حتى لو تعذر جلبه من قاعدة البيانات (الأولوية تبقى لقاعدة البيانات على الخادم)
+        function getMyDisplayName() {
+            try {
+                var u = JSON.parse(localStorage.getItem('userData') || 'null');
+                if (u && typeof u === 'object') {
+                    var n = u.full_name || u.fullname || u.name || u.username || u.display_name || '';
+                    if (typeof n === 'string') {
+                        n = n.replace(/[\u0000-\u001F\u007F<>]/g, '').trim().slice(0, 40);
+                        if (n && n !== 'undefined' && n !== 'null' && n !== 'طالب' && n !== 'الأستاذ') return n;
+                    }
+                }
+            } catch (e) {}
+            return '';
+        }
 
         function sendChatMessage() {
             var text = chatInput.value.trim();
@@ -766,7 +877,7 @@
             chatInput.value = '';
             api('/api/stream/chat/send', {
                 method: 'POST',
-                body: JSON.stringify({ offer_id: offerId, message: text })
+                body: JSON.stringify({ offer_id: offerId, message: text, sender_name: getMyDisplayName() })
             }).then(function (data) {
                 if (data && data.success && data.message) {
                     ingestMessage({
