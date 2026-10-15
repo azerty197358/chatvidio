@@ -392,11 +392,24 @@ async function computeElapsedLiveSeconds(offerId, offer) {
 async function releaseEarnedSoFar(offerId) {
     return withOfferFlowLock(offerId, async function () {
         try {
-            const { data: offer } = await supabase
-                .from('offers')
-                .select('id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, duration_minutes, total_seconds, total_released_amount, stream_started_at, status')
-                .eq('id', offerId)
-                .maybeSingle();
+            // ✅ جلب متدرّج الأعمدة: التحرير التدريجي يجب أن يعمل حتى لو غاب عمود واحد
+            let offer = null;
+            const offerSelects = [
+                'id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, duration_minutes, total_seconds, total_released_amount, stream_started_at, status',
+                'id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, total_seconds, stream_started_at, status',
+                'id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, stream_started_at, status',
+                'id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, status'
+            ];
+            for (const cols of offerSelects) {
+                try {
+                    const { data, error } = await supabase
+                        .from('offers')
+                        .select(cols)
+                        .eq('id', offerId)
+                        .maybeSingle();
+                    if (!error && data) { offer = data; break; }
+                } catch (e) {}
+            }
             if (!offer) return { skipped: true };
 
             const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
@@ -412,14 +425,22 @@ async function releaseEarnedSoFar(offerId) {
 
             // الحصة التالية غير المسوّاة (أو الحصة الوحيدة للدرس المفرد)
             let streamSessions = null;
-            try {
-                const { data: rows } = await supabase
-                    .from('stream_sessions')
-                    .select('id, session_number, status, is_escrow_released, teacher_released_amount, price_per_session')
-                    .eq('offer_id', offerId)
-                    .order('session_number', { ascending: true });
-                streamSessions = rows;
-            } catch (e) {}
+            const ssSelects = [
+                'id, session_number, status, is_escrow_released, teacher_released_amount, price_per_session',
+                'id, session_number, status, teacher_released_amount',
+                'id, status, teacher_released_amount',
+                'id, status'
+            ];
+            for (const cols of ssSelects) {
+                try {
+                    const { data, error } = await supabase
+                        .from('stream_sessions')
+                        .select(cols)
+                        .eq('offer_id', offerId)
+                        .order('session_number', { ascending: true });
+                    if (!error && data) { streamSessions = data; break; }
+                } catch (e) {}
+            }
             let target = (streamSessions || []).find(s => s.status !== 'completed' && s.status !== 'refunded' && !s.is_escrow_released);
             if (!target) {
                 // سجل مفقود للدرس المفرد: ننشئه مرة واحدة ليكون مخزّن التحرير
@@ -463,9 +484,10 @@ async function releaseEarnedSoFar(offerId) {
             if (delta <= 0) return { skipped: true, elapsed: Math.round(elapsed) };
 
             // حجز شرطي يمنع التحرير المزدوج عند التزامن مع نهاية البث (ويدعم القيم القديمة NULL)
+            // ✅ عمود واحد فقط في التحديث — لا يجوز أن يفشل الحجز بسبب عمود تجميلي مفقود
             const { data: claimed } = await supabase
                 .from('stream_sessions')
-                .update({ teacher_released_amount: earned, updated_at: new Date().toISOString() })
+                .update({ teacher_released_amount: earned })
                 .eq('id', target.id)
                 .or(`teacher_released_amount.eq.${prevReleased},teacher_released_amount.is.null`)
                 .select('id');
@@ -850,7 +872,39 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
         const alreadyReleased = Math.max(0, parseFloat(targetSession?.teacher_released_amount || 0));
         const remainderToRelease = Math.max(0, amountToRelease - alreadyReleased);
 
+        // ✅ ادّعاء علامة التحرير في stream_sessions أولاً — قبل أي خصم من المعلق أو إضافة رصيد:
+        //    العلامة هي مرجع حساب الاسترداد لاحقاً؛ إن كُتب الرصيد من دون علامة (كتابة صامتة تفشل)
+        //    كان الطالب يسترد المبلغ كاملاً لاحقاً بينما الأستاذ أخذه أيضاً (استرداد زائد).
+        //    إن فشلت الكتابة هنا لم يُحرَّر شيء ولا يُخصم شيء — اتساق تام بلا طباعة أموال.
+        if (targetSession) {
+            let claimRows = null;
+            try {
+                const { data, error } = await supabase
+                    .from('stream_sessions')
+                    .update({
+                        status: 'completed',
+                        completed_at: new Date().toISOString(),
+                        teacher_released_amount: amountToRelease,
+                        is_escrow_released: true
+                    })
+                    .eq('id', targetSession.id)
+                    .or('is_escrow_released.eq.false,is_escrow_released.is.null')
+                    .select('id');
+                if (!error) claimRows = data;
+            } catch (e) {}
+            if (!claimRows || claimRows.length === 0) {
+                console.warn('⚠️ تعذر تسجيل علامة تحرير الحصة — لم يُخصم أي مبلغ ولن يُضاف أي رصيد (شغّل schema_progressive_release_timer.sql)');
+                return {
+                    success: true,
+                    already_processed: true,
+                    session_number: currentSessionNum,
+                    amount_released: 0
+                };
+            }
+        }
+
         // تحديث رصيد المعلم: نقل المبلغ من المعلق إلى المتاح والأرباح
+        // (العلامة سُجّلت أعلاه — هذا الرصيد موثّق حتماً في stream_sessions)
         const { data: teacher } = await supabase
             .from('teachers')
             .select('pending_withdraw, total_earned, balance')
@@ -891,23 +945,6 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
             console.warn('⚠️ تعذر إدراج stream_escrow_releases:', e.message);
         }
 
-        // تحديث stream_sessions
-        if (targetSession) {
-            try {
-                await supabase
-                    .from('stream_sessions')
-                    .update({
-                        status: 'completed',
-                        completed_at: new Date().toISOString(),
-                        teacher_released_amount: amountToRelease,
-                        is_escrow_released: true
-                    })
-                    .eq('id', targetSession.id);
-            } catch (e) {
-                console.warn('⚠️ تعذر تحديث stream_sessions:', e.message);
-            }
-        }
-
         // تحديث عدد الحصص المكتملة في العرض وتحديث جدول الحصص sessions_schedule
         const newCompletedCount = Math.min(totalSessions, (offer.completed_sessions_count || 0) + 1);
         let updatedSchedule = offer.sessions_schedule || [];
@@ -932,10 +969,26 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
             offerUpdates.completed_at = new Date().toISOString();
         }
 
-        await supabase
-            .from('offers')
-            .update(offerUpdates)
-            .eq('id', offerId);
+        // ✅ تحديث متدرّج المحاولات: عدّاد الحصص المكتملة يجب أن يُكتب حتماً —
+        //    فشله الصامت كان يجعل الدرس يبقى 'upcoming' بعد إقامة حصة كاملة،
+        //    فيأتي مؤقّت الانتهاء ويرد المبلغ كاملاً للأستاذ والأستاذ معاً (استرداد زائد)
+        const offerAttempts = [
+            offerUpdates,
+            Object.assign(
+                { completed_sessions_count: newCompletedCount },
+                isAllCompleted ? { status: 'completed', completed_at: offerUpdates.completed_at } : {}
+            ),
+            { completed_sessions_count: newCompletedCount }
+        ];
+        for (let i = 0; i < offerAttempts.length; i++) {
+            try {
+                const { error } = await supabase
+                    .from('offers')
+                    .update(offerAttempts[i])
+                    .eq('id', offerId);
+                if (!error) break;
+            } catch (e) {}
+        }
 
         // تحديث اشتراكات الطلاب
         try {
@@ -1036,11 +1089,14 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
             };
         }
 
+        // ✅ الاسترداد يشمل الحجوزات المعلقة فقط ('pending_stream') — لا يمسّ حجوزاً مؤدّاة ('paid')
+        //    فالحجوزات المؤدّاة تعني أن الخطة اكتملت وسُوّي كل شيء؛ استردادها لاحقاً (حذف/مؤقّت)
+        //    كان يعيد المبلغ للطالب بينما الأستاذ أخذه بالفعل (مبلغ زائد)
         const { data: students } = await supabase
             .from('sessions')
             .select('student_id, id, payment_amount')
             .eq('offer_id', offerId)
-            .in('payment_status', ['pending_stream', 'paid']);
+            .eq('payment_status', 'pending_stream');
 
         // ✅ منع الاسترداد المزدوج: إن لم يبقَ أي مبلغ معلق (تم استرداده عند إنهاء البث سابقاً)
         //    لا نكرر الاسترداد عند إعادة الاستدعاء (مثلاً عند حذف الدرس بعد إنهاء البث)
@@ -1164,13 +1220,23 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
                 return s;
             });
         }
-        await supabase
-            .from('offers')
-            .update({ 
+        // ✅ تحديث متدرّج: عدّاد الحصص يجب أن يُكتب حتماً (فشل الصامت كان يعيد الدرس لـ'upcoming')
+        const refundOfferAttempts = [
+            {
                 completed_sessions_count: newCompletedCount,
                 sessions_schedule: updatedSchedule
-            })
-            .eq('id', offerId);
+            },
+            { completed_sessions_count: newCompletedCount }
+        ];
+        for (let i = 0; i < refundOfferAttempts.length; i++) {
+            try {
+                const { error } = await supabase
+                    .from('offers')
+                    .update(refundOfferAttempts[i])
+                    .eq('id', offerId);
+                if (!error) break;
+            } catch (e) {}
+        }
 
     } catch (e) {
         console.error('خطأ في refundPlanSessionEscrow:', e);
@@ -1381,32 +1447,69 @@ async function getStreamVerification(offerId) {
  * يُرجع أموال الطلاب الذين حجزوا ويحذف الدرس نهائياً من قاعدة البيانات
  */
 async function expireOverdueOffer(offerId) {
-    const { data: offer, error: offerError } = await supabase
-        .from('offers')
-        .select('id, teacher_id, subject_name, price, is_free, status, offer_date, duration')
-        .eq('id', offerId)
-        .single();
+    // ✅ جلب متدرّج الأعمدة — الاسترداد التلقائي لا يتوقف أبداً بسبب غياب عمود واحد
+    let offer = null;
+    const expireSelects = [
+        'id, teacher_id, subject_name, price, is_free, status, offer_date, duration, total_sessions, plan_type, completed_sessions_count',
+        'id, teacher_id, subject_name, price, is_free, status, offer_date, duration, total_sessions, completed_sessions_count',
+        'id, teacher_id, subject_name, price, is_free, status, offer_date, duration',
+        'id, teacher_id, subject_name, price, is_free, status'
+    ];
+    for (const cols of expireSelects) {
+        try {
+            const { data, error } = await supabase.from('offers').select(cols).eq('id', offerId).single();
+            if (!error && data) { offer = data; break; }
+        } catch (e) {}
+    }
 
-    if (offerError || !offer) {
+    if (!offer) {
         logger.error('expireOverdueOffer: الدرس غير موجود', offerId);
         return;
     }
 
     if (['completed', 'expired'].includes(offer.status)) return;
 
+    // ✅ حراسة صارمة: هذا المسار للدروس التي لم يُبدأ بثها قط — "فات أوانه ولم يُقام".
+    //    أي درس أُقامت منه حصة (حتى واحدة من خطة) لا يُلمس هنا إطلاقاً:
+    //    الاسترداد الكامل هنا كان يعيد مبلغاً زائداً للطالب بعد أن حصل الأستاذ على مستحقته.
+    if ((offer.total_sessions || 1) > 1 || offer.plan_type) return; // الخطط تُدار حصّة حصّة عبر مسارات البث
+    if ((offer.completed_sessions_count || 0) > 0) return;
+    try {
+        const { data: ssRows } = await supabase
+            .from('stream_sessions')
+            .select('id, status')
+            .eq('offer_id', offerId)
+            .in('status', ['completed', 'refunded']);
+        if (ssRows && ssRows.length > 0) return; // أُقامت حصة من هذا الدرس فعلاً
+    } catch (e) {}
+
     console.log(`⏰ انتهاء الدرس ${offerId} (${offer.subject_name}) - جاري رد الأموال وحذف الدرس`);
 
     const isOfferFree = offer ? (offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || offer.price === 0 || parseFloat(offer.price) === 0) : false;
 
     if (!isOfferFree) {
-        // رد أموال الطلاب الذين دفعوا (paid أو pending_stream)
+        // ✅ الحجوزات المعلقة فقط ('pending_stream') — لا يُسترد حجز مؤدّى ('paid') أبداً هنا
         const { data: sessions } = await supabase
             .from('sessions')
             .select('id, student_id, payment_amount, payment_status')
             .eq('offer_id', offerId)
-            .in('payment_status', ['paid', 'pending_stream']);
+            .eq('payment_status', 'pending_stream');
+
+        // ✅ الجزء الذي حُرر تدريجياً أثناء البث يبقى للأستاذ — الطالب يسترد المتبقي فقط
+        let expReleasedTotal = 0;
+        try {
+            const { data: ssRel } = await supabase
+                .from('stream_sessions')
+                .select('teacher_released_amount')
+                .eq('offer_id', offerId);
+            (ssRel || []).forEach(function (r) {
+                expReleasedTotal += Math.max(0, parseFloat(r.teacher_released_amount || 0));
+            });
+        } catch (e) {}
+        const expPerStudentReleased = Math.floor(expReleasedTotal / ((sessions || []).length || 1));
 
         for (const session of (sessions || [])) {
+            const expRefundAmount = Math.max(0, (session.payment_amount || 0) - expPerStudentReleased);
             const { data: student } = await supabase
                 .from('students')
                 .select('wallet_balance')
@@ -1415,24 +1518,28 @@ async function expireOverdueOffer(offerId) {
 
             await supabase
                 .from('students')
-                .update({ wallet_balance: (student?.wallet_balance || 0) + session.payment_amount })
+                .update({ wallet_balance: (student?.wallet_balance || 0) + expRefundAmount })
                 .eq('id', session.student_id);
 
             await supabase
                 .from('sessions')
                 .update({
                     payment_status: 'refunded',
-                    teacher_earned: 0,
-                    partial_payment_note: 'استرداد كامل - الدرس انتهى قبل البدء أو فات أوانه'
+                    teacher_earned: expPerStudentReleased,
+                    partial_payment_note: expPerStudentReleased > 0
+                        ? `استرداد جزئي - حُرر ${expPerStudentReleased} دج للأستاذ أثناء البث وأنهى الدرس دون إكماله`
+                        : 'استرداد كامل - الدرس انتهى قبل البدء أو فات أوانه'
                 })
                 .eq('id', session.id);
 
             await supabase.from('wallet_transactions').insert({
                 student_id: session.student_id,
-                amount: session.payment_amount,
+                amount: expRefundAmount,
                 type: 'refund',
                 status: 'completed',
-                description: `استرداد ${session.payment_amount} دج - الدرس "${offer.subject_name}" لم يُقام`,
+                description: expPerStudentReleased > 0
+                    ? `استرداد جزئي ${expRefundAmount} دج - الدرس "${offer.subject_name}" (حُرر ${expPerStudentReleased} دج للأستاذ أثناء البث)`
+                    : `استرداد ${expRefundAmount} دج - الدرس "${offer.subject_name}" لم يُقام`,
                 created_at: new Date().toISOString()
             });
 
@@ -1440,13 +1547,30 @@ async function expireOverdueOffer(offerId) {
                 user_id: session.student_id,
                 user_type: 'student',
                 title: '💰 استرداد تلقائي',
-                message: `تم استرداد ${session.payment_amount} دج - لم تُقام حصة "${offer.subject_name}" في الموعد المحدد`,
+                message: `تم استرداد ${expRefundAmount} دج - لم تُكتمل حصة "${offer.subject_name}" في الموعد المحدد`,
                 is_read: false,
                 created_at: new Date().toISOString()
             });
 
-            console.log(`💰 استرداد ${session.payment_amount} دج للطالب ${session.student_id}`);
+            console.log(`💰 تم استرداد ${expRefundAmount} دج للطالب ${session.student_id}`);
         }
+
+        // ✅ إلغاء معلق هذا الدرس غير المحرَّر فقط (ما حُرر تدريجياً بقي في رصيد الأستاذ)
+        try {
+            const { data: teacher } = await supabase
+                .from('teachers')
+                .select('pending_withdraw')
+                .eq('id', offer.teacher_id)
+                .single();
+            const expUnreleased = Math.max(0, (parseFloat(offer.price || 0) * (sessions || []).length) - expReleasedTotal);
+            const expDebit = Math.min(expUnreleased, Math.max(0, parseFloat(teacher?.pending_withdraw) || 0));
+            if (teacher && expDebit > 0) {
+                await supabase
+                    .from('teachers')
+                    .update({ pending_withdraw: Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - expDebit) })
+                    .eq('id', offer.teacher_id);
+            }
+        } catch (e) {}
     }
 
     // إشعار الأستاذ

@@ -483,7 +483,29 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
 
         // ✅ جلب بيانات الدرس المحدثة من قاعدة البيانات بعد معالجة المدفوعات وتحديث العدادات
         const freshOffer = await getOne('offers', 'id', offer_id) || currentOffer;
-        const isAllCompleted = (freshOffer.completed_sessions_count || 0) >= (freshOffer.total_sessions || 1);
+        let isAllCompleted = (freshOffer.completed_sessions_count || 0) >= (freshOffer.total_sessions || 1);
+
+        // ✅ احتياطي متين: إن فشل تحديث عدّاد الحصص المكتملة صامتاً (عمود مفقود) نتحقق
+        //    من جدول حصص البث نفسه — من دون هذا تبقى الحالة 'upcoming' ومؤقّت الانتهاء
+        //    سيتعامل مع الدرس كأنه لم يُبدأ أبداً ويرد المبلغ كاملاً (استرداد زائد)
+        if (!isAllCompleted && (freshOffer.total_sessions || 1) <= 1) {
+            try {
+                const { data: ssAll } = await supabase
+                    .from('stream_sessions')
+                    .select('id, status')
+                    .eq('offer_id', offer_id);
+                const { data: pendRows } = await supabase
+                    .from('sessions')
+                    .select('id')
+                    .eq('offer_id', offer_id)
+                    .eq('payment_status', 'pending_stream');
+                if (ssAll && ssAll.length > 0 &&
+                    (!pendRows || pendRows.length === 0) &&
+                    ssAll.every(s => s.status === 'completed' || s.status === 'refunded')) {
+                    isAllCompleted = true;
+                }
+            } catch (e) {}
+        }
         
         // حساب مدة الحصة الافتراضية بالثواني للحصة التالية
         const defaultDurationMinutes = freshOffer.duration_minutes || freshOffer.duration || 60;
@@ -494,6 +516,7 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
             completed_at: isAllCompleted ? new Date().toISOString() : null,
             stream_active: false,
             stream_url: null,
+            meet_url: null,
             stream_started_at: null,
             room_name: null,
             room_password: null
@@ -506,10 +529,31 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
             updateData.remaining_seconds = 0;
         }
 
-        const { error: updateError } = await supabase
-            .from('offers')
-            .update(updateData)
-            .eq('id', offer_id);
+        // ✅ تحديث متدرّج المحاولات: لا يجوز أن يفشل إنهاء البث بسبب عمود تجميلي مفقود
+        //    (كان يعيد 500 بعد أن تمت معالجة المدفوعات بالفعل، فيظن الأستاذ أن الإنهاء فشل)
+        const updateAttempts = [
+            updateData,
+            {
+                status: updateData.status,
+                completed_at: updateData.completed_at,
+                stream_active: false,
+                stream_url: null,
+                meet_url: null,
+                stream_started_at: null
+            },
+            { status: updateData.status, stream_active: false },
+            { status: updateData.status }
+        ];
+        let updateError = null;
+        for (let i = 0; i < updateAttempts.length; i++) {
+            const { error: updErr } = await supabase
+                .from('offers')
+                .update(updateAttempts[i])
+                .eq('id', offer_id);
+            if (!updErr) { updateError = null; break; }
+            updateError = updErr;
+            logger.warn(`تحديث ما بعد إنهاء البث للدرس ${offer_id} فشل (محاولة ${i + 1}): ${updErr.message}`);
+        }
 
         if (updateError) {
             logger.error('❌ خطأ في تحديث حالة الدرس بعد إنهاء البث:', updateError.message);
@@ -2574,12 +2618,27 @@ router.get('/chat/muted-students/:offer_id', authenticate, authorize(['teacher']
 //    لا يُعتمد أي رقم يرسله العميل — محاولة التلاعب تُلغى تلقائياً.
 async function computeOfferTimer(offerId) {
     try {
-        const { data: offer, error } = await supabase
-            .from('offers')
-            .select('id, status, duration, duration_minutes, total_seconds, remaining_seconds, stream_started_at')
-            .eq('id', offerId)
-            .maybeSingle();
-        if (error || !offer) return null;
+        // ✅ جلب متدرّج الأعمدة: العدّاد يجب أن يعمل حتى لو غاب عمود واحد من جدول offers
+        //    (فشل الاستعلام الكامل كان يقتل الموقت كلياً: لا حساب ولا حفظ ولا مزامنة)
+        let offer = null;
+        const timerSelects = [
+            'id, status, duration, duration_minutes, total_seconds, remaining_seconds, stream_started_at',
+            'id, status, duration, total_seconds, remaining_seconds, stream_started_at',
+            'id, status, duration, remaining_seconds, stream_started_at',
+            'id, status, duration, stream_started_at',
+            'id, status, duration'
+        ];
+        for (const cols of timerSelects) {
+            try {
+                const { data, error } = await supabase
+                    .from('offers')
+                    .select(cols)
+                    .eq('id', offerId)
+                    .maybeSingle();
+                if (!error && data) { offer = data; break; }
+            } catch (e) {}
+        }
+        if (!offer) return null;
 
         const total = Math.max(60, Number(offer.total_seconds || ((offer.duration || offer.duration_minutes || 60) * 60)) || 3600);
 
@@ -2652,11 +2711,23 @@ async function saveOfferRemainingTime(offerId, remainingSeconds, isPaused = fals
             .eq('offer_id', offerId)
             .maybeSingle();
 
-        const { data: offer } = await supabase
-            .from('offers')
-            .select('duration, total_seconds, teacher_id')
-            .eq('id', offerId)
-            .maybeSingle();
+        // ✅ جلب متدرّج: يكفي وجود duration أو teacher_id لاستكمال الحفظ
+        let offer = null;
+        const offerSelects = [
+            'duration, total_seconds, teacher_id',
+            'duration, teacher_id',
+            'duration'
+        ];
+        for (const cols of offerSelects) {
+            try {
+                const { data, error } = await supabase
+                    .from('offers')
+                    .select(cols)
+                    .eq('id', offerId)
+                    .maybeSingle();
+                if (!error && data) { offer = data; break; }
+            } catch (e) {}
+        }
 
         const durationMins = offer?.duration || 60;
         const expectedDuration = Number(offer?.total_seconds || (durationMins * 60)) || 3600;

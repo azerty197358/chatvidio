@@ -909,6 +909,9 @@
             api('/api/stream/sync-timer/' + offerId, {
                 method: 'POST',
                 body: JSON.stringify({ remaining_seconds: Math.round(rem), is_paused: false })
+            }).then(function (data) {
+                // ✅ القيمة المعتمدة هي قيمة الخادم المحسوبة — نثبّتها فوراً (مزامنة لحظية مع الطلاب)
+                if (data && data.success) syncTimerFrom(data);
             }).catch(function () {});
         }
 
