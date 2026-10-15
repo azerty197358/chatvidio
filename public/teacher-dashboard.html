@@ -12109,26 +12109,32 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         const plan_type = document.getElementById('selectedPlanType')?.value || '1_day';
         const total_sessions = plan_type === '1_day' ? 1 : (parseInt(document.getElementById('totalSessions')?.value) || 1);
 
-        if (!subject_name || !offer_date) {
-            showToast('يرجى ملء جميع الحقول المطلوبة وموعد الدرس', 'error');
+        // ✅ رسائل توضيحية فورية عند نسيان أي خانة (نوع warning يظهر للضرورة — لا رسائل صامتة)
+        const missingFields = [];
+        if (!subject_name) missingFields.push('عنوان الدرس');
+        if (!offer_date) missingFields.push('موعد الدرس');
+        if (missingFields.length) {
+            showToast('⚠️ الرجاء تحديد: ' + missingFields.join(' + '), 'warning');
+            const firstMissingEl = document.getElementById(!subject_name ? 'subjectName' : 'offerDate');
+            if (firstMissingEl) firstMissingEl.focus();
             return;
         }
 
         if (!isFree && priceVal < 250) {
-            showToast('⚠️ سعر الدرس المدفوع يجب أن يكون 250 دج على الأقل للحصة الواحدة', 'error');
+            showToast('⚠️ سعر الدرس المدفوع يجب أن يكون 250 دج على الأقل للحصة الواحدة', 'warning');
             document.getElementById('price').focus();
             return;
         }
 
         if (durationVal < 60) {
-            showToast('⚠️ لا يمكن تقديم درس أقل من ساعة واحدة (60 دقيقة)', 'error');
+            showToast('⚠️ لا يمكن تقديم درس أقل من ساعة واحدة (60 دقيقة)', 'warning');
             document.getElementById('duration').value = 60;
             syncDurationPreset();
             return;
         }
 
         if (durationVal > 240) {
-            showToast('⚠️ الحد الأقصى لمدة الدرس هو 4 ساعات (240 دقيقة)', 'error');
+            showToast('⚠️ الحد الأقصى لمدة الدرس هو 4 ساعات (240 دقيقة)', 'warning');
             document.getElementById('duration').value = 240;
             syncDurationPreset();
             return;
@@ -12230,12 +12236,13 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                     }, 400);
                 }
             } else {
-                const errMsg = result.error || (result.errors && result.errors[0] && result.errors[0].msg) || '❌ حدث خطأ في إنشاء الدرس';
-                showToast(errMsg, 'error');
+                const errMsg = result.error || (result.errors && result.errors[0] && result.errors[0].msg) || 'تعذر إنشاء الدرس، الرجاء مراجعة الحقول المدخلة';
+                showToast(errMsg.indexOf('⚠️') === 0 ? errMsg : '⚠️ ' + errMsg, 'warning');
             }
         } catch(e) {
+            console.warn('createOffer failed:', e);
             if (e.message !== 'انتهت صلاحية الجلسة') {
-                showToast(e.message && e.message !== 'Failed to fetch' ? e.message : '❌ حدث خطأ في الاتصال', 'error');
+                showToast('⚠️ تعذر إتمام الإنشاء، تحقق من اتصالك وحاول مرة أخرى', 'warning');
             }
         } finally {
             isCreatingOffer = false;

@@ -87,6 +87,9 @@
         .video-tile.instructor video { transform: none; object-fit: contain; }
         /* معاينة الذات الوحيدة المعكوسة: كاميرا الطالب المحلية (شعور طبيعي كالمرايا) */
         #localTile:not(.instructor) video { transform: scaleX(-1); }
+        /* بعد التكبير: مؤشر سحب + تعطيل تمرير الصفحة/القرص المتصفح حتى يُسحب المحتوى المكبّر داخل الإطار */
+        .video-tile.zoomed { cursor: grab; touch-action: none; }
+        .video-tile.zoomed:active { cursor: grabbing; }
         /* زر ملء الشاشة على البلاطة + دعم الزووم */
         .tile-fs-btn {
             position: absolute;
@@ -486,11 +489,30 @@
         }
 
         function setupTileZoom(tile, vid) {
-            var zoom = 1;
+            var zoom = 1, panX = 0, panY = 0;
             // يُعكس فقط الذات (بلاطة الطالب المحلية) — الفيديو البعيد يبقى بالاتجاه الحقيقي دائماً
             var mirrored = (tile.id === 'localTile' && !tile.classList.contains('instructor'));
+            var lastTap = 0, suppressTapUntil = 0;
+
+            // الإبقاء على المحتوى المكبّر داخل حدود البلاطة (لا يمكن سحبه خارج الإطار)
+            function clampPan() {
+                var r = tile.getBoundingClientRect();
+                var maxX = (r.width * (zoom - 1)) / 2;
+                var maxY = (r.height * (zoom - 1)) / 2;
+                panX = Math.max(-maxX, Math.min(maxX, panX));
+                panY = Math.max(-maxY, Math.min(maxY, panY));
+            }
             function apply() {
-                vid.style.transform = (mirrored ? 'scaleX(-1) ' : '') + (zoom !== 1 ? 'scale(' + zoom.toFixed(3) + ')' : '');
+                if (zoom <= 1) { zoom = 1; panX = 0; panY = 0; }
+                else clampPan();
+                // panX باتجاه حركة الإصبع بصرياً — طبقة المرآة (scaleX(-1)) تعكس الاتجاه عند التطبيق
+                var tx = mirrored ? -panX : panX;
+                vid.style.transform =
+                    (mirrored ? 'scaleX(-1) ' : '') +
+                    ((zoom !== 1 || panX !== 0 || panY !== 0)
+                        ? 'translate(' + tx.toFixed(1) + 'px,' + panY.toFixed(1) + 'px) ' + (zoom !== 1 ? 'scale(' + zoom.toFixed(3) + ')' : '')
+                        : '');
+                tile.classList.toggle('zoomed', zoom > 1);
             }
             function touchDist(t) {
                 var dx = t[0].clientX - t[1].clientX;
@@ -498,10 +520,18 @@
                 return Math.sqrt(dx * dx + dy * dy);
             }
             var startDist = 0, startZoom = 1;
+            // سحب بإصبع واحد بعد التكبير: تحريك ما تم تكبيره داخل الإطار
+            var panning = false, lastX = 0, lastY = 0, dragMoved = 0;
             tile.addEventListener('touchstart', function (e) {
                 if (e.touches.length === 2) {
+                    panning = false;
                     startDist = touchDist(e.touches);
                     startZoom = zoom;
+                } else if (e.touches.length === 1 && zoom > 1) {
+                    panning = true;
+                    lastX = e.touches[0].clientX;
+                    lastY = e.touches[0].clientY;
+                    dragMoved = 0;
                 }
             }, { passive: true });
             tile.addEventListener('touchmove', function (e) {
@@ -510,16 +540,56 @@
                     var z = startZoom * (touchDist(e.touches) / startDist);
                     zoom = Math.min(4, Math.max(1, z));
                     apply();
+                } else if (e.touches.length === 1 && panning && zoom > 1) {
+                    e.preventDefault(); // منع تمرير الصفحة — نحرك الفيديو المكبّر فقط
+                    var dx = e.touches[0].clientX - lastX;
+                    var dy = e.touches[0].clientY - lastY;
+                    lastX = e.touches[0].clientX;
+                    lastY = e.touches[0].clientY;
+                    panX += dx;
+                    panY += dy;
+                    dragMoved += Math.abs(dx) + Math.abs(dy);
+                    apply();
                 }
             }, { passive: false });
             tile.addEventListener('touchend', function (e) {
                 if (e.touches.length < 2) startDist = 0;
+                if (e.touches.length === 0) {
+                    // بعد سحب حقيقي: تجاهل النقرة التالية حتى لا تُ interpreted كنقر مزدوج وتقلب الزووم
+                    if (panning && dragMoved > 10) suppressTapUntil = Date.now() + 400;
+                    panning = false;
+                }
             });
-            var lastTap = 0;
+            // سحب بالفأرة بعد التكبير (سطح المكتب)
+            var mouseDown = false, mouseX = 0, mouseY = 0;
+            tile.addEventListener('mousedown', function (e) {
+                if (e.target.closest && e.target.closest('.tile-fs-btn')) return;
+                if (zoom <= 1) return;
+                mouseDown = true;
+                dragMoved = 0;
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+            window.addEventListener('mousemove', function (e) {
+                if (!mouseDown) return;
+                var dx = e.clientX - mouseX, dy = e.clientY - mouseY;
+                mouseX = e.clientX; mouseY = e.clientY;
+                panX += dx;
+                panY += dy;
+                dragMoved += Math.abs(dx) + Math.abs(dy);
+                apply();
+            });
+            window.addEventListener('mouseup', function () {
+                if (!mouseDown) return;
+                mouseDown = false;
+                if (dragMoved > 6) suppressTapUntil = Date.now() + 400;
+            });
             tile.addEventListener('click', function () {
+                if (Date.now() < suppressTapUntil) return; // نقرة ناتجة عن سحب — تُتجاهل
                 var now = Date.now();
                 if (now - lastTap < 320) {
-                    zoom = (zoom > 1) ? 1 : 2.5;
+                    zoom = (zoom > 1) ? 1 : 2.5; // نقرة مزدوجة: تكبير متمركز أو عودة للعرض الكامل
+                    panX = 0; panY = 0;
                     apply();
                 }
                 lastTap = now;

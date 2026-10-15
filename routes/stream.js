@@ -32,7 +32,8 @@ const {
     getStreamVerification,
     verifyStreamCompletion,
     forceEndStream,
-    archiveStreamLog
+    archiveStreamLog,
+    releaseEarnedSoFar
 } = require('../utils/streamVerification');
 
 // دالة مساعدة لحماية HTML
@@ -159,6 +160,10 @@ const handleStreamStart = async (req, res) => {
         // ✅ التحقق إن كانت الحصة مجانية لتشغيلها تلقائياً وفورياً
         const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0;
 
+        // ✅ مدة الدرس المختارة عند الإنشاء هي أساس العدّاد التنازلي — تُصفَّر عند كل بدء بث
+        //    (يمنع بقاء قيمة متبقية قديمة من جلسة سابقة تُظهر عدّاداً خاطئاً)
+        const timerSeconds = Math.max(60, (offer.duration || offer.duration_minutes || 60) * 60);
+
         if (isFreeOffer) {
             //  الحصص المجانية: غرفة WebRTC محلية دائماً — بدون أي رابط خارجي
             const localRoom = await generateFreeStreamRoom(offer_id, offer.subject_name);
@@ -174,6 +179,8 @@ const handleStreamStart = async (req, res) => {
                 stream_active: true,
                 is_paused: false,
                 stream_started_at: new Date().toISOString(),
+                remaining_seconds: timerSeconds,
+                total_seconds: timerSeconds,
                 room_name: meetUrl
             });
 
@@ -290,6 +297,8 @@ const handleStreamStart = async (req, res) => {
             stream_active: true,
             is_paused: false,
             stream_started_at: new Date().toISOString(),
+            remaining_seconds: timerSeconds,
+            total_seconds: timerSeconds,
             room_name: roomName
         });
         
@@ -396,12 +405,14 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
         const offer_id = parseInt(req.params.offer_id);
         const early_end = req.body.early_end === true || req.query.early_end === 'true' || req.body.cancel_before_start === true;
 
-        // ✅ حفظ الوقت المتبقي في موقت الأستاذ إن تم تمريره في الطلب لضمان أعلى دقة في حساب نسبة الإكتمال
-        if (req.body.remaining_seconds !== undefined && !isNaN(Number(req.body.remaining_seconds))) {
-            try {
-                await saveOfferRemainingTime(offer_id, Number(req.body.remaining_seconds), false);
-            } catch (e) {}
-        }
+        // ✅ إعادة حساب الموقت على الخادم قبل القياس النهائي — نتجاهل أي "متبقي" يرسله العميل
+        //    (المؤقت يعتمد على المدة المختارة عند الإنشاء ولحظة البدء والإيقافات المسجلة — محاولة التلاعب تُلغى)
+        try {
+            const endTimer = await computeOfferTimer(offer_id);
+            if (endTimer) {
+                await saveOfferRemainingTime(offer_id, endTimer.remaining_seconds, false);
+            }
+        } catch (e) {}
 
         // ✅ التحقق من وجود الدرس وحالته الحالية
         const currentOffer = await getOne('offers', 'id', offer_id);
@@ -2355,6 +2366,17 @@ async function handleGetChatMessages(req, res) {
             }
         } catch(e) {}
 
+        // ✅ العدّاد يُحسب على الخادم حصراً: المدة المختارة عند الإنشاء − الزمن الفعلي المنقضي (محمي من التلاعب)
+        try {
+            const timerInfo = await computeOfferTimer(offerId);
+            if (timerInfo) {
+                offerRemainingSeconds = timerInfo.remaining_seconds;
+                offerTotalSeconds = timerInfo.total_seconds;
+                offerStatus = timerInfo.offer.status || offerStatus;
+                if (['completed', 'ended', 'deleted'].includes(offerStatus)) offerIsEnded = true;
+            }
+        } catch(e) {}
+
         // إذا تم إنهاء البث فعلياً من قبل الأستاذ ينبغي إغلاق شاشة البث لدى الطالب
         if (offerIsEnded) {
             return res.json({
@@ -2547,6 +2569,55 @@ router.get('/chat/muted-students/:offer_id', authenticate, authorize(['teacher']
 // ✅ نظام حفظ وإيقاف واستئناف الموقت التلقائي واليدوي للبث
 // ============================================================
 
+// ✅ حساب الموقت التنازلي على الخادم حصراً: من مدة الدرس المختارة عند الإنشاء
+//    ناقص الزمن الفعلي المنقضي (من لحظة البدء ناقص الإيقافات المسجلة).
+//    لا يُعتمد أي رقم يرسله العميل — محاولة التلاعب تُلغى تلقائياً.
+async function computeOfferTimer(offerId) {
+    try {
+        const { data: offer, error } = await supabase
+            .from('offers')
+            .select('id, status, duration, duration_minutes, total_seconds, remaining_seconds, stream_started_at')
+            .eq('id', offerId)
+            .maybeSingle();
+        if (error || !offer) return null;
+
+        const total = Math.max(60, Number(offer.total_seconds || ((offer.duration || offer.duration_minutes || 60) * 60)) || 3600);
+
+        // مدد الإيقاف المتراكمة + الإيقاف الجاري إن وُجد
+        let pausedTotal = 0;
+        try {
+            const { data: sv } = await supabase
+                .from('stream_verification')
+                .select('total_paused_seconds, last_pause_time')
+                .eq('offer_id', offerId)
+                .maybeSingle();
+            if (sv) {
+                pausedTotal = Number(sv.total_paused_seconds || 0);
+                if (sv.last_pause_time) {
+                    const lp = Date.parse(sv.last_pause_time);
+                    if (!isNaN(lp)) pausedTotal += Math.max(0, (Date.now() - lp) / 1000);
+                }
+            }
+        } catch (e) {}
+
+        let remaining = null;
+        const startedMs = offer.stream_started_at ? Date.parse(offer.stream_started_at) : NaN;
+        if (offer.status === 'live' && !isNaN(startedMs)) {
+            const elapsed = Math.max(0, (Date.now() - startedMs) / 1000 - pausedTotal);
+            remaining = total - Math.min(total, elapsed);
+        } else if (offer.remaining_seconds != null && !isNaN(Number(offer.remaining_seconds))) {
+            // متوقف مؤقتاً: القيمة عند لحظة الإيقاف هي المرجع — أو لم يبدأ بعد (مُهيّأ لمدة الدرس)
+            remaining = Number(offer.remaining_seconds);
+        } else {
+            remaining = total;
+        }
+        return { offer: offer, total_seconds: total, remaining_seconds: Math.max(0, Math.min(total, Math.round(remaining))) };
+    } catch (e) {
+        console.warn('computeOfferTimer:', e.message);
+        return null;
+    }
+}
+
 async function saveOfferRemainingTime(offerId, remainingSeconds, isPaused = false) {
     const sec = Math.max(0, parseInt(remainingSeconds, 10) || 0);
     const updateObj = {
@@ -2558,12 +2629,19 @@ async function saveOfferRemainingTime(offerId, remainingSeconds, isPaused = fals
         teacherPingStore.set(offerId, Date.now());
     }
 
-    // محاولة التحديث باستخدام remaining_seconds
+    // محاولة التحديث باستخدام remaining_seconds — وإن كان العمود مفقوداً نحفظ الحالة على الأقل
+    // (الإيقاف/الاستئناف ونبضة الأستاذ يواصلان العمل حتى قبل تشغيل ملف المخطط الجديد)
     try {
-        await supabase
+        const { error: updErr } = await supabase
             .from('offers')
             .update({ ...updateObj, remaining_seconds: sec })
             .eq('id', offerId);
+        if (updErr) {
+            await supabase
+                .from('offers')
+                .update(updateObj)
+                .eq('id', offerId);
+        }
     } catch(e) {}
 
     // تحديث جدول التحقق من البث (stream_verification)
@@ -2643,11 +2721,17 @@ router.post('/sync-timer/:offer_id', async (req, res) => {
         if (!decoded || decoded.role !== 'teacher') return res.status(403).json({ success: false, error: 'غير مصرح' });
 
         const offerId = parseInt(req.params.offer_id);
-        const { remaining_seconds, is_paused } = req.body || {};
+        const { is_paused } = req.body || {};
 
-        if (remaining_seconds !== undefined && !isNaN(Number(remaining_seconds))) {
-            await saveOfferRemainingTime(offerId, Number(remaining_seconds), is_paused === true);
+        // ✅ نتجاهل تماماً أي "متبقي" يرسله العميل — المؤقت يُحسب على الخادم حصراً
+        //    (المدة المختارة عند الإنشاء + لحظة بدء البث + الإيقافات المسجلة) — محاولة التلاعب تُلغى
+        const timerInfo = await computeOfferTimer(offerId);
+        if (timerInfo) {
+            await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused === true);
         }
+
+        // ✅ تحرير مستحقات الأستاذ على أجزاء وفق الزمن المنقضي الفعلي مع كل نبضة مزامنة
+        try { await releaseEarnedSoFar(offerId); } catch (e) { console.warn('releaseEarnedSoFar tick:', e.message); }
 
         // جلب أحدث قيمة من قاعدة البيانات للتحقق
         const { data: offer } = await supabase
@@ -2658,7 +2742,8 @@ router.post('/sync-timer/:offer_id', async (req, res) => {
 
         res.json({ 
             success: true, 
-            remaining_seconds: Number(remaining_seconds),
+            remaining_seconds: timerInfo ? timerInfo.remaining_seconds : null,
+            total_seconds: timerInfo ? timerInfo.total_seconds : null,
             db_remaining_seconds: offer?.remaining_seconds != null ? Number(offer.remaining_seconds) : null,
             status: offer?.status
         });
@@ -2671,20 +2756,18 @@ router.post('/sync-timer/:offer_id', async (req, res) => {
 router.get('/timer-status/:offer_id', async (req, res) => {
     try {
         const offerId = parseInt(req.params.offer_id);
-        const { data: offer, error } = await supabase
-            .from('offers')
-            .select('id, status, remaining_seconds')
-            .eq('id', offerId)
-            .maybeSingle();
+        // ✅ القيمة تُحسب على الخادم (المدة المختارة − الزمن الفعلي) لا من قراءة مخزنة قديمة
+        const timerInfo = await computeOfferTimer(offerId);
 
-        if (error || !offer) {
+        if (!timerInfo) {
             return res.status(404).json({ success: false, error: 'الدرس غير موجود' });
         }
 
         res.json({
             success: true,
-            remaining_seconds: offer.remaining_seconds != null ? Number(offer.remaining_seconds) : null,
-            status: offer.status
+            remaining_seconds: timerInfo.remaining_seconds,
+            total_seconds: timerInfo.total_seconds,
+            status: timerInfo.offer.status
         });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -2700,10 +2783,12 @@ router.post('/pause-timer/:offer_id', async (req, res) => {
         if (!decoded || decoded.role !== 'teacher') return res.status(403).json({ success: false, error: 'غير مصرح' });
 
         const offerId = parseInt(req.params.offer_id);
-        const { remaining_seconds, is_paused } = req.body || {};
+        const { is_paused } = req.body || {};
 
-        const sec = remaining_seconds !== undefined ? Number(remaining_seconds) : null;
-        if (sec !== null && !isNaN(sec)) {
+        // ✅ الإيقاف والاستئناف فقط — قيمة الوقت تُحسب على الخادم ولا تُقبل من العميل
+        const timerInfo = await computeOfferTimer(offerId);
+        const sec = timerInfo ? timerInfo.remaining_seconds : null;
+        if (sec !== null) {
             await saveOfferRemainingTime(offerId, sec, is_paused !== false);
         }
 
@@ -2719,12 +2804,9 @@ router.all('/teacher-leave/:offer_id', async (req, res) => {
         const offerId = parseInt(req.params.offer_id);
         teacherPingStore.delete(offerId);
         try {
-            const { data: offer } = await supabase
-                .from('offers')
-                .select('remaining_seconds')
-                .eq('id', offerId)
-                .maybeSingle();
-            const sec = offer ? (offer.remaining_seconds ?? 0) : 0;
+            // ✅ تجميد الموقت عند لحظة المغادرة بقيمة محسوبة على الخادم (لا قيمة من العميل)
+            const timerInfo = await computeOfferTimer(offerId);
+            const sec = timerInfo ? timerInfo.remaining_seconds : 0;
             await saveOfferRemainingTime(offerId, sec, true);
         } catch(e) {
             console.error('Error in teacher-leave update:', e.message);
@@ -2739,28 +2821,19 @@ router.all('/teacher-leave/:offer_id', async (req, res) => {
 router.get('/timer/:offer_id', async (req, res) => {
     try {
         const offerId = parseInt(req.params.offer_id);
-        const { data: offer, error } = await supabase
-            .from('offers')
-            .select('id, status, duration_minutes, duration, remaining_seconds, stream_started_at')
-            .eq('id', offerId)
-            .single();
+        // ✅ يُحسب على الخادم حصراً: المدة المختارة عند الإنشاء − الزمن الفعلي المنقضي (محمي من التلاعب)
+        const timerInfo = await computeOfferTimer(offerId);
 
-        if (error || !offer) {
+        if (!timerInfo) {
             return res.status(404).json({ success: false, error: 'الدرس غير موجود' });
-        }
-
-        let remainingSec = null;
-        if (offer.remaining_seconds != null && !isNaN(Number(offer.remaining_seconds))) {
-            remainingSec = Number(offer.remaining_seconds);
-        } else {
-            remainingSec = (offer.duration_minutes || offer.duration || 60) * 60;
         }
 
         res.json({
             success: true,
-            status: offer.status,
-            is_paused: offer.status === 'paused',
-            remaining_seconds: remainingSec
+            status: timerInfo.offer.status,
+            is_paused: timerInfo.offer.status === 'paused',
+            remaining_seconds: timerInfo.remaining_seconds,
+            total_seconds: timerInfo.total_seconds
         });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });

@@ -65,12 +65,16 @@ async function recordStreamStart(offerId, teacherId) {
 
     if (error) {
         logger.error('خطأ في تسجيل بداية البث:', error.message);
-        // إذا فشل الإدراج، حاول التحديث
+        // إذا فشل الإدراج، حاول التحديث — مع تصفير عدادات الإيقاف القديمة
+        // (تمنع بقاء إيقافات جلسة سابقة تُظهر مؤقتاً أو نسبة إنجازاً خاطئة)
         await supabase
             .from('stream_verification')
             .update({
                 server_start_time: serverTimestamp,
-                status: 'started'
+                status: 'started',
+                last_pause_time: null,
+                total_paused_seconds: 0,
+                actual_live_seconds: 0
             })
             .eq('offer_id', offerId)
             .eq('teacher_id', teacherId);
@@ -330,10 +334,189 @@ async function verifyStreamCompletion(offerId) {
     };
 }
 
+// ===== قفل تسلسلي لكل درس: يمنع التحرير أو الاسترداد المزدوج عند تزامن نبضة المؤقت مع إنهاء البث =====
+const offerFlowLocks = new Map();
+function withOfferFlowLock(offerId, fn) {
+    const key = String(offerId);
+    const prev = offerFlowLocks.get(key) || Promise.resolve();
+    const run = prev.then(fn, fn);
+    const guard = run.then(function () {}, function () {});
+    offerFlowLocks.set(key, guard);
+    guard.then(function () {
+        if (offerFlowLocks.get(key) === guard) offerFlowLocks.delete(key);
+    });
+    return run;
+}
+
+/**
+ * حساب الزمن المنقضي الحقيقي للبث على الخادم حصراً (لا شيء من العميل):
+ * من لحظة بدء البث (stream_started_at) ناقص مدد الإيقاف المتراكمة والجارية.
+ */
+async function computeElapsedLiveSeconds(offerId, offer) {
+    const durationMins = offer.duration || offer.duration_minutes || 60;
+    const total = Math.max(60, Number(offer.total_seconds || (durationMins * 60)) || 3600);
+    let elapsed = 0;
+    const startedAt = offer.stream_started_at ? Date.parse(offer.stream_started_at) : NaN;
+    let hasBasis = !isNaN(startedAt);
+    try {
+        const { data: sv } = await supabase
+            .from('stream_verification')
+            .select('actual_live_seconds, total_paused_seconds, last_pause_time, server_start_time')
+            .eq('offer_id', offerId)
+            .maybeSingle();
+        if (sv) {
+            let paused = Number(sv.total_paused_seconds || 0);
+            if (sv.last_pause_time) {
+                const lp = Date.parse(sv.last_pause_time);
+                if (!isNaN(lp)) paused += Math.max(0, (Date.now() - lp) / 1000);
+            }
+            if (isNaN(startedAt) && sv.server_start_time) {
+                const sst = Date.parse(sv.server_start_time);
+                if (!isNaN(sst)) { elapsed = Math.max(0, (Date.now() - sst) / 1000 - paused); hasBasis = true; }
+            } else if (!isNaN(startedAt)) {
+                elapsed = Math.max(0, (Date.now() - startedAt) / 1000 - paused);
+            }
+            // القيمة المحسوبة سابقاً على الخادم كحد أدنى احتياطي
+            elapsed = Math.max(elapsed, Number(sv.actual_live_seconds || 0));
+        }
+    } catch (e) {}
+    if (!hasBasis && elapsed <= 0) return { elapsed: 0, total: total };
+    return { elapsed: Math.min(total, elapsed), total: total };
+}
+
+/**
+ * التحرير التدريجي لمستحقات الأستاذ أثناء البث:
+ * كلما انقضى جزء فعلي من مدة الدرس المختارة يُحرر نسبته من مبلغ الحصة
+ * إلى رصيده القابل للسحب — الحساب كله على الخادم (محمي من التلاعب بالمؤقت).
+ */
+async function releaseEarnedSoFar(offerId) {
+    return withOfferFlowLock(offerId, async function () {
+        try {
+            const { data: offer } = await supabase
+                .from('offers')
+                .select('id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, plan_type, duration, duration_minutes, total_seconds, total_released_amount, stream_started_at, status')
+                .eq('id', offerId)
+                .maybeSingle();
+            if (!offer) return { skipped: true };
+
+            const isFree = offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || parseFloat(offer.price || 0) === 0;
+            if (isFree) return { skipped: true };
+            if (offer.status !== 'live' && offer.status !== 'paused') return { skipped: true };
+
+            const { elapsed, total } = await computeElapsedLiveSeconds(offerId, offer);
+            if (elapsed < 1 || total <= 0) return { skipped: true };
+
+            const isMultiSession = offer.total_sessions > 1 || offer.plan_type;
+            const pricePerSession = isMultiSession ? parseFloat(offer.price_per_session || offer.price || 0) : parseFloat(offer.price || 0);
+            if (pricePerSession <= 0) return { skipped: true };
+
+            // الحصة التالية غير المسوّاة (أو الحصة الوحيدة للدرس المفرد)
+            let streamSessions = null;
+            try {
+                const { data: rows } = await supabase
+                    .from('stream_sessions')
+                    .select('id, session_number, status, is_escrow_released, teacher_released_amount, price_per_session')
+                    .eq('offer_id', offerId)
+                    .order('session_number', { ascending: true });
+                streamSessions = rows;
+            } catch (e) {}
+            let target = (streamSessions || []).find(s => s.status !== 'completed' && s.status !== 'refunded' && !s.is_escrow_released);
+            if (!target) {
+                // سجل مفقود للدرس المفرد: ننشئه مرة واحدة ليكون مخزّن التحرير
+                if (!isMultiSession) {
+                    try {
+                        const { data: created } = await supabase
+                            .from('stream_sessions')
+                            .insert({
+                                offer_id: offerId,
+                                teacher_id: offer.teacher_id,
+                                session_number: 1,
+                                title: offer.subject_name || 'حصة',
+                                price_per_session: pricePerSession,
+                                status: 'live',
+                                teacher_released_amount: 0,
+                                is_escrow_released: false,
+                                created_at: new Date().toISOString(),
+                                updated_at: new Date().toISOString()
+                            })
+                            .select('id')
+                            .single();
+                        target = created || null;
+                    } catch (e) {}
+                }
+                if (!target) return { skipped: true };
+            }
+
+            const { data: subRows } = await supabase
+                .from('sessions')
+                .select('id, payment_amount, payment_status')
+                .eq('offer_id', offerId)
+                .in('payment_status', ['pending_stream', 'paid']);
+            if (!subRows || subRows.length === 0) return { skipped: true }; // لا مشتردين ⇒ لا مبلغ يُحرَّر
+            const subscriberCount = subRows.length || 1;
+
+            const prevReleased = Math.max(0, parseFloat(target.teacher_released_amount || 0));
+            const basePerSession = isMultiSession ? parseFloat(target.price_per_session || pricePerSession) : pricePerSession;
+            const targetTotal = basePerSession * subscriberCount;
+            const earned = Math.min(targetTotal, Math.floor(targetTotal * Math.min(1, elapsed / total)));
+            const delta = earned - prevReleased;
+            if (delta <= 0) return { skipped: true, elapsed: Math.round(elapsed) };
+
+            // حجز شرطي يمنع التحرير المزدوج عند التزامن مع نهاية البث (ويدعم القيم القديمة NULL)
+            const { data: claimed } = await supabase
+                .from('stream_sessions')
+                .update({ teacher_released_amount: earned, updated_at: new Date().toISOString() })
+                .eq('id', target.id)
+                .or(`teacher_released_amount.eq.${prevReleased},teacher_released_amount.is.null`)
+                .select('id');
+            if (!claimed || claimed.length === 0) return { skipped: true };
+
+            // نقل الجزء الجديد من المعلق إلى الرصيد القابل للسحب
+            const { data: teacher } = await supabase
+                .from('teachers')
+                .select('pending_withdraw, total_earned, balance')
+                .eq('id', offer.teacher_id)
+                .single();
+            if (teacher) {
+                await supabase
+                    .from('teachers')
+                    .update({
+                        pending_withdraw: Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - delta),
+                        total_earned: (parseFloat(teacher.total_earned) || 0) + delta,
+                        balance: (parseFloat(teacher.balance) || 0) + delta
+                    })
+                    .eq('id', offer.teacher_id);
+            }
+
+            // مزامنة عداد التحرير الكلي للخطة (يُستخدم في التسوية النهائية والاسترداد)
+            if (isMultiSession) {
+                try {
+                    await supabase
+                        .from('offers')
+                        .update({ total_released_amount: (parseFloat(offer.total_released_amount) || 0) + delta })
+                        .eq('id', offerId);
+                } catch (e) {}
+            }
+
+            return { released: delta, earned_total: earned, elapsed: Math.round(elapsed), total: total };
+        } catch (e) {
+            console.warn('releaseEarnedSoFar:', e.message);
+            return { error: true };
+        }
+    });
+}
+
 /**
  * معالجة المدفوعات حسب وقت البث الفعلي
+ * (تُنفَّذ داخل قفل تسلسلي لكل درس حتى لا تتعارض مع التحرير التدريجي أثناء البث)
  */
 async function processStreamPayments(offerId, earlyEnd = false) {
+    return withOfferFlowLock(offerId, function () {
+        return processStreamPaymentsUnlocked(offerId, earlyEnd);
+    });
+}
+
+async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     // ✅ جلب متدرّج الأعمدة: الاسترداد لا يجب أن يتوقف أبداً بسبب غياب عمود واحد
     let offer = null;
     const offerSelects = [
@@ -457,18 +640,36 @@ async function processStreamPayments(offerId, earlyEnd = false) {
 
     if (!sessions) return;
 
+    // ✅ ما حُرر من المبلغ تدريجياً أثناء البث (محسوب على الخادم) يبقى للأستاذ —
+    //    تُسوَّى هنا حصيلة الجزء المتبقي فقط عند الإنهاء
+    let releasedSessionTotal = 0;
+    try {
+        const { data: ssRows } = await supabase
+            .from('stream_sessions')
+            .select('teacher_released_amount')
+            .eq('offer_id', offerId);
+        (ssRows || []).forEach(function (r) {
+            releasedSessionTotal += Math.max(0, parseFloat(r.teacher_released_amount || 0));
+        });
+    } catch (e) {}
+    const subscriberCount = (sessions || []).length || 1;
+    const releasedPerStudent = Math.floor(releasedSessionTotal / subscriberCount);
+
     for (const session of (sessions || [])) {
         if (isCompleted) {
-            const teacherAmount = pricePerSession;
+            const releasedAlready = Math.min(pricePerSession, releasedPerStudent);
+            const teacherAmount = Math.max(0, pricePerSession - releasedAlready); // الجزء المتبقي فقط — البقيّة حُررت أثناء البث
             await supabase
                 .from('sessions')
                 .update({
                     payment_status: 'paid',
-                    teacher_earned: teacherAmount,
+                    teacher_earned: pricePerSession,
                     completed_at: new Date().toISOString(),
                     completion_percentage: completionPctRounded,
                     actual_duration: actualSeconds,
-                    partial_payment_note: `بث مكتمل - نسبة الإكتمال: ${completionPctRounded}%`
+                    partial_payment_note: releasedAlready > 0
+                        ? `بث مكتمل - حُرر ${releasedAlready} دج تدريجياً أثناء البث والمتبقي ${teacherAmount} دج عند الإنهاء (نسبة الإكتمال: ${completionPctRounded}%)`
+                        : `بث مكتمل - نسبة الإكتمال: ${completionPctRounded}%`
                 })
                 .eq('id', session.id);
 
@@ -489,16 +690,22 @@ async function processStreamPayments(offerId, earlyEnd = false) {
                     .eq('id', offer.teacher_id);
             }
         } else {
-            const refundAmount = parseFloat(session.payment_amount || pricePerSession || 0);
+            // الطالب يسترد غير المحرر — والأستاذ يحتفظ بجزء ما قدمه من البث فعلياً
+            const payAmount = parseFloat(session.payment_amount || pricePerSession || 0);
+            const releasedAlready = Math.min(pricePerSession, releasedPerStudent);
+            const refundAmount = Math.max(0, payAmount - releasedAlready);
+            const pendingToRelease = Math.max(0, pricePerSession - releasedAlready);
             await supabase
                 .from('sessions')
                 .update({
                     payment_status: 'refunded',
-                    teacher_earned: 0,
+                    teacher_earned: releasedAlready,
                     completed_at: new Date().toISOString(),
                     completion_percentage: completionPctRounded,
                     actual_duration: actualSeconds,
-                    partial_payment_note: `استرداد - البث غير مكتمل (نسبة الإكتمال: ${completionPctRounded}%)`
+                    partial_payment_note: releasedAlready > 0
+                        ? `استرداد جزئي - حُرر ${releasedAlready} دج للأستاذ عن جزء البث المنقّط واستُرد ${refundAmount} دج للطالب (نسبة الإكتمال: ${completionPctRounded}%)`
+                        : `استرداد - البث غير مكتمل (نسبة الإكتمال: ${completionPctRounded}%)`
                 })
                 .eq('id', session.id);
 
@@ -512,7 +719,7 @@ async function processStreamPayments(offerId, earlyEnd = false) {
                 await supabase
                     .from('teachers')
                     .update({
-                        pending_withdraw: Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - pricePerSession)
+                        pending_withdraw: Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - pendingToRelease)
                     })
                     .eq('id', offer.teacher_id);
             }
@@ -537,7 +744,9 @@ async function processStreamPayments(offerId, earlyEnd = false) {
                     amount: refundAmount,
                     type: 'refund',
                     status: 'completed',
-                    description: `استرداد مبلغ حصة غير مكتملة بنسبة ${completionPctRounded}%`,
+                    description: releasedAlready > 0
+                        ? `استرداد جزئي (بقيمة ${refundAmount} دج بعد تحرير ${releasedAlready} دج للأستاذ) - نسبة إكتمال ${completionPctRounded}%`
+                        : `استرداد مبلغ حصة غير مكتملة بنسبة ${completionPctRounded}%`,
                     created_at: new Date().toISOString()
                 });
                 
@@ -546,8 +755,10 @@ async function processStreamPayments(offerId, earlyEnd = false) {
                 .insert({
                     user_id: session.student_id,
                     user_type: 'student',
-                    title: '💰 استرداد كامل',
-                    message: `تم استرداد مبلغ ${refundAmount} دج لحصة "${offer.subject_name}" لعدم إكمال مدة البث.`,
+                    title: releasedAlready > 0 ? '💰 استرداد جزئي' : '💰 استرداد كامل',
+                    message: releasedAlready > 0
+                        ? `تم استرداد ${refundAmount} دج من أصل ${payAmount} دج لحصة "${offer.subject_name}" — حُرر ${releasedAlready} دج للأستاذ عن جزء البث المنقّط.`
+                        : `تم استرداد مبلغ ${refundAmount} دج لحصة "${offer.subject_name}" لعدم إكمال مدة البث.`,
                     is_read: false,
                     created_at: new Date().toISOString()
                 });
@@ -560,7 +771,7 @@ async function processStreamPayments(offerId, earlyEnd = false) {
             user_id: offer.teacher_id,
             user_type: 'teacher',
             title: '📊 تقرير البث',
-            message: `تم إنهاء البث "${offer.subject_name}". ${isCompleted ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}`,
+            message: `تم إنهاء البث "${offer.subject_name}". ${isCompleted ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}${releasedSessionTotal > 0 ? ` حُرر ${releasedSessionTotal} دج من المبلغ أثناء البث.` : ''}`,
             is_read: false,
             created_at: new Date().toISOString()
         });
@@ -635,6 +846,10 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
         const activeSubscribers = studentCount || offer.booked_count || 1;
         const amountToRelease = pricePerSession * activeSubscribers;
 
+        // ✅ ما حُرر تدريجياً أثناء البث لا يُعاد تحريره — نُكمل الجزء المتبقي فقط عند الإنهاء
+        const alreadyReleased = Math.max(0, parseFloat(targetSession?.teacher_released_amount || 0));
+        const remainderToRelease = Math.max(0, amountToRelease - alreadyReleased);
+
         // تحديث رصيد المعلم: نقل المبلغ من المعلق إلى المتاح والأرباح
         const { data: teacher } = await supabase
             .from('teachers')
@@ -642,10 +857,10 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
             .eq('id', offer.teacher_id)
             .single();
 
-        if (teacher) {
-            const newPending = Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - amountToRelease);
-            const newEarned = (parseFloat(teacher.total_earned) || 0) + amountToRelease;
-            const newBalance = (parseFloat(teacher.balance) || 0) + amountToRelease;
+        if (teacher && remainderToRelease > 0) {
+            const newPending = Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - remainderToRelease);
+            const newEarned = (parseFloat(teacher.total_earned) || 0) + remainderToRelease;
+            const newBalance = (parseFloat(teacher.balance) || 0) + remainderToRelease;
 
             await supabase
                 .from('teachers')
@@ -665,9 +880,11 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
                     offer_id: offerId,
                     teacher_id: offer.teacher_id,
                     session_number: currentSessionNum,
-                    amount_released: amountToRelease,
+                    amount_released: remainderToRelease,
                     students_count: activeSubscribers,
-                    note: `تحرير مستحقات الحصة رقم ${currentSessionNum} بمبلغ ${amountToRelease} دج (${activeSubscribers} طالب × ${pricePerSession} دج)`,
+                    note: alreadyReleased > 0
+                        ? `تحرير متبقي الحصة رقم ${currentSessionNum}: ${remainderToRelease} دج — حُرر ${alreadyReleased} دج تدريجياً أثناء البث (الإجمالي ${amountToRelease} دج)`
+                        : `تحرير مستحقات الحصة رقم ${currentSessionNum} بمبلغ ${amountToRelease} دج (${activeSubscribers} طالب × ${pricePerSession} دج)`,
                     created_at: new Date().toISOString()
                 });
         } catch (e) {
@@ -707,7 +924,7 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
         const offerUpdates = {
             completed_sessions_count: newCompletedCount,
             sessions_schedule: updatedSchedule,
-            total_released_amount: (parseFloat(offer.total_released_amount) || 0) + amountToRelease
+            total_released_amount: (parseFloat(offer.total_released_amount) || 0) + remainderToRelease
         };
 
         if (isAllCompleted) {
@@ -726,7 +943,7 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
                 .from('stream_subscriptions')
                 .update({
                     completed_sessions: newCompletedCount,
-                    teacher_released_so_far: (parseFloat(offer.total_released_amount) || 0) + amountToRelease,
+                    teacher_released_so_far: (parseFloat(offer.total_released_amount) || 0) + remainderToRelease,
                     status: isAllCompleted ? 'completed' : 'active',
                     updated_at: new Date().toISOString()
                 })
@@ -742,16 +959,19 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
                 user_id: offer.teacher_id,
                 user_type: 'teacher',
                 title: '💰 تم تحرير مستحقات الحصة',
-                message: `تم تحرير مبلغ ${amountToRelease} دج وإضافته لأرباحك بعد اكتمال الحصة رقم (${currentSessionNum}) من إجمالي (${totalSessions}) حصص في خطة "${offer.subject_name}".`,
+                message: alreadyReleased > 0
+                    ? `حُرر ${remainderToRelease} دج الآن (بعد ${alreadyReleased} دج حُررت تدريجياً أثناء البث) بإجمالي ${amountToRelease} دج عن الحصة رقم (${currentSessionNum}) من (${totalSessions}) حصص في خطة "${offer.subject_name}".`
+                    : `تم تحرير مبلغ ${amountToRelease} دج وإضافته لأرباحك بعد اكتمال الحصة رقم (${currentSessionNum}) من إجمالي (${totalSessions}) حصص في خطة "${offer.subject_name}".`,
                 is_read: false,
                 created_at: new Date().toISOString()
             });
 
-        console.log(`✅ تم بنجاح تحرير ${amountToRelease} دج للأستاذ عن الحصة ${currentSessionNum}/${totalSessions}`);
+        console.log(`✅ تم بنجاح تحرير ${remainderToRelease} دج للأستاذ عن الحصة ${currentSessionNum}/${totalSessions} (إجمالي الحصة ${amountToRelease} دج)`);
         return {
             success: true,
             session_number: currentSessionNum,
-            amount_released: amountToRelease,
+            amount_released: remainderToRelease,
+            amount_for_session: amountToRelease,
             completed_sessions_count: newCompletedCount,
             is_all_completed: isAllCompleted
         };
@@ -833,7 +1053,14 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
             };
         }
 
+        // ✅ الأستاذ يحتفظ بما حُرر تدريجياً أثناء البث — الطالب يسترد الباقي فقط
+        const planReleasedTotal = (streamSessions || []).reduce(function (sum, s) {
+            return sum + Math.max(0, parseFloat(s.teacher_released_amount || 0));
+        }, 0);
+        const perStudentReleased = Math.floor(planReleasedTotal / ((students || []).length || 1));
+
         for (const session of (students || [])) {
+            const refundAmountSession = Math.max(0, parseFloat(session.payment_amount || pricePerSession || 0) - perStudentReleased);
             const { data: student } = await supabase
                 .from('students')
                 .select('wallet_balance')
@@ -843,7 +1070,7 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
             await supabase
                 .from('students')
                 .update({
-  wallet_balance: (student?.wallet_balance || 0) + parseFloat(session.payment_amount || pricePerSession || 0)
+  wallet_balance: (student?.wallet_balance || 0) + refundAmountSession
   })
   .eq('id', session.student_id);
 
@@ -851,10 +1078,12 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
   .from('wallet_transactions')
   .insert({
   student_id: session.student_id,
-  amount: parseFloat(session.payment_amount || pricePerSession || 0),
+  amount: refundAmountSession,
                     type: 'refund',
                     status: 'completed',
-                    description: `استرداد مبلغ الحصة ${currentSessionNum} من خطة "${offer.subject_name || 'غير معروف'}" لعدم اكتمالها`,
+                    description: perStudentReleased > 0
+                        ? `استرداد جزئي للحصة ${currentSessionNum} من خطة "${offer.subject_name || 'غير معروف'}" (بقيمة ${refundAmountSession} دج بعد تحرير ${perStudentReleased} دج للأستاذ)`
+                        : `استرداد مبلغ الحصة ${currentSessionNum} من خطة "${offer.subject_name || 'غير معروف'}" لعدم اكتمالها`,
                     created_at: new Date().toISOString()
                 });
 
@@ -863,8 +1092,10 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
                 .insert({
                     user_id: session.student_id,
                     user_type: 'student',
-                    title: '💰 استرداد مبلغ الحصة',
-                    message: `تم استرداد ${pricePerSession} دج للحصة ${currentSessionNum} لأن البث لم يكتمل.`,
+                    title: perStudentReleased > 0 ? '💰 استرداد جزئي للحصة' : '💰 استرداد مبلغ الحصة',
+                    message: perStudentReleased > 0
+                        ? `تم استرداد ${refundAmountSession} دج للحصة ${currentSessionNum} (حُرر ${perStudentReleased} دج للأستاذ أثناء البث).`
+                        : `تم استرداد ${refundAmountSession} دج للحصة ${currentSessionNum} لأن البث لم يكتمل.`,
                     is_read: false,
                     created_at: new Date().toISOString()
                 });
@@ -874,12 +1105,19 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
         try {
             await supabase
                 .from('sessions')
-                .update({ payment_status: 'refunded' })
+                .update({
+                    payment_status: 'refunded',
+                    teacher_earned: perStudentReleased,
+                    partial_payment_note: perStudentReleased > 0
+                        ? `استرداد الحصة ${currentSessionNum} — حُرر ${perStudentReleased} دج تدريجياً للأستاذ أثناء البث`
+                        : 'استرداد مبلغ الحصة — البث لم يكتمل'
+                })
                 .eq('offer_id', offerId)
                 .in('id', (students || []).map(s => s.id));
         } catch (e) {}
 
-  const amountToRefundTotal = teacherSharePerSession * (students?.length || 0);
+  // ✅ نخصم من المعلق غير المحرر فقط — ما حُرر تدريجياً انتقل أصلاً إلى الرصيد القابل للسحب
+  const amountToRefundTotal = Math.max(0, teacherSharePerSession * (students?.length || 0) - planReleasedTotal);
   const { data: teacher } = await supabase
             .from('teachers')
             .select('pending_withdraw')
@@ -908,7 +1146,7 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
   .update({
   status: 'refunded',
   completed_at: new Date().toISOString(),
-  teacher_released_amount: 0,
+  teacher_released_amount: Math.max(0, parseFloat(targetSession.teacher_released_amount || 0)),
   refund_amount: parseFloat(targetSession.refund_amount || teacherSharePerSession || 0),
   is_escrow_released: true,
   updated_at: new Date().toISOString()
@@ -981,7 +1219,20 @@ async function processEarlyEndRefund(offerId) {
         return;
     }
 
-    console.log(`⚠️ معالجة إنهاء مبكر للبث ${offerId} - استرداد كامل للطلاب`);
+    // ✅ الجزء الذي حُرر تدريجياً أثناء البث يبقى للأستاذ — الباقي يُسترد للطلاب
+    let earlyReleasedTotal = 0;
+    try {
+        const { data: ssRows } = await supabase
+            .from('stream_sessions')
+            .select('teacher_released_amount')
+            .eq('offer_id', offerId);
+        (ssRows || []).forEach(function (r) {
+            earlyReleasedTotal += Math.max(0, parseFloat(r.teacher_released_amount || 0));
+        });
+    } catch (e) {}
+    const earlyReleasedPerStudent = Math.floor(earlyReleasedTotal / ((sessions || []).length || 1));
+
+    console.log(`⚠️ معالجة إنهاء مبكر للبث ${offerId} - استرداد المبالغ غير المحررة للطلاب`);
 
     for (const session of (sessions || [])) {
         // التحقق الإضافي من الحالة قبل المعالجة (تجنب التكرار)
@@ -996,7 +1247,8 @@ async function processEarlyEndRefund(offerId) {
             continue;
         }
 
-        // استرداد كامل للمبلغ للطالب (باستثناء رسوم السيرفر 100)
+        // استرداد ما لم يُحرَّر من المبلغ للطالب (باستثناء رسوم السيرفر 100)
+        const earlyRefundAmount = Math.max(0, session.payment_amount - 100 - earlyReleasedPerStudent);
         const { data: student } = await supabase
             .from('students')
             .select('wallet_balance')
@@ -1006,7 +1258,7 @@ async function processEarlyEndRefund(offerId) {
         await supabase
             .from('students')
             .update({
-                wallet_balance: (student?.wallet_balance || 0) + Math.max(0, session.payment_amount - 100)
+                wallet_balance: (student?.wallet_balance || 0) + earlyRefundAmount
             })
             .eq('id', session.student_id);
 
@@ -1015,9 +1267,11 @@ async function processEarlyEndRefund(offerId) {
             .from('sessions')
             .update({
                 payment_status: 'refunded',
-                teacher_earned: 0,
+                teacher_earned: earlyReleasedPerStudent,
                 completed_at: new Date().toISOString(),
-                partial_payment_note: 'استرداد مبلغ الحصة - أنهى الأستاذ البث مبكراً'
+                partial_payment_note: earlyReleasedPerStudent > 0
+                    ? `استرداد جزئي - حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث وأنهى الأستاذ البث مبكراً`
+                    : 'استرداد مبلغ الحصة - أنهى الأستاذ البث مبكراً'
             })
             .eq('id', session.id);
 
@@ -1026,10 +1280,12 @@ async function processEarlyEndRefund(offerId) {
             .from('wallet_transactions')
             .insert({
                 student_id: session.student_id,
-                amount: Math.max(0, session.payment_amount - 100),
+                amount: earlyRefundAmount,
                 type: 'refund',
                 status: 'completed',
-                description: `استرداد مبلغ الحصة ${Math.max(0, session.payment_amount - 100)} دج - أنهى الأستاذ البث مبكراً`,
+                description: earlyReleasedPerStudent > 0
+                    ? `استرداد جزئي ${earlyRefundAmount} دج من حصة ملغاة (حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث) - أنهى الأستاذ البث مبكراً`
+                    : `استرداد مبلغ الحصة ${earlyRefundAmount} دج - أنهى الأستاذ البث مبكراً`,
                 created_at: new Date().toISOString()
             });
 
@@ -1039,8 +1295,10 @@ async function processEarlyEndRefund(offerId) {
             .insert({
                 user_id: session.student_id,
                 user_type: 'student',
-                title: '💰 استرداد مبلغ الحصة',
-                message: `تم استرداد ${Math.max(0, session.payment_amount - 100)} دج لحصة "${offer.subject_name}" لأن الأستاذ أنهى البث مبكراً`,
+                title: earlyReleasedPerStudent > 0 ? '💰 استرداد جزئي' : '💰 استرداد مبلغ الحصة',
+                message: earlyReleasedPerStudent > 0
+                    ? `تم استرداد ${earlyRefundAmount} دج لحصة "${offer.subject_name}" (حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث) لأن الأستاذ أنهى البث مبكراً`
+                    : `تم استرداد ${earlyRefundAmount} دج لحصة "${offer.subject_name}" لأن الأستاذ أنهى البث مبكراً`,
                 is_read: false,
                 created_at: new Date().toISOString()
             });
@@ -1048,20 +1306,25 @@ async function processEarlyEndRefund(offerId) {
         console.log(`💰 تم استرداد ${session.payment_amount} دج للطالب ${session.student_id}`);
     }
 
-    // تحديث رصيد الأستاذ المعلق (إلغاء المعلق)
+    // ✅ إلغاء معلق هذا الدرس غير المحرَّر فقط (لا مساس بمعلق دروس أخرى) —
+    //    ما حُرر تدريجياً أثناء البث يبقى في رصيد الأستاذ القابل للسحب
     const { data: teacher } = await supabase
         .from('teachers')
         .select('pending_withdraw')
         .eq('id', offer.teacher_id)
         .single();
 
-    if (teacher?.pending_withdraw > 0) {
-        await supabase
-            .from('teachers')
-            .update({
-                pending_withdraw: 0
-            })
-            .eq('id', offer.teacher_id);
+    if (teacher) {
+        const thisOfferUnreleased = Math.max(0, (parseFloat(offer.price || 0) * (sessions || []).length) - earlyReleasedTotal);
+        const pendingDebit = Math.min(thisOfferUnreleased, Math.max(0, parseFloat(teacher.pending_withdraw) || 0));
+        if (pendingDebit > 0) {
+            await supabase
+                .from('teachers')
+                .update({
+                    pending_withdraw: Math.max(0, (parseFloat(teacher.pending_withdraw) || 0) - pendingDebit)
+                })
+                .eq('id', offer.teacher_id);
+        }
     }
 
     // إشعار الأستاذ
@@ -1071,12 +1334,16 @@ async function processEarlyEndRefund(offerId) {
             user_id: offer.teacher_id,
             user_type: 'teacher',
             title: '⚠️ تم إنهاء البث مبكراً',
-            message: `تم إنهاء البث "${offer.subject_name}" مبكراً. لم تحصل على أي مال وتم استرداد جميع المبالغ للطلاب.`,
+            message: earlyReleasedTotal > 0
+                ? `تم إنهاء البث "${offer.subject_name}" مبكراً. حُرر ${earlyReleasedTotal} دج لك عن ما قدمته أثناء البث، وتم استرداد الباقي للطلاب.`
+                : `تم إنهاء البث "${offer.subject_name}" مبكراً. لم تحصل على أي مال وتم استرداد جميع المبالغ للطلاب.`,
             is_read: false,
             created_at: new Date().toISOString()
         });
 
-    console.log(`⚠️ تم إنهاء البث مبكراً - لم يحصل الأستاذ على أي مال`);
+    console.log(earlyReleasedTotal > 0
+        ? `⚠️ تم إنهاء البث مبكراً - حُرر للأستاذ ${earlyReleasedTotal} دج عن ما قدمته`
+        : `⚠️ تم إنهاء البث مبكراً - لم يحصل الأستاذ على أي مال`);
 }
 
 /**
@@ -1602,5 +1869,6 @@ module.exports = {
     forceEndStream,
     checkAndExpireOverdueOffers,
     archiveStreamLog,
-    releasePlanSessionEscrow
+    releasePlanSessionEscrow,
+    releaseEarnedSoFar
 };
