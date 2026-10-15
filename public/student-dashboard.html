@@ -7251,7 +7251,7 @@ toast.className = `toast ${kind}`;
                     if (isFree) {
                         actionBtnHtml = `<button class="book-btn" style="flex: 1; background: #059669; color: white; font-weight: 800; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.35); display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="enterOrCheckStream(${offer.id})"><i class="fas fa-video" style="animation: pulse 1.5s infinite;"></i> دخول البث المباشر (مجاني)</button>`;
                     } else {
-                        actionBtnHtml = `<button class="book-btn" style="flex: 1; background: #dc2626; color: white; font-weight: 800;" onclick="bookOffer(${offer.id}, ${isFree}, ${pricePerSession}, ${sessionDuration}, '${planType}', ${totalSessions})" ${!canBook ? 'disabled' : ''}><i class="fas fa-video"></i> انضم للبث المباشر الان (${offerTotalCost} دج)</button>`;
+                        actionBtnHtml = `<button class="book-btn" style="flex: 1; background: #dc2626; color: white; font-weight: 800;" onclick="bookOffer(${offer.id}, ${isFree}, ${pricePerSession}, ${sessionDuration}, '${planType}', ${totalSessions}, true)" ${!canBook ? 'disabled' : ''}><i class="fas fa-video"></i> انضم للبث المباشر الآن — يُحسب وقتك الفعلي (${offerTotalCost} دج)</button>`;
                     }
                 } else if (isFree) {
                     actionBtnHtml = `<button class="book-btn free" style="flex: 1;" onclick="enterOrCheckStream(${offer.id})"><i class="fas fa-gift"></i> دخول / تسجيل مجاني</button>`;
@@ -7542,16 +7542,16 @@ toast.className = `toast ${kind}`;
     }
     window.shareOffer = shareOffer;
 
-    async function bookOffer(offerId, isFree, pricePerSession = 0, duration = 60, planType = '1_day', totalSessions = 1) {
+    async function bookOffer(offerId, isFree, pricePerSession = 0, duration = 60, planType = '1_day', totalSessions = 1, joiningLive = false) {
         if (checkGuestAction()) return;
-        if (!studentId) { showToast('الرجاء تسجيل الدخول أولاً', 'error'); return; }
+        if (!studentId) { showToast('الرجاء تسجيل الدخول أولاً', 'warning'); return; }
         
         const platformFeePerSession = isFree ? 0 : Math.round((duration / 45) * 50);
         const costPerSession = isFree ? 0 : (pricePerSession + platformFeePerSession);
         const totalCost = isFree ? 0 : (costPerSession * totalSessions);
 
         if (currentBalance < totalCost) {
-            showToast(`⚠️ رصيدك غير كافٍ! رصيدك: ${currentBalance} دج. الإجمالي المطلوب: ${totalCost} دج`, 'error');
+            showToast(`⚠️ رصيدك غير كافٍ! رصيدك: ${currentBalance} دج. الإجمالي المطلوب: ${totalCost} دج`, 'warning');
             return;
         }
 
@@ -7563,6 +7563,17 @@ toast.className = `toast ${kind}`;
                 '6_months': 'اشتراك 6 أشهر'
             };
             const planName = planNames[planType] || planType;
+
+            if (joiningLive) {
+                const lateConfirmMsg = `🔴 البث بدأ بالفعل — أنت تنضم الآن (دخول متأخر):
+- الخطة: ${planName} (${totalSessions} ${totalSessions > 1 ? 'حصص' : 'حصة'})
+- المبلغ المطلوب الآن: ${totalCost} دج (سعر الحصة + رسوم المنصة)
+
+⏱️ العدالة الكاملة: يُحسب لك الوقت الفعلي من لحظة دخولك حتى نهاية البث بالضبط، ويُسترد لك تلقائياً عند نهاية البث ما لم تدرسه من سعر الحصة (رسوم المنصة ثابتة ولا تُسترد). ويُضاف للأستاذ فقط ما درسته فعلاً.
+
+هل توافق على الانضمام وخصم ${totalCost} دج من رصيدك؟`;
+                if (!confirm(lateConfirmMsg)) return;
+            }
 
             const confirmMsg = `تفاصيل الاشتراك في البث:
 - الخطة: ${planName} (${totalSessions} ${totalSessions > 1 ? 'حصص' : 'حصة'})
@@ -7584,9 +7595,11 @@ toast.className = `toast ${kind}`;
             });
             const data = await res.json();
             if (data.success) {
-                const successMsg = totalSessions > 1 
-                    ? `✅ تم تأكيد اشتراكك في الخطة بنجاح (${totalSessions} حصص)! تم حجز مقعدك وحفظ مستحقاتك في الضمان.`
-                    : '✅ تم حجز هذا البث بنجاح، سيتم إشعارك فور انطلاق البث المباشر.';
+                const successMsg = joiningLive
+                    ? '✅ تم الحجز والانضمام إلى البث الجارٍ بنجاح! اضغط "دخول البث المباشر الآن" — يُحسب وقتك من لحظة دخولك حتى نهاية البث، ويُسترد لك تلقائياً ما لم تدرسه.'
+                    : (totalSessions > 1 
+                        ? `✅ تم تأكيد اشتراكك في الخطة بنجاح (${totalSessions} حصص)! تم حجز مقعدك وحفظ مستحقاتك في الضمان.`
+                        : '✅ تم حجز هذا البث بنجاح، سيتم إشعارك فور انطلاق البث المباشر.');
                 showToast(successMsg, 'success');
                 alert(successMsg);
                 loadWallet();
@@ -7595,14 +7608,14 @@ toast.className = `toast ${kind}`;
                 loadNotifications();
             } else {
                 if (data.insufficient_balance) {
-                    showToast(` ️ رصيدك غير كافٍ! المبلغ المطلوب: ${data.needed} دج`, 'error');
+                    showToast(` ️ رصيدك غير كافٍ! المبلغ المطلوب: ${data.needed} دج`, 'warning');
                 } else {
-                    showToast(data.error || 'حدث خطأ في عملية الحجز', 'error');
+                    showToast(data.error || 'تعذّر إتمام الحجز، حاول مرة أخرى', 'warning');
                 }
             }
         } catch(e) { 
             if (e.message !== 'انتهت صلاحية الجلسة') {
-                showToast('حدث خطأ في الاتصال', 'error');
+                showToast('تعذّر الاتصال بالخادم، حاول مرة أخرى', 'warning');
             }
         }
     }

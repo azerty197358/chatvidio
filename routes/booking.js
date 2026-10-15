@@ -127,15 +127,14 @@ router.post('/create', authenticate, authorize(['student']), [
             return res.status(400).json({ success: false, error: 'هذا الدرس منتهي أو ملغى ولا يمكن حجزه' });
         }
 
-        // للمسموح بالدخول للبث المجاني دائماً، أما المدفوع فلا يمكن حجزه بعد البدء
-        if (!isFree && (['live', 'teacher_ready', 'paused'].includes(offer.status) || offer.stream_url || offer.stream_started_at)) {
-            return res.status(400).json({ success: false, error: 'لقد بدأ هذا البث بالفعل، ولا يمكن حجز الحصة بعد بدء البث' });
-        }
-
+        // ✅ يُسمح بالحجز حتى بعد بدء البث مباشرة (دخول متأخر): يُحسب للطالب الوقت الفعلي
+        //    الذي درسه من لحظة حجزه وحتى نهاية البث، ويُسترد له ما لم يدرسه تلقائياً عند التسوية
+        //    (تبقى رسوم المنصة الثابتة) ويُضاف للأستاذ ما درسه الطالب فعلاً فقط.
         const now = new Date();
         const offerDate = parseOfferStartDate(offer.offer_date);
         const durationMs = ((offer.duration || 60) * 60 * 1000);
-        if (!isFree && (offerDate.getTime() + durationMs < now.getTime())) {
+        const isJoiningLive = !isFree && ['live', 'teacher_ready', 'paused'].includes(offer.status);
+        if (!isFree && !isJoiningLive && (offerDate.getTime() + durationMs < now.getTime())) {
             return res.status(400).json({ success: false, error: 'هذا الدرس قد انتهى موعده' });
         }
 

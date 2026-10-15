@@ -384,6 +384,17 @@ async function computeElapsedLiveSeconds(offerId, offer) {
     return { elapsed: Math.min(total, elapsed), total: total };
 }
 
+// ✅ نسبة الوقت الفعلي الذي درسه طالب واحد داخل البث:
+//    انضمام الطالب = أحدث من (لحظة بدء البث، لحظة حجزه) — الطالب الذي يحجز متأخراً
+//    يُحتسب له وقت دراسته فقط من لحظة دخوله حتى نهاية البث، فلا يُضاف للأستاذ
+//    ثمن وقت لم يدرسه هذا الطالب ويُسترد له ما لم يدرسه عند التسوية النهائية.
+function computeStudiedFraction(sessionCreatedAt, streamStartMs, elapsedSeconds, totalSeconds) {
+    const bookedMs = sessionCreatedAt ? Date.parse(sessionCreatedAt) : NaN;
+    const joinMs = (!isNaN(bookedMs) && bookedMs > streamStartMs) ? bookedMs : streamStartMs;
+    const studiedSeconds = Math.max(0, Math.min(totalSeconds, elapsedSeconds - (joinMs - streamStartMs) / 1000));
+    return Math.max(0, Math.min(1, studiedSeconds / Math.max(1, totalSeconds)));
+}
+
 /**
  * التحرير التدريجي لمستحقات الأستاذ أثناء البث:
  * كلما انقضى جزء فعلي من مدة الدرس المختارة يُحرر نسبته من مبلغ الحصة
@@ -468,18 +479,38 @@ async function releaseEarnedSoFar(offerId) {
                 if (!target) return { skipped: true };
             }
 
-            const { data: subRows } = await supabase
-                .from('sessions')
-                .select('id, payment_amount, payment_status')
-                .eq('offer_id', offerId)
-                .in('payment_status', ['pending_stream', 'paid']);
+            // ✅ جلب المشتركين مع لحظة حجز كل واحد (created_at = لحظة الانضمام)
+            let subRows = null;
+            const subSelects = [
+                'id, payment_amount, payment_status, created_at',
+                'id, payment_amount, payment_status'
+            ];
+            for (const cols of subSelects) {
+                try {
+                    const { data, error } = await supabase
+                        .from('sessions')
+                        .select(cols)
+                        .eq('offer_id', offerId)
+                        .in('payment_status', ['pending_stream', 'paid']);
+                    if (!error && data) { subRows = data; break; }
+                } catch (e) {}
+            }
             if (!subRows || subRows.length === 0) return { skipped: true }; // لا مشتردين ⇒ لا مبلغ يُحرَّر
             const subscriberCount = subRows.length || 1;
 
             const prevReleased = Math.max(0, parseFloat(target.teacher_released_amount || 0));
             const basePerSession = isMultiSession ? parseFloat(target.price_per_session || pricePerSession) : pricePerSession;
-            const targetTotal = basePerSession * subscriberCount;
-            const earned = Math.min(targetTotal, Math.floor(targetTotal * Math.min(1, elapsed / total)));
+
+            // ✅ لكل مشترك نسبة وقته الفعلي في البث — الحجز المتأخر يُحتسب من لحظة الحجز،
+            //    فلا يُحرَّر للأستاذ ثمن وقت لم يدره هذا الطالب (يُسترد له عند التسوية).
+            //    الحجوزات السابقة للبدء تدخل جميعها من لحظة البدء (نفس السلوك القديم تماماً).
+            const releaseStartMs = Date.now() - elapsed * 1000;
+            let studiedFracSum = 0;
+            for (const row of subRows) {
+                studiedFracSum += computeStudiedFraction(row.created_at, releaseStartMs, elapsed, total);
+            }
+            const targetTotal = Math.min(basePerSession * subscriberCount, basePerSession * studiedFracSum);
+            const earned = Math.min(basePerSession * subscriberCount, Math.floor(targetTotal));
             const delta = earned - prevReleased;
             if (delta <= 0) return { skipped: true, elapsed: Math.round(elapsed) };
 
@@ -571,6 +602,7 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     let isCompleted = false;
     let completionPctRounded = 0;
     let actualSeconds = 0;
+    let expectedSeconds = 0;
 
     if (!earlyEnd) {
         try {
@@ -578,6 +610,7 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
             isCompleted = completion.complete;
             completionPctRounded = Math.round(completion.completion_percentage);
             actualSeconds = completion.actual_seconds;
+            expectedSeconds = completion.expected_seconds || 0;
         } catch (e) {
             // ✅ في أي خطأ غير متوقع: نفترض أن البث غير مكتمل ⇒ استرداد للطالب (حماية حقوقه أولاً)
             logger.error('verifyStreamCompletion فشل — معاملات عدم الاكتمال (استرداد):', e.message);
@@ -645,7 +678,8 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     // ✅ جلب متدرّج الأعمدة — لا يجوز أن يتوقف الاسترداد بسبب غياب عمود واحد
     let sessions = null;
     const sessionSelects = [
-        'id, student_id, payment_amount, payment_status',
+        'id, student_id, payment_amount, payment_status, created_at',
+        'id, student_id, payment_amount, created_at',
         'id, student_id, payment_amount',
         'id, student_id'
     ];
@@ -677,8 +711,16 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     const subscriberCount = (sessions || []).length || 1;
     const releasedPerStudent = Math.floor(releasedSessionTotal / subscriberCount);
 
+    // ✅ أساس حساب نصيب كل طالب وقت دراسته الفعلي — الدخول المتأخر يُحتسب من لحظة حجزه
+    const settleTotal = Math.max(60, expectedSeconds || 3600);
+    const settleElapsed = Math.min(settleTotal, Math.max(0, actualSeconds || 0));
+    const settleStartMs = Date.now() - settleElapsed * 1000;
+
     for (const session of (sessions || [])) {
-        if (isCompleted) {
+        // ✅ دخول متأخر: حتى على درس مكتمل لا يُضاف للأستاذ إلا وقته الفعلي مع هذا الطالب
+        const bookedMsLate = session.created_at ? Date.parse(session.created_at) : NaN;
+        const isLateJoiner = !isNaN(bookedMsLate) && bookedMsLate > settleStartMs;
+        if (isCompleted && !isLateJoiner) {
             const releasedAlready = Math.min(pricePerSession, releasedPerStudent);
             const teacherAmount = Math.max(0, pricePerSession - releasedAlready); // الجزء المتبقي فقط — البقيّة حُررت أثناء البث
             await supabase
@@ -712,22 +754,29 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
                     .eq('id', offer.teacher_id);
             }
         } else {
-            // الطالب يسترد غير المحرر — والأستاذ يحتفظ بجزء ما قدمه من البث فعلياً
+            // ✅ الطالب يسترد ما لم يدرسه فقط — ونصيب الأستاذ = وقته الفعلي مع هذا الطالب
+            //    (الدخول المتأخر يُحتسب من لحظة حجزه) — رسوم المنصة لا تُسترد أبداً
+            const settleFrac = computeStudiedFraction(session.created_at, settleStartMs, settleElapsed, settleTotal);
+            const teacherShare = Math.min(pricePerSession, Math.floor(pricePerSession * settleFrac));
             const payAmount = parseFloat(session.payment_amount || pricePerSession || 0);
-            const releasedAlready = Math.min(pricePerSession, releasedPerStudent);
-            const refundAmount = Math.max(0, payAmount - releasedAlready);
-            const pendingToRelease = Math.max(0, pricePerSession - releasedAlready);
+            const studentEscrow = Math.max(0, Math.min(payAmount || pricePerSession, pricePerSession)); // ما دفعه للأستاذ دون رسوم المنصة
+            const refundAmount = Math.max(0, studentEscrow - teacherShare);
+            const pendingToRelease = Math.max(0, pricePerSession - teacherShare);
+            // ✅ الحصة المكتملة مع دخول متأخر: تبقى 'paid' (حجز سليم) مع تسجيل الاسترداد الجزئي
             await supabase
                 .from('sessions')
                 .update({
-                    payment_status: 'refunded',
-                    teacher_earned: releasedAlready,
+                    payment_status: isCompleted ? 'paid' : 'refunded',
+                    teacher_earned: teacherShare,
+                    refund_amount: isCompleted ? refundAmount : undefined,
                     completed_at: new Date().toISOString(),
                     completion_percentage: completionPctRounded,
                     actual_duration: actualSeconds,
-                    partial_payment_note: releasedAlready > 0
-                        ? `استرداد جزئي - حُرر ${releasedAlready} دج للأستاذ عن جزء البث المنقّط واستُرد ${refundAmount} دج للطالب (نسبة الإكتمال: ${completionPctRounded}%)`
-                        : `استرداد - البث غير مكتمل (نسبة الإكتمال: ${completionPctRounded}%)`
+                    partial_payment_note: isCompleted
+                        ? `دخول متأخر - حصة مكتملة: نصيب الأستاذ ${teacherShare} دج عن وقتك الفعلي، واستُرد ${refundAmount} دج لك`
+                        : (teacherShare > 0
+                            ? `استرداد جزئي - نصيب الأستاذ ${teacherShare} دج عن الوقت الفعلي الذي درسه الطالب، واستُرد ${refundAmount} دج للطالب (نسبة الإكتمال: ${completionPctRounded}%)`
+                            : `استرداد - البث غير مكتمل (نسبة الإكتمال: ${completionPctRounded}%)`)
                 })
                 .eq('id', session.id);
 
@@ -766,9 +815,11 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
                     amount: refundAmount,
                     type: 'refund',
                     status: 'completed',
-                    description: releasedAlready > 0
-                        ? `استرداد جزئي (بقيمة ${refundAmount} دج بعد تحرير ${releasedAlready} دج للأستاذ) - نسبة إكتمال ${completionPctRounded}%`
-                        : `استرداد مبلغ حصة غير مكتملة بنسبة ${completionPctRounded}%`,
+                    description: isCompleted
+                        ? `استرداد وقت لم تدرسه (دخول متأخر) ${refundAmount} دج — نصيب الأستاذ ${teacherShare} دج عن وقتك الفعلي من الحصة المكتملة`
+                        : (teacherShare > 0
+                            ? `استرداد جزئي (بقيمة ${refundAmount} دج — نصيب الأستاذ ${teacherShare} دج عن وقتك الفعلي داخل البث، ورسوم المنصة ثابتة) - نسبة إكتمال ${completionPctRounded}%`
+                            : `استرداد مبلغ حصة غير مكتملة بنسبة ${completionPctRounded}%`),
                     created_at: new Date().toISOString()
                 });
                 
@@ -777,10 +828,12 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
                 .insert({
                     user_id: session.student_id,
                     user_type: 'student',
-                    title: releasedAlready > 0 ? '💰 استرداد جزئي' : '💰 استرداد كامل',
-                    message: releasedAlready > 0
-                        ? `تم استرداد ${refundAmount} دج من أصل ${payAmount} دج لحصة "${offer.subject_name}" — حُرر ${releasedAlready} دج للأستاذ عن جزء البث المنقّط.`
-                        : `تم استرداد مبلغ ${refundAmount} دج لحصة "${offer.subject_name}" لعدم إكمال مدة البث.`,
+                    title: isCompleted ? '💰 استرداد وقت لم تدرسه' : (teacherShare > 0 ? '💰 استرداد جزئي' : '💰 استرداد كامل'),
+                    message: isCompleted
+                        ? `انضممت متأخراً فاستُرد لك ${refundAmount} دج من حصة "${offer.subject_name}" المكتملة — نصيب الأستاذ ${teacherShare} دج عن وقتك الفعلي فقط.`
+                        : (teacherShare > 0
+                            ? `تم استرداد ${refundAmount} دج من أصل ${studentEscrow} دج (سعر الحصة) لحصة "${offer.subject_name}" — نصيب الأستاذ ${teacherShare} دج عن الوقت الفعلي الذي درسته داخل البث.`
+                            : `تم استرداد مبلغ ${refundAmount} دج لحصة "${offer.subject_name}" لعدم إكمال مدة البث.`),
                     is_read: false,
                     created_at: new Date().toISOString()
                 });
@@ -858,15 +911,63 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
             };
         }
 
-        // عدد الطلاب المشتركين
-        const { count: studentCount } = await supabase
-            .from('sessions')
-            .select('*', { count: 'exact', head: true })
-            .eq('offer_id', offerId)
-            .in('payment_status', ['pending_stream', 'paid']);
+        // ✅ جلب المشتركين أنفسهم مع لحظة كل حجز — نصيب كل طالب عند اكتمال الحصة:
+        //    من حجز قبل البدء يستلم السعر كاملاً (قاعدة الإكتمال 90%)، ومن دخل متأخراً
+        //    لا يُضاف للأستاذ إلا وقته الفعلي معه ويُسترد له ما لم يدرسه من هذه الحصة.
+        let planStudentRows = null;
+        const planStudSelects = [
+            'id, student_id, payment_amount, payment_status, created_at',
+            'id, student_id, payment_amount, created_at',
+            'id, student_id, payment_amount'
+        ];
+        for (const cols of planStudSelects) {
+            try {
+                const { data, error } = await supabase
+                    .from('sessions')
+                    .select(cols)
+                    .eq('offer_id', offerId)
+                    .in('payment_status', ['pending_stream', 'paid']);
+                if (!error && data) { planStudentRows = data; break; }
+            } catch (e) {}
+        }
 
-        const activeSubscribers = studentCount || offer.booked_count || 1;
-        const amountToRelease = pricePerSession * activeSubscribers;
+        let studentCount = null;
+        if (!planStudentRows) {
+            const { count } = await supabase
+                .from('sessions')
+                .select('*', { count: 'exact', head: true })
+                .eq('offer_id', offerId)
+                .in('payment_status', ['pending_stream', 'paid']);
+            studentCount = count;
+        }
+        const activeSubscribers = ((planStudentRows ? planStudentRows.length : (studentCount || offer.booked_count)) || 1);
+
+        // ✅ أساس الوقت الفعلي للحصة الحالية (محسوب على الخادم)
+        const relElapsedInfo = await computeElapsedLiveSeconds(offerId, offer);
+        const relTotal = Math.max(60, relElapsedInfo.total);
+        const relElapsed = Math.min(relTotal, Math.max(0, relElapsedInfo.elapsed));
+        const relStartMs = Date.now() - relElapsed * 1000;
+        const relRealStartMs = offer.stream_started_at ? Date.parse(offer.stream_started_at) : NaN;
+
+        let amountToRelease = 0;
+        const lateJoinerRefunds = [];
+        if (planStudentRows && planStudentRows.length > 0) {
+            for (const row of planStudentRows) {
+                const bookedMs = row.created_at ? Date.parse(row.created_at) : NaN;
+                const isLateJoiner = !isNaN(bookedMs) && !isNaN(relRealStartMs) && bookedMs > relRealStartMs;
+                let sessionShare = pricePerSession;
+                if (isLateJoiner) {
+                    sessionShare = Math.min(pricePerSession, Math.floor(pricePerSession * computeStudiedFraction(row.created_at, relStartMs, relElapsed, relTotal)));
+                    const rowRefund = Math.max(0, pricePerSession - sessionShare);
+                    if (rowRefund > 0) lateJoinerRefunds.push({ row: row, refund: rowRefund, share: sessionShare });
+                }
+                amountToRelease += sessionShare;
+            }
+            amountToRelease = Math.min(amountToRelease, pricePerSession * activeSubscribers);
+        } else {
+            // بيانات قديمة بلا صفوف — السلوك القديم (سعر الحصة × عدد المشتركين)
+            amountToRelease = pricePerSession * activeSubscribers;
+        }
 
         // ✅ ما حُرر تدريجياً أثناء البث لا يُعاد تحريره — نُكمل الجزء المتبقي فقط عند الإنهاء
         const alreadyReleased = Math.max(0, parseFloat(targetSession?.teacher_released_amount || 0));
@@ -943,6 +1044,76 @@ async function releasePlanSessionEscrow(offerId, sessionNumber = null) {
                 });
         } catch (e) {
             console.warn('⚠️ تعذر إدراج stream_escrow_releases:', e.message);
+        }
+
+        // ✅ استرداد نصيب كل طالب دخل متأخراً من هذه الحصة: ما لم يدرسه من سعرها.
+        //    الحجز يبقى 'paid' (سليم — حصص الخطة القادمة تُسوّى كالمعتاد) مع تسجيل
+        //    الاسترداد في refund_amount حتى لا يُسترد المبلغ مجدداً في أي مسار لاحق.
+        for (const rf of lateJoinerRefunds) {
+            try {
+                // ✅ أولاً: خصم المبلغ المسترد من معلق الأستاذ — يعود من غير المحرَّر لديه،
+                //    لا من محفظة المنصة. هكذا يعود المعلق بالكامل إلى صفر بعد التسوية.
+                try {
+                    const { data: tRow } = await supabase
+                        .from('teachers')
+                        .select('pending_withdraw')
+                        .eq('id', offer.teacher_id)
+                        .single();
+                    if (tRow) {
+                        const pendNow = Math.max(0, parseFloat(tRow.pending_withdraw) || 0);
+                        const debitAmt = Math.min(rf.refund, pendNow);
+                        if (debitAmt > 0) {
+                            await supabase
+                                .from('teachers')
+                                .update({ pending_withdraw: pendNow - debitAmt })
+                                .eq('id', offer.teacher_id);
+                        }
+                    }
+                } catch (e) {}
+
+                const { data: stRow } = await supabase
+                    .from('students')
+                    .select('wallet_balance')
+                    .eq('id', rf.row.student_id)
+                    .single();
+                await supabase
+                    .from('students')
+                    .update({ wallet_balance: (parseFloat(stRow?.wallet_balance) || 0) + rf.refund })
+                    .eq('id', rf.row.student_id);
+
+                await supabase
+                    .from('wallet_transactions')
+                    .insert({
+                        student_id: rf.row.student_id,
+                        amount: rf.refund,
+                        type: 'refund',
+                        status: 'completed',
+                        description: `استرداد وقت لم تدرسه (دخول متأخر) ${rf.refund} دج من الحصة ${currentSessionNum} — نصيب الأستاذ ${rf.share} دج عن وقتك الفعلي داخل البث`,
+                        created_at: new Date().toISOString()
+                    });
+
+                await supabase
+                    .from('notifications')
+                    .insert({
+                        user_id: rf.row.student_id,
+                        user_type: 'student',
+                        title: '💰 استرداد وقت لم تدرسه',
+                        message: `انضممت إلى البث متأخراً فاستُرد لك ${rf.refund} دج من الحصة ${currentSessionNum} (نصيب الأستاذ ${rf.share} دج عن وقتك الفعلي فقط) — عدل تام.`,
+                        is_read: false,
+                        created_at: new Date().toISOString()
+                    });
+
+                await supabase
+                    .from('sessions')
+                    .update({
+                        refund_amount: (parseFloat(rf.row.refund_amount) || 0) + rf.refund,
+                        teacher_earned: Math.max(0, (parseFloat(rf.row.teacher_earned) || 0) - rf.refund),
+                        partial_payment_note: `دخول متأخر - استُرد ${rf.refund} دج من الحصة ${currentSessionNum} ونصيب الأستاذ ${rf.share} دج عن الوقت الفعلي`
+                    })
+                    .eq('id', rf.row.id);
+            } catch (e) {
+                console.warn('⚠️ تعذر استرداد نصيب الطالب المتأخر:', e.message);
+            }
         }
 
         // تحديث عدد الحصص المكتملة في العرض وتحديث جدول الحصص sessions_schedule
@@ -1109,14 +1280,22 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
             };
         }
 
-        // ✅ الأستاذ يحتفظ بما حُرر تدريجياً أثناء البث — الطالب يسترد الباقي فقط
+        // ✅ الأستاذ يحتفظ بما حُرر تدريجياً أثناء البث — الطالب يسترد الباقي من سعر الحصة(ات)
+        //    للأستاذ فقط. رسوم المنصة الثابتة لا تُسترد أبداً عند فشل الحصة: الحد الأقصى
+        //    القابل للاسترداد = سعر الحصة(ات) للأستاذ لا كامل ما دفعه الطالب.
+        //    (مثال واقعي: دفع الطالب 330 = سعر250 + رسوم80، حُرر 6 ⇒ الاسترداد 244 لا 324)
         const planReleasedTotal = (streamSessions || []).reduce(function (sum, s) {
             return sum + Math.max(0, parseFloat(s.teacher_released_amount || 0));
         }, 0);
         const perStudentReleased = Math.floor(planReleasedTotal / ((students || []).length || 1));
+        const planTeacherEscrowTotal = Math.max(0, pricePerSession * totalSessions); // سعر الحصة(ات) للأستاذ
 
+        let studentsEscrowSum = 0;
         for (const session of (students || [])) {
-            const refundAmountSession = Math.max(0, parseFloat(session.payment_amount || pricePerSession || 0) - perStudentReleased);
+            // ✅ الحد الأقصى القابل للاسترداد لهذا الطالب = سعر الحصة(ات) دون رسوم المنصة
+            const maxRefundable = Math.max(0, Math.min(parseFloat(session.payment_amount || 0) || planTeacherEscrowTotal, planTeacherEscrowTotal));
+            studentsEscrowSum += maxRefundable;
+            const refundAmountSession = Math.max(0, maxRefundable - perStudentReleased);
             const { data: student } = await supabase
                 .from('students')
                 .select('wallet_balance')
@@ -1173,7 +1352,8 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
         } catch (e) {}
 
   // ✅ نخصم من المعلق غير المحرر فقط — ما حُرر تدريجياً انتقل أصلاً إلى الرصيد القابل للسحب
-  const amountToRefundTotal = Math.max(0, teacherSharePerSession * (students?.length || 0) - planReleasedTotal);
+  //    (المعلق لكل طالب = سعر الحصة(ات) دون رسوم المنصة)
+  const amountToRefundTotal = Math.max(0, studentsEscrowSum - planReleasedTotal);
   const { data: teacher } = await supabase
             .from('teachers')
             .select('pending_withdraw')
@@ -1250,14 +1430,23 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
  * - يتم استرداد جميع الأموال للطلاب
  */
 async function processEarlyEndRefund(offerId) {
-    const { data: offer, error: offerError } = await supabase
-        .from('offers')
-        .select('id, teacher_id, subject_name, is_free, price')
-        .eq('id', offerId)
-        .single();
+    // ✅ جلب متدرّج الأعمدة — أساس حساب الوقت الفعلي للدخول المتأخر
+    let offer = null;
+    const earlyOfferSelects = [
+        'id, teacher_id, subject_name, is_free, price, price_per_session, total_sessions, duration, total_seconds, stream_started_at',
+        'id, teacher_id, subject_name, is_free, price, price_per_session, duration, stream_started_at',
+        'id, teacher_id, subject_name, is_free, price, duration',
+        'id, teacher_id, subject_name, is_free, price'
+    ];
+    for (const cols of earlyOfferSelects) {
+        try {
+            const { data, error } = await supabase.from('offers').select(cols).eq('id', offerId).single();
+            if (!error && data) { offer = data; break; }
+        } catch (e) {}
+    }
 
-    if (offerError || !offer) {
-        logger.error('خطأ في جلب الدرس للاسترداد:', offerError);
+    if (!offer) {
+        logger.error('خطأ في جلب الدرس للاسترداد:', offerId);
         return;
     }
 
@@ -1268,15 +1457,29 @@ async function processEarlyEndRefund(offerId) {
         return;
     }
 
-    // جلب جميع الجلسات المعلقة
-    const { data: sessions, error: sessionsError } = await supabase
-        .from('sessions')
-        .select('id, student_id, payment_amount, payment_status')
-        .eq('offer_id', offerId)
-        .eq('payment_status', 'pending_stream');
+    const earlyTotalSessions = offer.total_sessions || 1;
+    const earlyPricePerSession = parseFloat(offer.price_per_session || offer.price || 0);
 
-    if (sessionsError) {
-        logger.error('خطأ في جلب الجلسات:', sessionsError);
+    // جلب جميع الجلسات المعلقة (مع لحظة الحجز = لحظة انضمام الطالب)
+    let sessions = null;
+    const earlySessionSelects = [
+        'id, student_id, payment_amount, payment_status, created_at',
+        'id, student_id, payment_amount, created_at',
+        'id, student_id, payment_amount'
+    ];
+    for (const cols of earlySessionSelects) {
+        try {
+            const { data, error } = await supabase
+                .from('sessions')
+                .select(cols)
+                .eq('offer_id', offerId)
+                .eq('payment_status', 'pending_stream');
+            if (!error && data) { sessions = data; break; }
+        } catch (e) {}
+    }
+
+    if (!sessions) {
+        logger.error('خطأ في جلب الجلسات للإنهاء المبكر');
         return;
     }
 
@@ -1296,7 +1499,14 @@ async function processEarlyEndRefund(offerId) {
             earlyReleasedTotal += Math.max(0, parseFloat(r.teacher_released_amount || 0));
         });
     } catch (e) {}
-    const earlyReleasedPerStudent = Math.floor(earlyReleasedTotal / ((sessions || []).length || 1));
+
+    // ✅ أساس الوقت الفعلي: نصيب كل طالب = ما درسه فعلياً (الدخول المتأخر من لحظة حجزه)
+    //    ورسوم المنصة لا تُسترد — الاسترداد من سعر الحصة للأستاذ فقط
+    const earlyElapsedInfo = await computeElapsedLiveSeconds(offerId, offer);
+    const earlyTotal = Math.max(60, earlyElapsedInfo.total);
+    const earlyElapsed = Math.min(earlyTotal, Math.max(0, earlyElapsedInfo.elapsed));
+    const earlyStartMs = Date.now() - earlyElapsed * 1000;
+    const earlyEscrowPerSession = Math.max(0, earlyPricePerSession * earlyTotalSessions);
 
     console.log(`⚠️ معالجة إنهاء مبكر للبث ${offerId} - استرداد المبالغ غير المحررة للطلاب`);
 
@@ -1313,8 +1523,11 @@ async function processEarlyEndRefund(offerId) {
             continue;
         }
 
-        // استرداد ما لم يُحرَّر من المبلغ للطالب (باستثناء رسوم السيرفر 100)
-        const earlyRefundAmount = Math.max(0, session.payment_amount - 100 - earlyReleasedPerStudent);
+        // ✅ نصيب الأستاذ = وقته الفعلي مع هذا الطالب، والاسترداد = سعر الحصة(ات) ناقصه (الرسوم ثابتة)
+        const earlyFrac = computeStudiedFraction(session.created_at, earlyStartMs, earlyElapsed, earlyTotal);
+        const earlyTeacherShare = Math.min(earlyPricePerSession, Math.floor(earlyPricePerSession * earlyFrac));
+        const earlyMaxRefundable = Math.max(0, Math.min(parseFloat(session.payment_amount || 0) || earlyEscrowPerSession, earlyEscrowPerSession));
+        const earlyRefundAmount = Math.max(0, earlyMaxRefundable - earlyTeacherShare);
         const { data: student } = await supabase
             .from('students')
             .select('wallet_balance')
@@ -1333,10 +1546,10 @@ async function processEarlyEndRefund(offerId) {
             .from('sessions')
             .update({
                 payment_status: 'refunded',
-                teacher_earned: earlyReleasedPerStudent,
+                teacher_earned: earlyTeacherShare,
                 completed_at: new Date().toISOString(),
-                partial_payment_note: earlyReleasedPerStudent > 0
-                    ? `استرداد جزئي - حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث وأنهى الأستاذ البث مبكراً`
+                partial_payment_note: earlyTeacherShare > 0
+                    ? `استرداد جزئي - نصيب الأستاذ ${earlyTeacherShare} دج عن الوقت الفعلي الذي درسه الطلاب وأنهى الأستاذ البث مبكراً`
                     : 'استرداد مبلغ الحصة - أنهى الأستاذ البث مبكراً'
             })
             .eq('id', session.id);
@@ -1349,8 +1562,8 @@ async function processEarlyEndRefund(offerId) {
                 amount: earlyRefundAmount,
                 type: 'refund',
                 status: 'completed',
-                description: earlyReleasedPerStudent > 0
-                    ? `استرداد جزئي ${earlyRefundAmount} دج من حصة ملغاة (حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث) - أنهى الأستاذ البث مبكراً`
+                description: earlyTeacherShare > 0
+                    ? `استرداد جزئي ${earlyRefundAmount} دج من حصة ملغاة (نصيب الأستاذ ${earlyTeacherShare} دج عن الوقت الفعلي) - أنهى الأستاذ البث مبكراً`
                     : `استرداد مبلغ الحصة ${earlyRefundAmount} دج - أنهى الأستاذ البث مبكراً`,
                 created_at: new Date().toISOString()
             });
@@ -1361,19 +1574,23 @@ async function processEarlyEndRefund(offerId) {
             .insert({
                 user_id: session.student_id,
                 user_type: 'student',
-                title: earlyReleasedPerStudent > 0 ? '💰 استرداد جزئي' : '💰 استرداد مبلغ الحصة',
-                message: earlyReleasedPerStudent > 0
-                    ? `تم استرداد ${earlyRefundAmount} دج لحصة "${offer.subject_name}" (حُرر ${earlyReleasedPerStudent} دج للأستاذ أثناء البث) لأن الأستاذ أنهى البث مبكراً`
+                title: earlyTeacherShare > 0 ? '💰 استرداد جزئي' : '💰 استرداد مبلغ الحصة',
+                message: earlyTeacherShare > 0
+                    ? `تم استرداد ${earlyRefundAmount} دج لحصة "${offer.subject_name}" (نصيب الأستاذ ${earlyTeacherShare} دج عن الوقت الفعلي المدروس) لأن الأستاذ أنهى البث مبكراً`
                     : `تم استرداد ${earlyRefundAmount} دج لحصة "${offer.subject_name}" لأن الأستاذ أنهى البث مبكراً`,
                 is_read: false,
                 created_at: new Date().toISOString()
             });
 
-        console.log(`💰 تم استرداد ${session.payment_amount} دج للطالب ${session.student_id}`);
+        console.log(`💰 تم استرداد ${earlyRefundAmount} دج للطالب ${session.student_id} (نصيب الأستاذ ${earlyTeacherShare} دج)`);
     }
 
     // ✅ إلغاء معلق هذا الدرس غير المحرَّر فقط (لا مساس بمعلق دروس أخرى) —
     //    ما حُرر تدريجياً أثناء البث يبقى في رصيد الأستاذ القابل للسحب
+    let earlyStudentsEscrowSum = 0;
+    (sessions || []).forEach(function (s) {
+        earlyStudentsEscrowSum += Math.max(0, Math.min(parseFloat(s.payment_amount || 0) || earlyEscrowPerSession, earlyEscrowPerSession));
+    });
     const { data: teacher } = await supabase
         .from('teachers')
         .select('pending_withdraw')
@@ -1381,7 +1598,7 @@ async function processEarlyEndRefund(offerId) {
         .single();
 
     if (teacher) {
-        const thisOfferUnreleased = Math.max(0, (parseFloat(offer.price || 0) * (sessions || []).length) - earlyReleasedTotal);
+        const thisOfferUnreleased = Math.max(0, earlyStudentsEscrowSum - earlyReleasedTotal);
         const pendingDebit = Math.min(thisOfferUnreleased, Math.max(0, parseFloat(teacher.pending_withdraw) || 0));
         if (pendingDebit > 0) {
             await supabase
@@ -1401,8 +1618,8 @@ async function processEarlyEndRefund(offerId) {
             user_type: 'teacher',
             title: '⚠️ تم إنهاء البث مبكراً',
             message: earlyReleasedTotal > 0
-                ? `تم إنهاء البث "${offer.subject_name}" مبكراً. حُرر ${earlyReleasedTotal} دج لك عن ما قدمته أثناء البث، وتم استرداد الباقي للطلاب.`
-                : `تم إنهاء البث "${offer.subject_name}" مبكراً. لم تحصل على أي مال وتم استرداد جميع المبالغ للطلاب.`,
+                ? `تم إنهاء البث "${offer.subject_name}" مبكراً. حُرر ${earlyReleasedTotal} دج لك عن ما قدمته أثناء البث، وتم استرداد الباقي للطلاب (دون رسوم المنصة).`
+                : `تم إنهاء البث "${offer.subject_name}" مبكراً. لم تحصل على أي مال وتم استرداد مبالغ الطلاب (دون رسوم المنصة).`,
             is_read: false,
             created_at: new Date().toISOString()
         });
