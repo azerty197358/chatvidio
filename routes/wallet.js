@@ -150,8 +150,11 @@ async function createSofizPayCheckout(amount, returnUrl, transactionId, customer
         }
 
         if (!paymentUrl && gatewayDown) {
-            // عطل مؤقت في البوابة — لا نرسل المستخدم إلى رابط معطّل
-            return { success: false, error: 'بوابة الدفع غير متاحة مؤقتاً، يرجى المحاولة بعد قليل' };
+            // فشل متكرر من البوابة — نميّز وضع الاختبار عن الإنتاج في الرسالة
+            const unavailableMsg = SOFIZPAY_IS_SANDBOX
+                ? 'بوابة الدفع التجريبية غير متاحة مؤقتاً، يرجى المحاولة بعد قليل'
+                : 'تعذر إنشاء الدفع في البوابة الفعلية — تأكد من تفعيل حسابك في SofizPay للإنتاج (أوقف وضع الاختبار) أو حاول بعد قليل';
+            return { success: false, error: unavailableMsg };
         }
 
         // ✅ احتياطي: نرسل المتصفح إلى رابط الإنشاء مباشرة (تقوم SofizPay بالتحويل إلى بوابة SATIM)
@@ -314,8 +317,8 @@ router.post('/deposit', authenticate, authorize(['student']), [
             return res.status(500).json({ success: false, error: 'فشل إنشاء سجل المعاملة. يرجى المحاولة لاحقاً.' });
         }
 
-        const baseUrl = process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
+        const baseUrl = String(process.env.PLATFORM_URL ||
+                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host')).replace(/\/+$/, '');
 
         // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
         const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;
@@ -407,8 +410,8 @@ router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
             return res.status(500).json({ success: false, error: 'فشل إنشاء سجل المعاملة. يرجى المحاولة لاحقاً.' });
         }
 
-        const baseUrl = process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
+        const baseUrl = String(process.env.PLATFORM_URL ||
+                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host')).replace(/\/+$/, '');
 
         // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
         const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;

@@ -341,6 +341,15 @@ app.use('/public', express.static('public', staticOptions));
 // Cookie Parser
 app.use(cookieParser());
 
+// ✅ تطبيع المسارات: طلب بشرطة مزدوجة في البداية (//api/...) يعادل مساراً واحداً
+// يمنع 404 عند عودة بوابة الدفع إن أعادت البوابة رابطاً بشرطتين
+app.use((req, res, next) => {
+    if (req.url && req.url.indexOf('//') === 0) {
+        req.url = req.url.replace(/^\/+/, '/');
+    }
+    next();
+});
+
 // Webhook SofizPay
 app.use('/api/wallet/sofizpay-callback', express.raw({ type: 'application/json' }));
 
