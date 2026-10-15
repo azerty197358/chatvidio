@@ -213,7 +213,7 @@ async function creditWalletTransaction(transaction) {
         .from('wallet_transactions')
         .update({ status: 'completed' })
         .eq('id', transaction.id)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'cancelled'])
         .select();
 
     if (txError || !txUpdate || txUpdate.length === 0) {
@@ -262,10 +262,11 @@ async function creditWalletTransaction(transaction) {
         }
         return true;
     } catch (creditErr) {
-        // فشلت الإضافة ← نعيد الحالة إلى pending ليتم المحاولة لاحقاً (كولباك أو ويب هوك)
-        logger.error('❌ SofizPay: فشلت إضافة المبلغ — إعادة الحالة إلى pending:', creditErr.message);
+        // فشلت الإضافة ← نعيد الحالة السابقة ليتم المحاولة لاحقاً (كولباك أو ويب هوك)
+        logger.error('❌ SofizPay: فشلت إضافة المبلغ — إعادة الحالة السابقة:', creditErr.message);
         try {
-            await supabase.from('wallet_transactions').update({ status: 'pending' }).eq('id', transaction.id);
+            const revertTo = (transaction.status === 'cancelled') ? 'cancelled' : 'pending';
+            await supabase.from('wallet_transactions').update({ status: revertTo }).eq('id', transaction.id);
         } catch (e) {}
         return false;
     }
@@ -793,6 +794,18 @@ router.get('/sofizpay-callback', async (req, res) => {
 
         if (transaction.status === 'completed') {
             return res.redirect(`${dash}?status=completed`);
+        }
+
+        // ✅ إلغاء صريح من البوابة (payment_status=canceled) — نعلّم المعاملة ونعيد بحالة واضحة
+        const gwStatus = String(req.query.payment_status || '').toLowerCase();
+        if (gwStatus === 'canceled' || gwStatus === 'cancelled') {
+            if (transaction.status === 'pending') {
+                await update('wallet_transactions', transaction.id, {
+                    status: 'cancelled',
+                    description: 'أُلغيت عملية الدفع قبل إتمامها'
+                });
+            }
+            return res.redirect(`${dash}?status=canceled`);
         }
 
         const targetCibId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;

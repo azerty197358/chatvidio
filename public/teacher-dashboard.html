@@ -13278,6 +13278,29 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     }
 
     // ================================================================
+    // ✅ نتيجة العودة من بوابة الدفع (?status=...) — تظهر مرة واحدة ثم تُنظف من الرابط
+    // ================================================================
+    function handlePaymentReturnStatus(paymentStatus) {
+        try {
+            const s = String(paymentStatus || '').toLowerCase();
+            if (s === 'paid' || s === 'completed' || s === 'success') {
+                showToast('✅ تمت عملية شحن الرصيد بنجاح — تظهر العملية في قائمة المعاملات', 'success');
+            } else if (s === 'canceled' || s === 'cancelled' || s === 'failed' || s === 'declined') {
+                showToast('ℹ️ لم تكتمل عملية الدفع وتم إلغاؤها — لم يُخصم أي شيء', 'info');
+            } else if (s === 'pending') {
+                showToast('ℹ️ لم تكتمل عملية الدفع بعد — إن أُكملت لاحقاً سيُضاف الرصيد تلقائياً', 'info');
+            } else {
+                showToast('ℹ️ تعذر تأكيد نتيجة الدفع — راجع قائمة المعاملات للتأكد', 'info');
+            }
+            try {
+                const u = new URL(window.location.href);
+                u.searchParams.delete('status');
+                window.history.replaceState({}, '', u);
+            } catch (e) {}
+        } catch (e) {}
+    }
+
+    // ================================================================
     // INIT
     // ================================================================
 
@@ -13286,6 +13309,10 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         const groupParam = urlParams.get('join_group') || urlParams.get('group');
         const exerciseParam = urlParams.get('exercise');
         const sectionParam = urlParams.get('section');
+
+        // ✅ حالة الدفع بعد العودة من البوابة
+        const paymentReturnStatus = urlParams.get('status');
+        if (paymentReturnStatus) handlePaymentReturnStatus(paymentReturnStatus);
 
         if (groupParam) {
             showSection('groups');
