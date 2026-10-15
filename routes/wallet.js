@@ -52,12 +52,18 @@ const SOFIZPAY_API_URL = process.env.SOFIZPAY_API_URL || 'https://sofizpay.com';
 const SOFIZPAY_ACCOUNT = process.env.SOFIZPAY_ACCOUNT || 'SBJMHDVWDMG5R6O3AUGOKAIOASNBYM6OF4TPLQFTM4JQEAIT2MXQ6GP7';
 // Secret Key — للخدمات التي تصرف من الحساب (يجب ألّا يُعرض أبداً في الواجهة)
 const SOFIZPAY_SECRET_KEY = process.env.SOFIZPAY_SECRET_KEY || 'GCK4SGIRCVTT6PU5UW5SPDVOMF6H63YNHPHHWAN4CKQSNHRKYRPNOQYE';
-// فحص حالة المعاملة بعد الدفع (التوثيق الحالي لـ SofizPay)
-const SOFIZPAY_TRANSACTION_CHECK_URL = process.env.SOFIZPAY_TRANSACTION_CHECK_URL || 'https://sofizpay.com/cib-transaction-check/';
+// فحص حالة المعاملة بعد الدفع — يُشتق تلقائياً حسب وضع الساند بوكس إن كان مفعّلاً
+const SOFIZPAY_IS_SANDBOX = String(SOFIZPAY_API_URL).indexOf('/sandbox') !== -1;
+const SOFIZPAY_TRANSACTION_CHECK_URL = process.env.SOFIZPAY_TRANSACTION_CHECK_URL
+    || (SOFIZPAY_IS_SANDBOX
+        ? 'https://sofizpay.com/sandbox/cib-transaction-check/'
+        : 'https://sofizpay.com/cib-transaction-check/');
 
 if (!SOFIZPAY_ACCOUNT) {
     console.warn('⚠️ SOFIZPAY_ACCOUNT غير مضبوط. تأكد من إعداد متغيرات البيئة الخاصة بـ SofizPay.');
 }
+
+console.log(`💳 SofizPay: وضع ${SOFIZPAY_IS_SANDBOX ? 'الساند بوكس (اختبار)' : 'الإنتاج'} — API: ${SOFIZPAY_API_URL}`);
 
 // ============================================================
 // إنشاء طلب دفع عبر بوابة سوفيز باي (SofizPay — CIB / EDAHABIA)
@@ -87,45 +93,65 @@ async function createSofizPayCheckout(amount, returnUrl, transactionId, customer
 
         let paymentUrl = null;
         let checkoutId = null;
-        let apiRejected = false;
+        let apiRejected = false;   // رفض مؤكد من البوابة (4xx أو خطأ JSON صريح)
+        let gatewayDown = false;   // عطل مؤقت (5xx أو انقطاع) ← يُعاد المحاولة
 
-        try {
-            const response = await axios.get(`${SOFIZPAY_API_URL}/make-cib-transaction/`, {
-                params,
-                timeout: 20000,
-                headers: { 'Accept': 'application/json' }
-            });
+        // ✅ محاولتان مع انتظار قصير — لتمييز العطل المؤقت عن الرفض الفعلي
+        for (let attempt = 1; attempt <= 2 && !paymentUrl && !apiRejected; attempt++) {
+            if (attempt > 1) {
+                await new Promise(resolve => setTimeout(resolve, 4000));
+                gatewayDown = false;
+            }
+            try {
+                const response = await axios.get(`${SOFIZPAY_API_URL}/make-cib-transaction/`, {
+                    params,
+                    timeout: 20000,
+                    headers: { 'Accept': 'application/json' }
+                });
 
-            const data = response.data;
-            if (data && typeof data === 'object' && !Array.isArray(data)) {
-                if (data.status === 'error' || (!data.payment_url && data.error)) {
+                const data = response.data;
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    if (data.status === 'error' || (!data.payment_url && data.error)) {
+                        apiRejected = true;
+                        logger.error('❌ رفضت بوابة SofizPay إنشاء عملية الدفع:', data.message || data.error);
+                    } else if (data.payment_url) {
+                        paymentUrl = data.payment_url;
+                        checkoutId = data.cib_transaction_id || data.transaction_id || null;
+                    }
+                }
+                if (!paymentUrl && !apiRejected) {
+                    // تحويل302 أو صفحة دفع مباشرة — نلتقط الرابط النهائي إن وجد
+                    const headers = response.headers || {};
+                    const finalUrl = headers.location ||
+                        (response.request && response.request.res && response.request.res.responseUrl) ||
+                        (typeof data === 'string' && data.indexOf('http') === 0 ? data : null);
+                    if (finalUrl && String(finalUrl).indexOf('http') === 0) {
+                        paymentUrl = String(finalUrl);
+                    }
+                }
+            } catch (apiErr) {
+                const status = apiErr.response && apiErr.response.status;
+                if (status && status >= 500) {
+                    gatewayDown = true;
+                    logger.error(`⚠️ SofizPay: خطأ ${status} من البوابة أثناء المحاولة ${attempt}`);
+                } else if (status) {
+                    // رفض مؤكد (4xx) — لا داعي لإعادة المحاولة
                     apiRejected = true;
-                    logger.error('❌ رفضت بوابة SofizPay إنشاء عملية الدفع:', data.message || data.error);
-                } else if (data.payment_url) {
-                    paymentUrl = data.payment_url;
-                    checkoutId = data.cib_transaction_id || data.transaction_id || null;
+                    logger.error('❌ خطأ من بوابة SofizPay عند إنشاء الدفع:', status, apiErr.response.data);
+                } else {
+                    gatewayDown = true;
+                    logger.error(`⚠️ SofizPay: تعذر الوصول للبوابة أثناء المحاولة ${attempt}:`, apiErr.message);
                 }
             }
-            if (!paymentUrl && !apiRejected) {
-                // تحويل302 أو استجابة غير متوقعة — نلتقط الرابط النهائي إن وجد
-                const headers = response.headers || {};
-                const finalUrl = headers.location ||
-                    (response.request && response.request.res && response.request.res.responseUrl) ||
-                    (typeof data === 'string' && data.indexOf('http') === 0 ? data : null);
-                if (finalUrl && String(finalUrl).indexOf('http') === 0) {
-                    paymentUrl = String(finalUrl);
-                }
-            }
-        } catch (apiErr) {
-            if (apiErr.response) {
-                // البوابة أجابت بخطأ محدد — لا داعي للمسار الاحتياطي
-                apiRejected = true;
-                logger.error('❌ خطأ من بوابة SofizPay عند إنشاء الدفع:', apiErr.response.status, apiErr.response.data);
-            } // لا استجابة (انقطاع مؤقت) ← يُترك للمسار الاحتياطي أدناه
         }
 
         if (apiRejected) {
             return { success: false, error: 'رفضت بوابة الدفع إنشاء العملية، يرجى التحقق من المبلغ والمحاولة مرة أخرى' };
+        }
+
+        if (!paymentUrl && gatewayDown) {
+            // عطل مؤقت في البوابة — لا نرسل المستخدم إلى رابط معطّل
+            return { success: false, error: 'بوابة الدفع غير متاحة مؤقتاً، يرجى المحاولة بعد قليل' };
         }
 
         // ✅ احتياطي: نرسل المتصفح إلى رابط الإنشاء مباشرة (تقوم SofizPay بالتحويل إلى بوابة SATIM)

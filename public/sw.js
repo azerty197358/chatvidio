@@ -1,5 +1,5 @@
 // Service Worker for ZoomDz platform to handle background operations and native push notifications
-const CACHE_NAME = 'zoomdz-cache-v4';
+const CACHE_NAME = 'zoomdz-cache-v5';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -55,7 +55,8 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => {
-        return caches.match(event.request);
+        // يجب أن يعود Response دائماً — المخزن قد لا يملك نسخة (يمنع TypeError في الكونسول)
+        return caches.match(event.request).then((cached) => cached || Response.error());
       })
   );
 });
