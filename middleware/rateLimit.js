@@ -24,7 +24,7 @@ const antiRapidClickLimiter = (req, res, next) => {
     }
 
     // استثناء بعض المسارات الحساسة للوقت مثل ping أو webhooks
-    if (req.path.includes('/sofizpay-callback') || req.path.includes('/ping') || req.path.includes('/stream-status')) {
+    if (req.path.includes('/sofizpay-callback') || req.path.includes('/sofizpay-webhook') || req.path.includes('/ping') || req.path.includes('/stream-status')) {
         return next();
     }
 

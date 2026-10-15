@@ -44,69 +44,108 @@ function authorize(roles = []) {
     };
 }
 
+// ============================================================
+// ✅ بوابة الدفع سوفيز باي (SofizPay) — استقبال الدفع عبر CIB / EDAHABIA
+// ============================================================
 const SOFIZPAY_API_URL = process.env.SOFIZPAY_API_URL || 'https://sofizpay.com';
-const SOFIZPAY_ACCOUNT = process.env.SOFIZPAY_ACCOUNT;
-const SOFIZPAY_SECRET_KEY = process.env.SOFIZPAY_SECRET_KEY;
-const SOFIZPAY_TRANSACTION_CHECK_URL = process.env.SOFIZPAY_TRANSACTION_CHECK_URL || 'https://sofizpay.com/sep24/transaction/check/';
-
-const CHARGILY_SECRET_KEY = process.env.CHARGILY_SECRET_KEY || 'live_sk_0gRmUvd2hCW1x5stuyzmMHhaB274nigiCZdySO9b';
-const CHARGILY_PUBLIC_KEY = process.env.CHARGILY_PUBLIC_KEY || 'live_pk_FeA11LZaYCCFdHGtgfyrq2XcnYEtTba7HoXogcKr';
+// Public Key (عنوان الحساب) — يوضع في معامل account عند إنشاء عملية الدفع
+const SOFIZPAY_ACCOUNT = process.env.SOFIZPAY_ACCOUNT || 'SBJMHDVWDMG5R6O3AUGOKAIOASNBYM6OF4TPLQFTM4JQEAIT2MXQ6GP7';
+// Secret Key — للخدمات التي تصرف من الحساب (يجب ألّا يُعرض أبداً في الواجهة)
+const SOFIZPAY_SECRET_KEY = process.env.SOFIZPAY_SECRET_KEY || 'GCK4SGIRCVTT6PU5UW5SPDVOMF6H63YNHPHHWAN4CKQSNHRKYRPNOQYE';
+// فحص حالة المعاملة بعد الدفع (التوثيق الحالي لـ SofizPay)
+const SOFIZPAY_TRANSACTION_CHECK_URL = process.env.SOFIZPAY_TRANSACTION_CHECK_URL || 'https://sofizpay.com/cib-transaction-check/';
 
 if (!SOFIZPAY_ACCOUNT) {
     console.warn('⚠️ SOFIZPAY_ACCOUNT غير مضبوط. تأكد من إعداد متغيرات البيئة الخاصة بـ SofizPay.');
 }
 
 // ============================================================
-// إنشاء طلب دفع عبر Chargily Pay
+// إنشاء طلب دفع عبر بوابة سوفيز باي (SofizPay — CIB / EDAHABIA)
 // ============================================================
-async function createChargilyCheckout(amount, returnUrl, transactionId) {
+async function createSofizPayCheckout(amount, returnUrl, transactionId, customer, baseUrl) {
     try {
         let finalAmount = Math.round(Number(amount));
         finalAmount = Math.max(finalAmount, 100); // الحد الأدنى للشحن 100 دج
         finalAmount = Math.min(finalAmount, 1000000);
 
-        // نقوم بإنشاء رابط الدفع لـ Chargily Pay V2
-        const payload = {
+        const safeName = String((customer && customer.name) || 'عميل ZoomDz')
+            .replace(/[\u0000-\u001F\u007F<>&"']/g, '').trim().slice(0, 60) || 'عميل ZoomDz';
+
+        const params = {
+            account: SOFIZPAY_ACCOUNT,
             amount: finalAmount,
-            currency: 'dzd',
-            success_url: returnUrl,
-            failure_url: returnUrl,
-            webhook_endpoint: 'https://zoomdz.com/api/wallet/chargily-webhook',
-            metadata: {
-                transaction_id: transactionId.toString()
-            }
+            full_name: safeName,
+            phone: (customer && customer.phone) || '',
+            email: (customer && customer.email) || '',
+            return_url: returnUrl,
+            webhook_url: `${baseUrl}/api/wallet/sofizpay-webhook`,
+            language: 'ar',
+            memo: ('ZD-' + transactionId).slice(0, 28),
+            redirect: 'yes',
+            keep_return_url: 'True'
         };
 
-        const response = await axios.post('https://pay.chargily.net/api/v2/checkouts', payload, {
-            headers: {
-                'Authorization': `Bearer ${CHARGILY_SECRET_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 15000
-        });
+        let paymentUrl = null;
+        let checkoutId = null;
+        let apiRejected = false;
 
-        if (response.data && response.data.checkout_url) {
-            return {
-                success: true,
-                payment_url: response.data.checkout_url,
-                checkout_id: response.data.id,
-                amount: finalAmount
-            };
+        try {
+            const response = await axios.get(`${SOFIZPAY_API_URL}/make-cib-transaction/`, {
+                params,
+                timeout: 20000,
+                headers: { 'Accept': 'application/json' }
+            });
+
+            const data = response.data;
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+                if (data.status === 'error' || (!data.payment_url && data.error)) {
+                    apiRejected = true;
+                    logger.error('❌ رفضت بوابة SofizPay إنشاء عملية الدفع:', data.message || data.error);
+                } else if (data.payment_url) {
+                    paymentUrl = data.payment_url;
+                    checkoutId = data.cib_transaction_id || data.transaction_id || null;
+                }
+            }
+            if (!paymentUrl && !apiRejected) {
+                // تحويل302 أو استجابة غير متوقعة — نلتقط الرابط النهائي إن وجد
+                const headers = response.headers || {};
+                const finalUrl = headers.location ||
+                    (response.request && response.request.res && response.request.res.responseUrl) ||
+                    (typeof data === 'string' && data.indexOf('http') === 0 ? data : null);
+                if (finalUrl && String(finalUrl).indexOf('http') === 0) {
+                    paymentUrl = String(finalUrl);
+                }
+            }
+        } catch (apiErr) {
+            if (apiErr.response) {
+                // البوابة أجابت بخطأ محدد — لا داعي للمسار الاحتياطي
+                apiRejected = true;
+                logger.error('❌ خطأ من بوابة SofizPay عند إنشاء الدفع:', apiErr.response.status, apiErr.response.data);
+            } // لا استجابة (انقطاع مؤقت) ← يُترك للمسار الاحتياطي أدناه
         }
 
-        throw new Error('لم يتم استرجاع رابط الدفع من شارجيلي');
+        if (apiRejected) {
+            return { success: false, error: 'رفضت بوابة الدفع إنشاء العملية، يرجى التحقق من المبلغ والمحاولة مرة أخرى' };
+        }
+
+        // ✅ احتياطي: نرسل المتصفح إلى رابط الإنشاء مباشرة (تقوم SofizPay بالتحويل إلى بوابة SATIM)
+        if (!paymentUrl) {
+            paymentUrl = `${SOFIZPAY_API_URL}/make-cib-transaction/?${new URLSearchParams(params).toString()}`;
+        }
+
+        return { success: true, payment_url: paymentUrl, checkout_id: checkoutId, amount: finalAmount };
     } catch (error) {
-        logger.error('❌ خطأ في إنشاء رابط دفع Chargily:', error.response?.data || error.message);
-        return {
-            success: false,
-            error: error.response?.data?.message || error.message || 'حدث خطأ في عملية الدفع'
-        };
+        logger.error('❌ خطأ في إنشاء رابط دفع SofizPay:', error.response?.data || error.message);
+        return { success: false, error: 'تعذر الاتصال ببوابة سوفيز باي، يرجى المحاولة مرة أخرى' };
     }
 }
 
 async function checkSofizPayTransactionStatus(cibTransactionId) {
     try {
-        const url = `${SOFIZPAY_TRANSACTION_CHECK_URL}?transaction_id=${encodeURIComponent(cibTransactionId)}`;
+        // يدعم الصيغتين: cib-transaction-check/?order_number= (التوثيق الحالي) و sep24/transaction/check/?transaction_id= (القديم)
+        const url = String(SOFIZPAY_TRANSACTION_CHECK_URL).indexOf('cib-transaction-check') !== -1
+            ? `${SOFIZPAY_TRANSACTION_CHECK_URL}?order_number=${encodeURIComponent(cibTransactionId)}`
+            : `${SOFIZPAY_TRANSACTION_CHECK_URL}?transaction_id=${encodeURIComponent(cibTransactionId)}`;
         const headers = { 'Accept': 'application/json' };
         if (SOFIZPAY_SECRET_KEY) {
             headers['Authorization'] = `Bearer ${SOFIZPAY_SECRET_KEY}`;
@@ -119,8 +158,95 @@ async function checkSofizPayTransactionStatus(cibTransactionId) {
     }
 }
 
+// ✅ تفسير نتيجة فحص الحالة: 'success' | 'failed' | 'pending'
+// (لا نثق بالحمولة أبداً — نتحقق مجدداً من البوابة وحساب الاستقبال قبل الإضافة)
+function interpretSofizPayStatus(result) {
+    if (!result || typeof result !== 'object') return 'pending';
+    const st = (result.data && typeof result.data === 'object') ? Object.assign({}, result, result.data) : result;
+    if (st.error && st.orderStatus == null && st.status == null && st.payment_status == null) {
+        return 'pending'; // المعاملة غير موجودة بعد
+    }
+    if (st.destination_account && SOFIZPAY_ACCOUNT && String(st.destination_account) !== String(SOFIZPAY_ACCOUNT)) {
+        logger.warn('⚠️ SofizPay: حساب الوصول لا يطابق حساب المنصة — تجاهل النتيجة');
+        return 'pending';
+    }
+    const respCode = st.respCode != null ? String(st.respCode) : '';
+    const orderStatus = st.orderStatus;
+    if (respCode === '00' || orderStatus === 2 || st.status === 'success' || st.payment_status === 'success') {
+        return 'success';
+    }
+    if (respCode === '05' || orderStatus === 6 || st.status === 'failed' || st.payment_status === 'failed') {
+        return 'failed';
+    }
+    return 'pending';
+}
+
+// ✅ إضافة المبلغ إلى المحفظة بشكل ذرّي (pending → completed) — لا تُضاف الحصيلة أبداً مرتين
+async function creditWalletTransaction(transaction) {
+    const { data: txUpdate, error: txError } = await supabase
+        .from('wallet_transactions')
+        .update({ status: 'completed' })
+        .eq('id', transaction.id)
+        .eq('status', 'pending')
+        .select();
+
+    if (txError || !txUpdate || txUpdate.length === 0) {
+        return false; // جاري المعالجة أو مكتملة بالفعل
+    }
+
+    const addAmount = parseFloat(transaction.amount) || 0;
+
+    try {
+        if (transaction.student_id) {
+            const student = await getOne('students', 'id', transaction.student_id);
+            if (!student) throw new Error('الطالب غير موجود');
+            const newBalance = (parseInt(student.wallet_balance) || 0) + addAmount;
+            await supabase.from('students').update({ wallet_balance: newBalance }).eq('id', transaction.student_id);
+            await update('wallet_transactions', transaction.id, {
+                description: `تم شحن الرصيد بنجاح بمبلغ ${addAmount} دج عبر سوفيز باي`
+            });
+            await insert('notifications', {
+                user_id: student.id,
+                user_type: 'student',
+                title: '💰 تم شحن الرصيد',
+                message: `تم شحن رصيدك بمبلغ ${addAmount} دج عبر بوابة سوفيز باي. رصيدك الحالي: ${newBalance} دج`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            console.log(`✅ SofizPay: تم تأكيد الدفع وإضافة ${addAmount} دج للطالب ${student.full_name || student.id}`);
+        } else if (transaction.teacher_id) {
+            const teacher = await getOne('teachers', 'id', transaction.teacher_id);
+            if (!teacher) throw new Error('الأستاذ غير موجود');
+            const newBalance = (parseFloat(teacher.balance) || 0) + addAmount;
+            await supabase.from('teachers').update({ balance: newBalance }).eq('id', transaction.teacher_id);
+            await update('wallet_transactions', transaction.id, {
+                description: `تم شحن الرصيد بنجاح بمبلغ ${addAmount} دج عبر سوفيز باي`
+            });
+            await insert('notifications', {
+                user_id: teacher.id,
+                user_type: 'teacher',
+                title: '💰 تم شحن الرصيد',
+                message: `تم شحن رصيدك بمبلغ ${addAmount} دج عبر بوابة سوفيز باي. رصيدك الحالي: ${newBalance} دج`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            console.log(`✅ SofizPay: تم تأكيد الدفع وإضافة ${addAmount} دج للأستاذ ${teacher.full_name || teacher.id}`);
+        } else {
+            throw new Error('المعاملة لا تملك student_id أو teacher_id');
+        }
+        return true;
+    } catch (creditErr) {
+        // فشلت الإضافة ← نعيد الحالة إلى pending ليتم المحاولة لاحقاً (كولباك أو ويب هوك)
+        logger.error('❌ SofizPay: فشلت إضافة المبلغ — إعادة الحالة إلى pending:', creditErr.message);
+        try {
+            await supabase.from('wallet_transactions').update({ status: 'pending' }).eq('id', transaction.id);
+        } catch (e) {}
+        return false;
+    }
+}
+
 // ============================================================
-// شحن الرصيد عبر بوابة Chargily Pay
+// شحن الرصيد عبر بوابة سوفيز باي (SofizPay)
 // ============================================================
 router.post('/deposit', authenticate, authorize(['student']), [
     body('student_id').isInt().withMessage('معرف الطالب غير صالح'),
@@ -164,14 +290,17 @@ router.post('/deposit', authenticate, authorize(['student']), [
         const baseUrl = process.env.PLATFORM_URL ||
                         (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
 
-        const returnUrl = `${baseUrl}/student-dashboard.html?status=completed`;
+        // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
+        const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;
 
-        console.log('ℹ️ جاري إنشاء طلب دفع Chargily:', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
+        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي (SofizPay):', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
 
-        const checkout = await createChargilyCheckout(
+        const checkout = await createSofizPayCheckout(
             totalCharged,
             returnUrl,
-            transaction.id
+            transaction.id,
+            { name: student.full_name || student.name || student.username || '', phone: student.phone || '', email: student.email || '' },
+            baseUrl
         );
 
         if (checkout.success && checkout.payment_url) {
@@ -210,7 +339,7 @@ router.post('/deposit', authenticate, authorize(['student']), [
 });
 
 // ============================================================
-// شحن الرصيد للأستاذ عبر بوابة Chargily Pay
+// شحن الرصيد للأستاذ عبر بوابة سوفيز باي (SofizPay)
 // ============================================================
 router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
     body('teacher_id').isInt().withMessage('معرف الأستاذ غير صالح'),
@@ -254,14 +383,17 @@ router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
         const baseUrl = process.env.PLATFORM_URL ||
                         (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
 
-        const returnUrl = `${baseUrl}/teacher-dashboard.html?status=completed`;
+        // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
+        const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;
 
-        console.log('ℹ️ جاري إنشاء طلب دفع Chargily للأستاذ:', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
+        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي للأستاذ:', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
 
-        const checkout = await createChargilyCheckout(
+        const checkout = await createSofizPayCheckout(
             totalCharged,
             returnUrl,
-            transaction.id
+            transaction.id,
+            { name: teacher.full_name || teacher.name || teacher.username || '', phone: teacher.phone || '', email: teacher.email || '' },
+            baseUrl
         );
 
         if (checkout.success && checkout.payment_url) {
@@ -615,80 +747,47 @@ router.get('/balance/:student_id', authenticate, authorize(['student']), async (
 });
 
 // ============================================================
-// كولباك SofizPay - معالجة帰還 من منصة الدفع
+// ✅ كولباك سوفيز باي — العودة من بوابة الدفع بعد إتمام العملية
 // ============================================================
 router.get('/sofizpay-callback', async (req, res) => {
     try {
         const { txn } = req.query;
-        const cibId = req.query.cib_transaction_id || req.query.transaction_id;
+        const cibId = req.query.cib_transaction_id || req.query.order_number || req.query.transaction_id;
+
+        const transaction = txn ? await getOne('wallet_transactions', 'id', txn) : null;
+        const dash = (transaction && transaction.teacher_id) ? '/teacher-dashboard.html' : '/student-dashboard.html';
 
         if (!txn) {
             return res.redirect('/student-dashboard.html?status=invalid');
         }
 
-        const transaction = await getOne('wallet_transactions', 'id', txn);
         if (!transaction) {
             return res.redirect(`/student-dashboard.html?status=not_found`);
         }
 
         if (transaction.status === 'completed') {
-            return res.redirect(`/student-dashboard.html?status=completed`);
+            return res.redirect(`${dash}?status=completed`);
         }
 
-        if (!cibId && !transaction.cib_transaction_id) {
-            return res.redirect(`/student-dashboard.html?status=pending`);
+        const targetCibId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
+        if (!targetCibId) {
+            return res.redirect(`${dash}?status=pending`);
         }
 
-        const targetCibId = cibId || transaction.cib_transaction_id;
-
+        // ✅ التحقق مجدداً من البوابة قبل إضافة أي مبلغ (لا نثق بالرابط وحده)
         const statusResult = await checkSofizPayTransactionStatus(targetCibId);
-        
-        let isSuccess = false;
-        let statusText = 'pending';
+        const verdict = interpretSofizPayStatus(statusResult);
 
-        if (statusResult && (statusResult.status === 'success' || statusResult.data?.status === 'success')) {
-            isSuccess = true;
-            statusText = 'success';
-        } else if (statusResult && (statusResult.status === 'failed' || statusResult.data?.status === 'failed')) {
-            statusText = 'failed';
-        }
-
-        if (isSuccess) {
-            const student = await getOne('students', 'id', transaction.student_id);
-            if (student) {
-                const currentBalance = parseInt(student.wallet_balance) || 0;
-                const addAmount = parseInt(transaction.amount) || 0;
-                const newBalance = currentBalance + addAmount;
-
-                await supabase
-                    .from('students')
-                    .update({ wallet_balance: newBalance })
-                    .eq('id', transaction.student_id);
-
-                await update('wallet_transactions', transaction.id, {
-                    status: 'completed',
-                    description: `تم شحن الرصيد بنجاح بمبلغ ${addAmount} دج`
-                });
-
-                await insert('notifications', {
-                    user_id: student.id,
-                    user_type: 'student',
-                    title: '💰 تم شحن الرصيد',
-                    message: `تم شحن رصيدك بمبلغ ${addAmount} دج. رصيدك الحالي: ${newBalance} دج`,
-                    is_read: false,
-                    created_at: new Date().toISOString()
-                });
-
-                console.log(`✅ تم تأكيد الدفع SofizPay وإضافة ${addAmount} دج للطالب ${student.full_name}`);
-            }
-        } else if (statusText === 'failed') {
+        if (verdict === 'success') {
+            await creditWalletTransaction(transaction);
+        } else if (verdict === 'failed') {
             await update('wallet_transactions', transaction.id, {
                 status: 'failed',
-                description: 'فشلت عملية الدفع عبر SofizPay'
+                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
             });
         }
 
-        res.redirect(`/student-dashboard.html?status=${isSuccess ? 'paid' : statusText}`);
+        res.redirect(`${dash}?status=${verdict === 'success' ? 'paid' : verdict}`);
     } catch (error) {
         logger.error('❌ خطأ في معالجة كولباك SofizPay:', error.message);
         res.redirect(`/student-dashboard.html?status=error`);
@@ -696,150 +795,63 @@ router.get('/sofizpay-callback', async (req, res) => {
 });
 
 // ============================================================
-// ويب هوك لـ Chargily Pay V2
+// ✅ ويب هوك سوفيز باي — إشعار فوري من البوابة عند تغير حالة الدفع
+// (لا نثق بالحمولة: نفحص الحالة مجدداً من البوابة نفسها قبل الإضافة)
 // ============================================================
-router.post('/chargily-webhook', async (req, res) => {
+router.post('/sofizpay-webhook', async (req, res) => {
     try {
-        const signature = req.headers['signature'];
-        if (!signature) {
-            logger.error('❌ ويب هوك Chargily: التوقيع مفقود في ترويسة الطلب');
-            return res.status(400).json({ success: false, error: 'التوقيع مفقود' });
-        }
+        const event = (req.body && typeof req.body === 'object') ? req.body : {};
+        const paymentStatus = event.payment_status || event.status || '';
+        const cibId = event.cib_transaction_id || event.order_number || '';
+        const sofizTxId = event.transaction_id || '';
 
-        // الحصول على محتوى الطلب الخام لعملية التحقق
-        const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-        
-        // التحقق من صحة التوقيع باستخدام HMAC SHA256
-        const computedSignature = crypto
-            .createHmac('sha256', CHARGILY_SECRET_KEY)
-            .update(rawBody)
-            .digest('hex');
+        console.log(`📥 ويب هوك SofizPay: status=${paymentStatus} cib=${cibId || '-'}`);
 
-        // مقارنة آمنة للوقاية من هجمات التوقيت (Timing Attacks)
-        let isSignatureValid = false;
+        // البحث عن المعاملة لدينا برقم البوابة أو رقم الطلب
+        let transaction = null;
         try {
-            isSignatureValid = crypto.timingSafeEqual(
-                Buffer.from(signature, 'utf8'),
-                Buffer.from(computedSignature, 'utf8')
-            );
-        } catch (e) {
-            isSignatureValid = (signature === computedSignature);
+            if (cibId) {
+                const { data } = await supabase.from('wallet_transactions')
+                    .select('*').eq('cib_transaction_id', cibId).maybeSingle();
+                if (data) transaction = data;
+            }
+            if (!transaction && sofizTxId) {
+                const { data } = await supabase.from('wallet_transactions')
+                    .select('*').eq('sofizpay_transaction_id', sofizTxId).maybeSingle();
+                if (data) transaction = data;
+            }
+        } catch (e) {}
+
+        if (!transaction) {
+            // لا توجد معاملة مطابقة — نعيد200 حتى لا تعيد البوابة الإرسال بلا نهاية
+            return res.json({ success: true, message: 'ignored: no matching transaction' });
         }
 
-        if (!isSignatureValid) {
-            logger.error('❌ ويب هوك Chargily: التوقيع غير متطابق وغير صالح');
-            return res.status(401).json({ success: false, error: 'توقيع غير صالح' });
+        if (transaction.status === 'completed') {
+            return res.json({ success: true, message: 'already completed' });
         }
 
-        const event = req.body;
-        console.log('📥 ويب هوك Chargily الجديد:', event?.type);
-
-        if (event && event.type === 'checkout.paid') {
-            const checkoutData = event.data;
-            const metadata = checkoutData?.metadata || {};
-            const transactionId = metadata.transaction_id;
-
-            if (!transactionId) {
-                logger.error('❌ ويب هوك Chargily: لم يتم العثور على معرف المعاملة في metadata');
-                return res.status(400).json({ success: false, error: 'معرف المعاملة مفقود' });
-            }
-
-            console.log(`💰 معالجة عملية شحن ناجحة عبر Chargily لـ معاملة رقم ${transactionId}`);
-
-            const transaction = await getOne('wallet_transactions', 'id', transactionId);
-            if (!transaction) {
-                logger.error(`❌ ويب هوك Chargily: المعاملة رقم ${transactionId} غير موجودة في قاعدة البيانات`);
-                return res.status(404).json({ success: false, error: 'المعاملة غير موجودة' });
-            }
-
-            if (transaction.status === 'completed') {
-                console.log(`ℹ️ ويب هوك Chargily: المعاملة رقم ${transactionId} مكتملة بالفعل سابقاً`);
-                return res.json({ success: true, message: 'مكتملة بالفعل' });
-            }
-
-            // Atomic update to prevent race conditions from concurrent webhooks
-            const { data: txUpdate, error: txError } = await supabase
-                .from('wallet_transactions')
-                .update({ status: 'completed' })
-                .eq('id', transaction.id)
-                .eq('status', 'pending')
-                .select();
-                
-            if (txError || !txUpdate || txUpdate.length === 0) {
-                console.log(`ℹ️ ويب هوك Chargily: المعاملة رقم ${transactionId} جاري معالجتها حالياً أو مكتملة`);
-                return res.json({ success: true, message: 'جاري المعالجة أو مكتملة' });
-            }
-
-            if (transaction.student_id) {
-                // تحديث رصيد الطالب في قاعدة البيانات
-                const student = await getOne('students', 'id', transaction.student_id);
-                if (student) {
-                    const currentBalance = parseInt(student.wallet_balance) || 0;
-                    const addAmount = parseInt(transaction.amount) || 0;
-                    const newBalance = currentBalance + addAmount;
-
-                    await supabase
-                        .from('students')
-                        .update({ wallet_balance: newBalance })
-                        .eq('id', transaction.student_id);
-
-                    await update('wallet_transactions', transaction.id, {
-                        status: 'completed',
-                        description: `تم شحن الرصيد بنجاح عبر Chargily بمبلغ ${addAmount} دج`
-                    });
-
-                    await insert('notifications', {
-                        user_id: student.id,
-                        user_type: 'student',
-                        title: '💰 تم شحن الرصيد بنجاح',
-                        message: `تم شحن رصيدك بمبلغ ${addAmount} دج عبر بوابة Chargily Pay. رصيدك الحالي: ${newBalance} دج`,
-                        is_read: false,
-                        created_at: new Date().toISOString()
-                    });
-
-                    console.log(`✅ تم تأكيد شحن الرصيد بنجاح وإضافة ${addAmount} دج للطالب ${student.full_name}`);
-                } else {
-                    logger.error(`❌ ويب هوك Chargily: الطالب ذو المعرف ${transaction.student_id} غير موجود`);
-                }
-            } else if (transaction.teacher_id) {
-                // تحديث رصيد الأستاذ في قاعدة البيانات
-                const teacher = await getOne('teachers', 'id', transaction.teacher_id);
-                if (teacher) {
-                    const currentBalance = parseFloat(teacher.balance) || 0;
-                    const addAmount = parseFloat(transaction.amount) || 0;
-                    const newBalance = currentBalance + addAmount;
-
-                    await supabase
-                        .from('teachers')
-                        .update({ balance: newBalance })
-                        .eq('id', transaction.teacher_id);
-
-                    await update('wallet_transactions', transaction.id, {
-                        status: 'completed',
-                        description: `تم شحن الرصيد بنجاح عبر Chargily بمبلغ ${addAmount} دج`
-                    });
-
-                    await insert('notifications', {
-                        user_id: teacher.id,
-                        user_type: 'teacher',
-                        title: '💰 تم شحن الرصيد بنجاح',
-                        message: `تم شحن رصيدك بمبلغ ${addAmount} دج عبر بوابة Chargily Pay. رصيدك الحالي: ${newBalance} دج`,
-                        is_read: false,
-                        created_at: new Date().toISOString()
-                    });
-
-                    console.log(`✅ تم تأكيد شحن الرصيد بنجاح وإضافة ${addAmount} دج للأستاذ ${teacher.full_name}`);
-                } else {
-                    logger.error(`❌ ويب هوك Chargily: الأستاذ ذو المعرف ${transaction.teacher_id} غير موجود`);
-                }
-            } else {
-                logger.error('❌ ويب هوك Chargily: المعاملة لا تملك student_id أو teacher_id');
-            }
+        // ✅ فحص مؤكد من البوابة قبل أي إضافة (حماية ضد حمولات مزيفة)
+        const checkId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
+        let verdict = 'pending';
+        if (checkId) {
+            verdict = interpretSofizPayStatus(await checkSofizPayTransactionStatus(checkId));
+        } else if (paymentStatus === 'success') {
+            verdict = 'success';
         }
 
-        res.json({ success: true });
+        if (verdict === 'success') {
+            await creditWalletTransaction(transaction);
+        } else if (verdict === 'failed') {
+            await update('wallet_transactions', transaction.id, {
+                status: 'failed',
+                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
+            });
+        }
+
+        res.json({ success: true, status: verdict });
     } catch (error) {
-        logger.error('❌ خطأ في معالجة ويب هوك Chargily:', error.message);
+        logger.error('❌ خطأ في معالجة ويب هوك SofizPay:', error.message);
         res.status(500).json({ success: false, error: 'خطأ داخلي' });
     }
 });

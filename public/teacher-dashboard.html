@@ -5580,7 +5580,7 @@ function appendOptimisticMessage(text, reply) {
                     <i class="fas fa-credit-card"></i>
                 </div>
                 <div style="font-weight: 800; font-size: 0.92rem; color: #1e3a8a;">البطاقة الذهبية / CIB</div>
-                <div style="font-size: 0.75rem; color: #64748b; margin-top: 2px;">بوابة الدفع Chargily</div>
+                <div style="font-size: 0.75rem; color: #64748b; margin-top: 2px;">بوابة الدفع سوفيز باي SofizPay</div>
             </div>
 
             <!-- BaridiMob / CCP Option -->
@@ -5596,7 +5596,7 @@ function appendOptimisticMessage(text, reply) {
             </div>
         </div>
 
-        <!-- 1. Gold Card (Chargily) View -->
+        <!-- 1. Gold Card (SofizPay) View -->
         <div id="goldCardSection" style="display: block;">
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 14px;">
                 <div style="font-size: 0.85rem; color: #475569; display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
@@ -5630,7 +5630,7 @@ function appendOptimisticMessage(text, reply) {
             </div>
 
             <button type="button" class="save-btn" onclick="depositWallet()" style="width: 100%; margin-top: 16px; padding: 14px; background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: 'Cairo'; box-shadow: 0 4px 12px rgba(37,99,235,0.3);">
-                <i class="fas fa-credit-card"></i> الانتقال للدفع عبر شارجيلي Chargily
+                <i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay
             </button>
         </div>
 
@@ -10177,7 +10177,7 @@ function updateUI() {
                 showToast(data.error || 'فشل الاتصال ببوابة الدفع', 'error');
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر شارجيلي Chargily';
+                    btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay';
                 }
             }
         } catch(e) {
@@ -10186,7 +10186,7 @@ function updateUI() {
             }
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر شارجيلي Chargily';
+                btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay';
             }
         }
     }
