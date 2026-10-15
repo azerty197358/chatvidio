@@ -48,10 +48,12 @@ function authorize(roles = []) {
 // ✅ بوابة الدفع سوفيز باي (SofizPay) — استقبال الدفع عبر CIB / EDAHABIA
 // ============================================================
 const SOFIZPAY_API_URL = process.env.SOFIZPAY_API_URL || 'https://sofizpay.com';
-// Public Key (عنوان الحساب) — يوضع في معامل account عند إنشاء عملية الدفع
-const SOFIZPAY_ACCOUNT = process.env.SOFIZPAY_ACCOUNT || 'SBJMHDVWDMG5R6O3AUGOKAIOASNBYM6OF4TPLQFTM4JQEAIT2MXQ6GP7';
+// Public Key (عنوان الحساب للاستقبال) — يوضع في معامل account عند إنشاء عملية الدفع
+// ملاحظة مُتحقق منها: هذا هو العنوان الذي تصل إليه الأموال فعلياً (destination_account
+// في فحص الطلبات الحقيقية مثل order 4103576109) — وليس المفتاح السري
+const SOFIZPAY_ACCOUNT = process.env.SOFIZPAY_ACCOUNT || 'GCK4SGIRCVTT6PU5UW5SPDVOMF6H63YNHPHHWAN4CKQSNHRKYRPNOQYE';
 // Secret Key — للخدمات التي تصرف من الحساب (يجب ألّا يُعرض أبداً في الواجهة)
-const SOFIZPAY_SECRET_KEY = process.env.SOFIZPAY_SECRET_KEY || 'GCK4SGIRCVTT6PU5UW5SPDVOMF6H63YNHPHHWAN4CKQSNHRKYRPNOQYE';
+const SOFIZPAY_SECRET_KEY = process.env.SOFIZPAY_SECRET_KEY || 'SBJMHDVWDMG5R6O3AUGOKAIOASNBYM6OF4TPLQFTM4JQEAIT2MXQ6GP7';
 // فحص حالة المعاملة بعد الدفع — يُشتق تلقائياً حسب وضع الساند بوكس إن كان مفعّلاً
 const SOFIZPAY_IS_SANDBOX = String(SOFIZPAY_API_URL).indexOf('/sandbox') !== -1;
 const SOFIZPAY_TRANSACTION_CHECK_URL = process.env.SOFIZPAY_TRANSACTION_CHECK_URL
