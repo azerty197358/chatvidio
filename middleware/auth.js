@@ -486,6 +486,12 @@ async function checkNoActiveStream(req, res, next) {
             .single();
 
         if (activeOffer) {
+            //  استئناف نفس البث الموقوف مؤقتاً مسموح — الحذر يخص بدء بث جديد
+            //  وإلى جانب درس آخر (يمنع تجاوز حظر "بث نشط بالفعل")
+            const startingOfferId = parseInt(req.body && req.body.offer_id, 10);
+            if (activeOffer.id === startingOfferId) {
+                return next();
+            }
             logger.warn('محاولة بدء بث مع وجود بث نشط', {
                 userId: req.user.userId,
                 existingOfferId: activeOffer.id,

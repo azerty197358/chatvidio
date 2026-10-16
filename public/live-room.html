@@ -787,8 +787,10 @@
         ZoomyRTC.onConnectionState(function (state) {
             if (state === 'connected') {
                 connected = true;
+                netDownAt = null;
                 setStatus('متصل', true);
             } else if (state === 'disconnected') {
+                if (netDownAt === null) netDownAt = Date.now();
                 setStatus('جاري إعادة الاتصال...', false);
             }
         });
@@ -1101,7 +1103,7 @@
             if (rem === null) return;
             api('/api/stream/sync-timer/' + offerId, {
                 method: 'POST',
-                body: JSON.stringify({ remaining_seconds: Math.round(rem), is_paused: false })
+                body: JSON.stringify({ remaining_seconds: Math.round(rem), is_paused: !!roomPaused })
             }).then(function (data) {
                 // ✅ القيمة المعتمدة هي قيمة الخادم المحسوبة — نثبّتها فوراً (مزامنة لحظية مع الطلاب)
                 if (data && data.success) syncTimerFrom(data);
@@ -1160,6 +1162,51 @@
                 startPolling();
             }
         });
+
+        // ===== حماية حقوق الجميع: توقّف العدّاد تلقائياً عند مغادرة الأستاذ =====
+        //  إخفاء الصفحة أو موت الإشارات مدة تفوق 90 ثانية = خروج فعلي — يُجمَّد
+        //  العدّاد ويوقف التحرير في الخادم، والعودة تستأنف من حيث توقف بلا تصفير
+        var roomPaused = false;
+        var netDownAt = null;
+        var hiddenSince = null;
+        var wsDownSince = null;
+        var lastPauseCallAt = 0;
+
+        function teacherPauseState(isPaused) {
+            if (!offerId || !token || role !== 'teacher' || streamEnded) return;
+            var now = Date.now();
+            if (isPaused && now - lastPauseCallAt < 20000) return; //  لا طلبات متتالية سريعة
+            lastPauseCallAt = now;
+            api('/api/stream/pause-timer/' + offerId, {
+                method: 'POST',
+                body: JSON.stringify({ is_paused: isPaused })
+            }).catch(function () {});
+        }
+
+        setInterval(function () {
+            if (role !== 'teacher' || !offerId || !token || streamEnded) return;
+            var now = Date.now();
+            if (document.hidden) {
+                if (hiddenSince === null) hiddenSince = now;
+            } else {
+                hiddenSince = null;
+            }
+            if (netDownAt !== null) {
+                if (wsDownSince === null) wsDownSince = netDownAt;
+            } else {
+                wsDownSince = null;
+            }
+            var awayLong = (hiddenSince !== null && now - hiddenSince > 90000) ||
+                (wsDownSince !== null && now - wsDownSince > 90000);
+            if (awayLong && !roomPaused) {
+                roomPaused = true;
+                teacherPauseState(true);
+            } else if (!awayLong && !document.hidden && roomPaused) {
+                //  عودة الأستاذ: استئناف من حيث توقف (الخادم يطوي فترة الإيقاف في المجموع)
+                roomPaused = false;
+                teacherPauseState(false);
+            }
+        }, 20000);
 
         // ✅ اسم المستخدم المحلي — يُرسل احتياطياً لضمان ظهور الاسم الصحيح في الدردشة
         // حتى لو تعذر جلبه من قاعدة البيانات (الأولوية تبقى لقاعدة البيانات على الخادم)
@@ -1278,9 +1325,12 @@
         if (role === 'teacher') {
             document.getElementById('btnMic').style.display = '';
             document.getElementById('btnCam').style.display = '';
-            document.getElementById('btnScreen').style.display = '';
             document.getElementById('btnFlipCam').style.display = '';
             document.getElementById('micGainWrap').style.display = '';
+            //  مشاركة الشاشة تُخفى على الأجهزة التي لا تدعمها (معظم هواتف أندرويد/التطبيقات)
+            if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+                document.getElementById('btnScreen').style.display = '';
+            }
             localTile.style.display = '';
             refreshTileLayout();
         } else {
@@ -1433,7 +1483,11 @@
                 ZoomyRTC.shareScreen().then(function () {
                     sharing = true;
                     btn.classList.add('active');
-                }).catch(function () {});
+                }).catch(function () {
+                    //  الجهاز لا يدعم المشاركة أو رفضها النظام — تنبيه هادئ بلا رسائل خطأ
+                    setStatus('مشاركة الشاشة غير متاحة على هذا الجهاز', false);
+                    setTimeout(function () { setStatus('متصل', true); }, 2500);
+                });
             } else {
                 ZoomyRTC.stopScreenShare().then(function () {
                     sharing = false;
@@ -1443,10 +1497,20 @@
         });
 
         function notifyLeave() {
-            //  إزالة تواجد الطالب من العدّ عند المغادرة
             if (role === 'student' && offerId && token) {
+                //  إزالة تواجد الطالب من العدّ عند المغادرة
                 try {
                     fetch('/api/stream/leave/' + offerId, {
+                        method: 'POST',
+                        keepalive: true,
+                        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+                    }).catch(function () {});
+                } catch (e) {}
+            } else if (role === 'teacher' && offerId && token) {
+                //  مغادرة الأستاذ: تجميد العدّاد ووقف التحرير فوراً —
+                //  يستأنف من حيث توقف عند إعادة فتح البث (لا تلاعب ولا خسارة حق)
+                try {
+                    fetch('/api/stream/teacher-leave/' + offerId, {
                         method: 'POST',
                         keepalive: true,
                         headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }

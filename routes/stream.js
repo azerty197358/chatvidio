@@ -161,6 +161,45 @@ const handleStreamStart = async (req, res) => {
             return res.status(400).json({ success: false, error: 'لا يمكن إعادة تشغيل حصة منتهية أو ملغاة' });
         }
 
+        // ✅ استئناف بث كان موقوفاً مؤقتاً (خرج الأستاذ دون إنهائه): يُكمل العدّاد
+        //    من حيث توقف تماماً — بلا تصفير للوقت ولا إعادة تسجيل начал البث
+        //    (يمنع تلاعب "الخروج ثم إعادة الفتح" ويضمن بقاء مستحقات الجميع محفوظة)
+        if (offer.status === 'paused' && offer.stream_started_at) {
+            const resumeRoom = offer.room_name || offer.meet_url || offer.stream_url || `/api/teacher-zoom/${offer_id}`;
+            await updateOfferStreamState(offer_id, {
+                stream_url: offer.stream_url || resumeRoom,
+                meet_url: offer.meet_url || resumeRoom,
+                stream_platform: 'webrtc',
+                status: 'live',
+                stream_active: true,
+                is_paused: false,
+                //  تمرير القيمة الأصلية صراحة حتى لا يمسّها مسار الاحتياط فيupdateOfferStreamState
+                stream_started_at: offer.stream_started_at
+            });
+            //  طيّ فترة الإيقاف الجاري في المجموع + مسح علامة الإيقاف = استئناف فعلي
+            try {
+                const remainingAtPause = (offer.remaining_seconds != null && !isNaN(Number(offer.remaining_seconds)))
+                    ? Number(offer.remaining_seconds)
+                    : Math.max(60, (offer.duration || offer.duration_minutes || 60) * 60);
+                await saveOfferRemainingTime(offer_id, remainingAtPause, false);
+            } catch (e) {
+                console.warn('استئناف البث: تعذر طيّ فترة الإيقاف —', e.message);
+            }
+
+            return res.json({
+                success: true,
+                resumed: true,
+                room_url: `/api/teacher-zoom/${offer_id}`,
+                meet_url: offer.meet_url || resumeRoom,
+                stream_url: offer.stream_url || resumeRoom,
+                password: '',
+                room_name: offer.room_name || resumeRoom,
+                duration: offer.duration,
+                students_count: 0,
+                message: '✅ تم استئناف البث من حيث توقف — العدّاد ومستحقاتك محفوظة كما هي'
+            });
+        }
+
         // ✅ التحقق إن كانت الحصة مجانية لتشغيلها تلقائياً وفورياً
         const isFreeOffer = offer.is_free === true || offer.is_free === 1 || offer.is_free === 'true' || parseFloat(offer.price || 0) === 0;
 
@@ -2650,7 +2689,7 @@ async function computeOfferTimer(offerId) {
         //    (فشل الاستعلام الكامل كان يقتل الموقت كلياً: لا حساب ولا حفظ ولا مزامنة)
         let offer = null;
         const timerSelects = [
-            'id, status, duration, duration_minutes, total_seconds, remaining_seconds, stream_started_at',
+            'id, teacher_id, status, duration, duration_minutes, total_seconds, remaining_seconds, stream_started_at',
             'id, status, duration, total_seconds, remaining_seconds, stream_started_at',
             'id, status, duration, remaining_seconds, stream_started_at',
             'id, status, duration, stream_started_at',
@@ -2824,10 +2863,15 @@ router.post('/sync-timer/:offer_id', async (req, res) => {
 
         // ✅ نتجاهل تماماً أي "متبقي" يرسله العميل — المؤقت يُحسب على الخادم حصراً
         //    (المدة المختارة عند الإنشاء + لحظة بدء البث + الإيقافات المسجلة) — محاولة التلاعب تُلغى
+        //  المصادقة والملكية: النبضة تُحرّر أموالاً — للأستاذ صاحب الدرس فقط
         const timerInfo = await computeOfferTimer(offerId);
-        if (timerInfo) {
-            await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused === true);
+        if (!timerInfo) {
+            return res.status(404).json({ success: false, error: 'الدرس غير موجود' });
         }
+        if (parseInt(timerInfo.offer.teacher_id) !== decoded.userId) {
+            return res.status(403).json({ success: false, error: 'غير مصرح' });
+        }
+        await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused === true);
 
         // ✅ تحرير مستحقات الأستاذ على أجزاء وفق الزمن المنقضي الفعلي مع كل نبضة مزامنة
         try { await releaseEarnedSoFar(offerId); } catch (e) { console.warn('releaseEarnedSoFar tick:', e.message); }
@@ -2885,13 +2929,17 @@ router.post('/pause-timer/:offer_id', async (req, res) => {
         const { is_paused } = req.body || {};
 
         // ✅ الإيقاف والاستئناف فقط — قيمة الوقت تُحسب على الخادم ولا تُقبل من العميل
+        //    الملكية إلزامية: لا يجمّد أحد عدّاد غيره
         const timerInfo = await computeOfferTimer(offerId);
-        const sec = timerInfo ? timerInfo.remaining_seconds : null;
-        if (sec !== null) {
-            await saveOfferRemainingTime(offerId, sec, is_paused !== false);
+        if (!timerInfo) {
+            return res.status(404).json({ success: false, error: 'الدرس غير موجود' });
         }
+        if (parseInt(timerInfo.offer.teacher_id) !== decoded.userId) {
+            return res.status(403).json({ success: false, error: 'غير مصرح' });
+        }
+        await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused !== false);
 
-        res.json({ success: true, is_paused: is_paused !== false, remaining_seconds: sec });
+        res.json({ success: true, is_paused: is_paused !== false, remaining_seconds: timerInfo.remaining_seconds });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -2900,7 +2948,23 @@ router.post('/pause-timer/:offer_id', async (req, res) => {
 // ✅ مسار إبلاغ مغادرة الأستاذ للبث فوراً
 router.all('/teacher-leave/:offer_id', async (req, res) => {
     try {
+        //  المصادقة إلزامية: هذا المسار يجمّد العدّاد — للأستاذ المالك فقط
+        let token = req.headers['authorization']?.replace('Bearer ', '') || req.query.token || req.body?.token;
+        const decoded = token ? verifyToken(token) : null;
+        if (!decoded || decoded.role !== 'teacher') {
+            return res.status(403).json({ success: false, error: 'غير مصرح' });
+        }
+
         const offerId = parseInt(req.params.offer_id);
+        const ownCheck = await supabase
+            .from('offers')
+            .select('teacher_id')
+            .eq('id', offerId)
+            .maybeSingle();
+        if (!ownCheck.data || parseInt(ownCheck.data.teacher_id) !== decoded.userId) {
+            return res.status(403).json({ success: false, error: 'غير مصرح' });
+        }
+
         teacherPingStore.delete(offerId);
         try {
             // ✅ تجميد الموقت عند لحظة المغادرة بقيمة محسوبة على الخادم (لا قيمة من العميل)
@@ -2938,5 +3002,40 @@ router.get('/timer/:offer_id', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+
+// ============================================================
+// ✅ مسح أمان الأموال: يُوقف العدّاد (ويجمّد التحرير) إذا غاب نبض
+//    الأستاذ عن غرفة بث مباشرة أكثر من 3 دقائق (إغلاق التطبيق،
+//    موت الجهاز، أو قطع الشبكة) — البث يستأنف من حيث توقف تماماً
+//    عند عودة نبض الأستاذ أو إعادة فتح البث من لوحة التحكم
+// ============================================================
+const STALE_TEACHER_MS = 3 * 60 * 1000;
+let staleSweepBusy = false;
+async function autoPauseStaleStreams() {
+    if (staleSweepBusy) return;
+    staleSweepBusy = true;
+    try {
+        const now = Date.now();
+        for (const entry of Array.from(teacherPingStore.entries())) {
+            const offerId = entry[0];
+            const lastTs = entry[1];
+            if (now - lastTs < STALE_TEACHER_MS) continue;
+            try {
+                const timerInfo = await computeOfferTimer(offerId);
+                if (!timerInfo || timerInfo.offer.status !== 'live') {
+                    teacherPingStore.delete(offerId);
+                    continue;
+                }
+                await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, true);
+                console.log(`⏸️ توقّف البث تلقائياً لغياب نبض الأستاذ — درس ${offerId} (العدّاد والتحرير مجمّدان)`);
+            } catch (e) {
+                console.warn('autoPauseStaleStreams:', e.message);
+            }
+        }
+    } finally {
+        staleSweepBusy = false;
+    }
+}
+setInterval(autoPauseStaleStreams, 60000);
 
 module.exports = router;

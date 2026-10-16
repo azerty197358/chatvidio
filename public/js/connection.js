@@ -95,10 +95,9 @@
 
     function markSuccess() {
         consecutiveFailures = 0;
+        //  إعلان واحد فقط عند عودة فعلية من القطع — لا إعادة رسم عند كل نجاح طلب
+        //  (الرسم المتكرر كان يُظهر «تم الاتصال بالإنترنت» عند كل إجراء يفعله المستخدم)
         if (!online) apply(true, true);
-        else if (banner && banner.classList.contains('zoomy-net-on')) {
-            if (!hideTimer) paint('تم الاتصال بالإنترنت', 'on', true);
-        }
     }
 
     window.ZoomyNet = {

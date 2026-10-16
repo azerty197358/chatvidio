@@ -586,18 +586,28 @@
                 .filter(function (d) { return d.kind === 'videoinput'; });
         } catch (e) { /* تجاهل — سنجرّب بالاتجاه */ }
 
+        const currentFacing = currentFacingMode;
+        const currentDeviceId = oldTrack && oldTrack.getSettings ? oldTrack.getSettings().deviceId : null;
         let constraints = null;
         if (devices.length >= 2) {
-            const currentId = oldTrack && oldTrack.getSettings ? oldTrack.getSettings().deviceId : null;
             let idx = -1;
             for (let i = 0; i < devices.length; i++) {
-                if (devices[i].deviceId === currentId) { idx = i; break; }
+                if (devices[i].deviceId === currentDeviceId) { idx = i; break; }
             }
             const next = devices[(idx + 1) % devices.length];
             constraints = { video: { deviceId: { exact: next.deviceId } }, audio: false };
         } else {
             //  متصفحات تُخفي المعرّفات: تبديل حسب الاتجاه المطلوب
-            constraints = { video: { facingMode: { ideal: currentFacingMode === 'user' ? 'environment' : 'user' } }, audio: false };
+            constraints = { video: { facingMode: { ideal: currentFacing === 'user' ? 'environment' : 'user' } }, audio: false };
+        }
+
+        //  ⚠️ معظم هواتف أندرويد لا تسمح بتشغيل كاميرتين في نفس اللحظة —
+        //  نُوقف الكاميرا القديمة أولاً ثم نفتح الجديدة، وإن فشلت نُعيد الأصلية
+        //  فوراً حتى لا يبقى البث بلا صورة أبداً
+        const wasEnabled = oldTrack ? oldTrack.enabled : true;
+        if (oldTrack) {
+            try { localStream.removeTrack(oldTrack); } catch (e) { /* تجاهل */ }
+            try { oldTrack.stop(); } catch (e) { /* تجاهل */ }
         }
 
         let cam = null;
@@ -607,11 +617,29 @@
             //  إن فشل المعرّف المحدد جرّب الاتجاه البديل مباشرة
             try {
                 cam = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: { ideal: currentFacingMode === 'user' ? 'environment' : 'user' } },
+                    video: { facingMode: { ideal: currentFacing === 'user' ? 'environment' : 'user' } },
                     audio: false
                 });
             } catch (e2) {
                 console.warn('[ZoomyRTC] flip camera unavailable:', e2.message);
+                //  فشل كامل: إعادة الكاميرا الأصلية (بمعرّفها إن أمكن) لاستعادة البث كما كان
+                try {
+                    const back = await navigator.mediaDevices.getUserMedia({
+                        video: currentDeviceId
+                            ? { deviceId: { exact: currentDeviceId } }
+                            : { facingMode: { ideal: currentFacing } },
+                        audio: false
+                    });
+                    const backTrack = back.getVideoTracks()[0];
+                    if (backTrack) {
+                        backTrack.enabled = wasEnabled;
+                        localStream.addTrack(backTrack);
+                        await replaceTrack(backTrack);
+                        peerConnections.forEach(function (pc) { applyBitrateCaps(pc); });
+                    }
+                } catch (e3) {
+                    console.warn('[ZoomyRTC] camera restore failed:', e3.message);
+                }
                 return null;
             }
         }
@@ -626,10 +654,7 @@
         const fs = newTrack.getSettings ? newTrack.getSettings().facingMode : null;
         if (fs === 'user' || fs === 'environment') currentFacingMode = fs;
 
-        if (oldTrack) {
-            try { localStream.removeTrack(oldTrack); } catch (e) { /* تجاهل */ }
-            try { oldTrack.stop(); } catch (e) { /* تجاهل */ }
-        }
+        newTrack.enabled = wasEnabled;
         localStream.addTrack(newTrack);
         await replaceTrack(newTrack);
         //  إعادة تطبيق سقف البِت ريت على المسار الجديد
