@@ -14,7 +14,10 @@
             { urls: 'stun:stun3.l.google.com:19302' },
             { urls: 'stun:stun4.l.google.com:19302' },
             { urls: 'stun:stun.voipgateway.com' },
-            { urls: 'stun:stun.sipgate.net' }
+            { urls: 'stun:stun.sipgate.net' },
+            // TURN عام مجاني (Open Relay) — يمرّر الوسائط فقط عندما يتعذّر
+            // الاتصال المباشر، فيتصل الطلاب الذين يُخفيهم مشغّلهم الخلفي (NAT صارم)
+            { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }
         ],
         iceCandidatePoolSize: 10
     };
@@ -222,6 +225,29 @@
         }
     }
 
+    // تحديد سقف البِت ريت لكل مسار مُرسَل: الأستاذ يرفع تدفّقاً واحداً محدوداً
+    // لكل طالب (≈700 كيلوبت للفيديو +64 للصوت) بدل الجودة الكاملة لكل طالب.
+    // هذه أهم إجراءات الاستيعاب: تخفض رفع الأستاذ من ≈2 ميغابت للطالب إلى
+    // أقل من ميغابت، فتصمد الحصص الطويلة وأعداد الطلاب الأكبر دون قطع البث.
+    async function applyBitrateCaps(pc) {
+        try {
+            const senders = pc.getSenders() || [];
+            for (const sender of senders) {
+                if (!sender.track) continue;
+                const params = sender.getParameters();
+                if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+                if (sender.track.kind === 'video') {
+                    params.encodings[0].maxBitrate = 700000;
+                } else if (sender.track.kind === 'audio') {
+                    params.encodings[0].maxBitrate = 64000;
+                }
+                await sender.setParameters(params);
+            }
+        } catch (e) {
+            console.warn('[ZoomyRTC] bitrate caps skipped:', e.message);
+        }
+    }
+
     async function createPeerConnection(userId, initiator) {
         if (peerConnections.has(userId)) return peerConnections.get(userId);
 
@@ -247,16 +273,45 @@
 
         pc.onconnectionstatechange = () => {
             console.log(`[ZoomyRTC] Connection with ${userId}:`, pc.connectionState);
-            if (pc.connectionState === 'failed') {
-                closePeerConnection(userId);
+            if (pc.connectionState === 'connected') {
+                pc._zoomdzIceRetries = 0;
+            } else if (pc.connectionState === 'failed') {
+                // حصة قد تمتد لأربع ساعات: بدل قطع الاتصال عند أول انقطاع،
+                // نُعيد مسار ICE تلقائياً حتى3 مرات (صمود أكبر للموبايل والشبكات المتقلّبة)
+                if (!pc._zoomdzIceRetries) pc._zoomdzIceRetries = 0;
+                if (pc._zoomdzIceRetries < 3) {
+                    pc._zoomdzIceRetries++;
+                    console.log(`[ZoomyRTC] ICE restart #${pc._zoomdzIceRetries} for ${userId}`);
+                    try { pc.restartIce(); } catch (e) { closePeerConnection(userId); }
+                } else {
+                    closePeerConnection(userId);
+                }
             }
         };
+
+        // بعد إنعاش ICE يُطلق المتصفح حدث negotiationneeded — المبادر (الأستاذ)
+        // يُرسل عرضاً جديداً لاستعادة الاتصال بنفس الغرفة دون إعادة انضمام
+        pc.addEventListener('negotiationneeded', async () => {
+            if (!initiator || !ws || ws.readyState !== 1) return;
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify({
+                    type: 'offer',
+                    to: userId,
+                    offer: pc.localDescription
+                }));
+            } catch (e) {
+                console.warn('[ZoomyRTC] renegotiation failed:', e.message);
+            }
+        });
 
         // إضافة المسارات المحلية
         if (localStream) {
             localStream.getTracks().forEach(track => {
                 pc.addTrack(track, localStream);
             });
+            applyBitrateCaps(pc);
         }
 
         // إذا كنا المبادرين، نرسل العرض

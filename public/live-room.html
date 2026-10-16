@@ -473,6 +473,26 @@
     <script src="/js/platform-config.js"></script>
     <script src="/js/webrtc.js"></script>
     <script>
+        // إبقاء شاشة الجهاز مستيقظة طوال الحصة — حصص قد تمتد4 ساعات،
+        // ولولا ذلك تُنام هواتف الطلاب وتُقطع الحصة عنهم تلقائياً
+        (function () {
+            var wakeLock = null;
+            function acquireWakeLock() {
+                try {
+                    if (!navigator.wakeLock || wakeLock) return;
+                    navigator.wakeLock.request('screen').then(function (lock) {
+                        wakeLock = lock;
+                        lock.addEventListener('release', function () { wakeLock = null; });
+                    }).catch(function () {});
+                } catch (e) {}
+            }
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) acquireWakeLock();
+            });
+            acquireWakeLock();
+        })();
+    </script>
+    <script>
     (function () {
         'use strict';
 
