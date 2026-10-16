@@ -42,6 +42,10 @@
     let knownParticipants = new Map(); // userId -> role (آخر قائمة مشاركة معروفة من الخادم)
     let healthSweepTimer = null;        // فحص دوري لصحة اتصالات الأقران
     let reapplyCapsTimer = null;        // إعادة تطبيق سقف البِت ريت عند تغيّر العدد
+    let currentFacingMode = 'user';     // اتجاه الكاميرا الحالي (أمامية/خلفية)
+    let micGainValue = 1.0;             // معامل تعزيز الميكروفون المُرسَل للطلاب
+    let audioCtx = null;                // سياق صوتي لمسار التعزيز
+    let micGainNode = null;             // عقدة الكسب المرتبطة بالمسار الخام
 
     function getSignalingUrl() {
         //  الافتراضي: نفس خادم المنصة (Signaling مدمج على /ws-signaling)
@@ -521,6 +525,7 @@
         if (constraints) {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                await syncMicGain();
                 return localStream;
             } catch (e) {
                 console.warn('[ZoomyRTC] custom constraints failed, trying defaults');
@@ -544,6 +549,7 @@
                 console.log('[ZoomyRTC] Local media started:',
                     localStream.getVideoTracks().length, 'video,',
                     localStream.getAudioTracks().length, 'audio');
+                await syncMicGain();
                 return localStream;
             } catch (e) {
                 console.warn('[ZoomyRTC] getUserMedia attempt ' + (i + 1) + ' failed:', e.message);
@@ -561,6 +567,138 @@
                     await s.replaceTrack(track);
                 }
             }
+        }
+    }
+
+    // ==========================================================================
+    //  تبديل الكاميرا الأمامية/الخلفية (الهاتف): يُشغّل الكاميرا الجديدة أولاً
+    //  ثم يستبدل المسار في كل الاتصالات القائمة فوراً (معيبسة WebRTC)
+    // ==========================================================================
+    async function flipCamera() {
+        if (!localStream) return null;
+        const oldTrack = localStream.getVideoTracks()[0];
+
+        //  الأكثر موثوقية على الأندرويد: التنقل بين كاميرات الجهاز بـ device id
+        //  (تظهر الكاميرا الأمامية والخلفية كجهازين منفصلين في enumerateDevices)
+        let devices = [];
+        try {
+            devices = (await navigator.mediaDevices.enumerateDevices())
+                .filter(function (d) { return d.kind === 'videoinput'; });
+        } catch (e) { /* تجاهل — سنجرّب بالاتجاه */ }
+
+        let constraints = null;
+        if (devices.length >= 2) {
+            const currentId = oldTrack && oldTrack.getSettings ? oldTrack.getSettings().deviceId : null;
+            let idx = -1;
+            for (let i = 0; i < devices.length; i++) {
+                if (devices[i].deviceId === currentId) { idx = i; break; }
+            }
+            const next = devices[(idx + 1) % devices.length];
+            constraints = { video: { deviceId: { exact: next.deviceId } }, audio: false };
+        } else {
+            //  متصفحات تُخفي المعرّفات: تبديل حسب الاتجاه المطلوب
+            constraints = { video: { facingMode: { ideal: currentFacingMode === 'user' ? 'environment' : 'user' } }, audio: false };
+        }
+
+        let cam = null;
+        try {
+            cam = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) {
+            //  إن فشل المعرّف المحدد جرّب الاتجاه البديل مباشرة
+            try {
+                cam = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: currentFacingMode === 'user' ? 'environment' : 'user' } },
+                    audio: false
+                });
+            } catch (e2) {
+                console.warn('[ZoomyRTC] flip camera unavailable:', e2.message);
+                return null;
+            }
+        }
+
+        const newTrack = cam.getVideoTracks()[0];
+        if (!newTrack) {
+            cam.getTracks().forEach(function (t) { t.stop(); });
+            return null;
+        }
+
+        //  تتبع الاتجاه الفعلي إن أبلغ عنه المتصفح
+        const fs = newTrack.getSettings ? newTrack.getSettings().facingMode : null;
+        if (fs === 'user' || fs === 'environment') currentFacingMode = fs;
+
+        if (oldTrack) {
+            try { localStream.removeTrack(oldTrack); } catch (e) { /* تجاهل */ }
+            try { oldTrack.stop(); } catch (e) { /* تجاهل */ }
+        }
+        localStream.addTrack(newTrack);
+        await replaceTrack(newTrack);
+        //  إعادة تطبيق سقف البِت ريت على المسار الجديد
+        peerConnections.forEach(function (pc) { applyBitrateCaps(pc); });
+        console.log('[ZoomyRTC] Camera flipped ->', currentFacingMode);
+        return newTrack;
+    }
+
+    // ==========================================================================
+    //  تعزيز الميكروفون (Web Audio): يرفع/يخفض صوت الإرسال للطلاب فعلياً —
+    //  1.0 = المسار الأصلي للمتصفح (أقل تدخّلاً) | غيره = مسار كسب مؤخَّر
+    //  كتم الميكروفون يبقى فعّالاً لأن المسار الخام هو المصدر نفسه
+    // ==========================================================================
+    async function setMicGain(value) {
+        const v = Math.min(3, Math.max(0.5, Number(value) || 1));
+        micGainValue = v;
+        if (!localStream) return micGainValue;
+        const rawTrack = localStream.getAudioTracks()[0];
+        if (!rawTrack) return micGainValue;
+
+        try {
+            if (v === 1) {
+                //  العودة للوضع الأصلي: مسار المتصفح المعالَج (أقل ضجيجاً وتأخّراً)
+                if (micGainNode) {
+                    try { micGainNode.disconnect(); } catch (e) { /* تجاهل */ }
+                    micGainNode = null;
+                }
+                await replaceTrack(rawTrack);
+                return micGainValue;
+            }
+
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+            //  تعديل حي إن كان المسار الموحّد نفسه ما يزال مستخدماً
+            if (micGainNode && micGainNode._srcTrack === rawTrack) {
+                micGainNode.gain.value = v;
+                return micGainValue;
+            }
+
+            //  بناء المسار من جديد (مثلاً بعد إعادة getUserMedia)
+            if (micGainNode) {
+                try { micGainNode.disconnect(); } catch (e) { /* تجاهل */ }
+                micGainNode = null;
+            }
+            const src = audioCtx.createMediaStreamSource(new MediaStream([rawTrack]));
+            const dest = audioCtx.createMediaStreamDestination();
+            micGainNode = audioCtx.createGain();
+            micGainNode._srcTrack = rawTrack;
+            micGainNode.gain.value = v;
+            src.connect(micGainNode);
+            micGainNode.connect(dest);
+            await replaceTrack(dest.stream.getAudioTracks()[0]);
+            console.log('[ZoomyRTC] Mic gain applied:', v + 'x');
+        } catch (e) {
+            console.warn('[ZoomyRTC] mic gain skipped:', e.message);
+        }
+        return micGainValue;
+    }
+
+    function getMicGain() { return micGainValue; }
+
+    //  مزامنة مسار التعزيز بعد أي كاميرا/ميكروفون جديد (startMedia)
+    async function syncMicGain() {
+        if (micGainValue !== 1 && localStream) {
+            try {
+                if (micGainNode) { micGainNode.disconnect(); micGainNode = null; }
+            } catch (e) { /* تجاهل */ }
+            await setMicGain(micGainValue);
         }
     }
 
@@ -719,6 +857,9 @@
         });
         peerConnections.clear();
 
+        if (micGainNode) { try { micGainNode.disconnect(); } catch (e) { /* تجاهل */ } micGainNode = null; }
+        if (audioCtx) { try { audioCtx.close(); } catch (e) { /* تجاهل */ } audioCtx = null; }
+
         if (localStream) {
             localStream.getTracks().forEach(t => t.stop());
             localStream = null;
@@ -750,6 +891,9 @@
         ensureVideo,
         toggleCamera,
         toggleMicrophone,
+        flipCamera,
+        setMicGain,
+        getMicGain,
         shareScreen,
         stopScreenShare,
         sendChatMessage,
