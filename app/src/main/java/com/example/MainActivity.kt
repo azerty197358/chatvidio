@@ -67,6 +67,8 @@ class MainActivity : ComponentActivity() {
     private var pendingFileChooserParams: WebChromeClient.FileChooserParams? = null
     private var pendingPermissionRequest: PermissionRequest? = null
     private var persistentWebView: WebView? = null
+    // رابط عميق (zoomdz://auth?...) بانتظار تجهيز الـ WebView عند فتح التطبيق
+    @Volatile private var pendingDeepLinkUrl: String? = null
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var savedWebViewState: Bundle? = null
@@ -165,6 +167,9 @@ class MainActivity : ComponentActivity() {
             cameraImageUri = Uri.parse(it)
         }
 
+        // فتح التطبيق عبر رابط عميق (zoomdz://auth بعد تسجيل جوجل أو رابط صفحة)
+        pendingDeepLinkUrl = buildDeepLinkUrl(intent)
+
         requestAppStartupPermissions()
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, true)
@@ -181,6 +186,54 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val deepLink = buildDeepLinkUrl(intent) ?: return
+        val wv = persistentWebView
+        if (wv != null) {
+            wv.post { wv.loadUrl(deepLink) }
+        } else {
+            pendingDeepLinkUrl = deepLink
+        }
+    }
+
+    // تحويل نية فتح خارجية إلى رابط يُحمَّل داخل التطبيق:
+    // zoomdz://auth?... ← صفحة المنصة الرئيسية لحفظ الجلسة، أو رابط https عادي.
+    private fun buildDeepLinkUrl(intent: Intent?): String? {
+        // إشعار المنصة يمرّر الرابط عبر extra وليس data
+        val extraUrl = intent?.getStringExtra("target_url")
+        if (!extraUrl.isNullOrBlank() && (extraUrl.startsWith("http://") || extraUrl.startsWith("https://"))) {
+            return extraUrl
+        }
+        val data = intent?.data ?: return null
+        val scheme = data.scheme?.lowercase() ?: return null
+        return try {
+            if (scheme == "zoomdz") {
+                val query = data.encodedQuery
+                if (query.isNullOrBlank()) return null
+                "${currentPlatformOrigin()}/?$query"
+            } else if (scheme == "http" || scheme == "https") {
+                data.toString()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun currentPlatformOrigin(): String {
+        try {
+            val current = persistentWebView?.url
+            if (!current.isNullOrBlank() && current.startsWith("http")) {
+                val match = Regex("^(https?://[^/]+)").find(current)
+                if (match != null) return match.groupValues[1]
+            }
+        } catch (e: Exception) {}
+        return PLATFORM_URL.trimEnd('/')
     }
 
     private fun getRequiredPermissions(): Array<String> {
@@ -655,16 +708,36 @@ class MainActivity : ComponentActivity() {
                         return false
                     }
 
+                    // العودة من متصفح النظام بعد تسجيل جوجل (zoomdz://auth?token=...)
+                    // نحولها لرابط المنصة داخل التطبيق لحفظ الجلسة — تشمل حالة
+                    // الرجوع لتطبيق يفتح OAuth داخل WebView نفسه عند تعذّر المتصفح الخارجي.
+                    if (targetUrl.startsWith("zoomdz://")) {
+                        val handoffQuery = targetUrl.substringAfter('?', "")
+                        if (handoffQuery.isNotBlank()) {
+                            view?.loadUrl("${currentPlatformOrigin()}/?$handoffQuery")
+                        }
+                        return true
+                    }
+
                     // Keep platform URLs inside the WebView — النطاق المخصص + مضيف
                     // Render. أي تحويل إلى onrender.com كان يُفتح خارج التطبيق
                     // فيبدو كأن الروابط لا تُفتح داخله إطلاقاً.
                     val isPlatform = host.contains("zoomdz.com") || host.contains("onrender.com") ||
                         host.contains("vercel.app") || host.contains("localhost") || targetUrl.startsWith("file://")
-                    // تسجيل الدخول عبر جوجل يجب أن يكتمل داخل التطبيق حتى تُحفظ
-                    // جلسته في كوكيز الـ WebView — إرساله لمتصفح خارجي ينتهي
-                    // بجلسة في المتصفح الخارجي والتطبيق يبقى غير مسجّل الدخول.
-                    val isAuth = host.contains("google.com") || host.contains("googleapis.com")
-                    if (isPlatform || isAuth) return false
+                    // مصادقة جوجل تُكمَل في متصفح النظام: هناك تظهر حسابات المستخدم
+                    // المحفوظة ليختار منها واحدة بضغطة واحدة (داخل الـ WebView لا توجد
+                    // جلسة جوجل فيُطلب منه إدخال بريده وكلمه يدوياً)، ثم يعود للتطبيق
+                    // تلقائياً عبر zoomdz://auth مسجّلاً بالفعل.
+                    val isGoogleAuth = host.contains("google.com") || host.contains("googleapis.com")
+                    if (isPlatform && !isGoogleAuth) return false
+                    if (isGoogleAuth) {
+                        return try {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            true
+                        } catch (e: Exception) {
+                            false // فشل فتح المتصفح الخارجي: نُكمل داخل التطبيق
+                        }
+                    }
 
                     // Open external links in browser or respective apps — وإن تعذّر
                     // فتحه خارجياً نُحمّله داخل التطبيق بدل أن يبقى الرابط ميتاً
@@ -948,7 +1021,7 @@ class MainActivity : ComponentActivity() {
 
             addJavascriptInterface(object {
                 @JavascriptInterface fun isNativeApp() = true
-                @JavascriptInterface fun getAppVersion() = "2.2.0"
+                @JavascriptInterface fun getAppVersion() = "2.3.0"
                 @JavascriptInterface fun requestMediaPermissions() {
                     requestAppStartupPermissions()
                 }
@@ -990,7 +1063,11 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {}
             }
 
-            if (!restored && (url.isNullOrBlank() || url == "about:blank")) {
+            val pendingDeepLink = pendingDeepLinkUrl
+            if (pendingDeepLink != null) {
+                pendingDeepLinkUrl = null
+                loadUrl(pendingDeepLink)
+            } else if (!restored && (url.isNullOrBlank() || url == "about:blank")) {
                 loadUrl(PLATFORM_URL)
             }
         }

@@ -83,6 +83,15 @@
                 <data android:scheme="http" android:host="chatvidio.onrender.com" />
                 <data android:scheme="https" android:host="chatvidio.onrender.com" />
             </intent-filter>
+
+            <!-- العودة التلقائية من متصفح النظام بعد تسجيل الدخول عبر جوجل -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="zoomdz" />
+            </intent-filter>
         </activity>
     </application>
 

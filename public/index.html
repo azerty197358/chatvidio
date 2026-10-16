@@ -4717,7 +4717,7 @@
                     <img id="navbarAppLogoImg" class="navbar-app-logo site-app-logo" src="/images/zoomdz-logo.png" alt="ZoomDz" referrerpolicy="no-referrer" onerror="this.style.display='none'; document.getElementById('navbarDefaultLogoIcon').style.display='flex';" style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px; display: block;">
                     <div id="navbarDefaultLogoIcon" style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center;"><i class="fas fa-graduation-cap"></i></div>
                 </div>
-                <div style="display: flex; align-items: baseline; gap: 2px;">
+                <div style="display: flex; align-items: baseline; gap: 2px; direction: ltr;">
                     <span style="font-size: 1.5rem; font-weight: 900; color: #0f172a;">Zoom</span>
                     <span style="font-size: 1.5rem; font-weight: 900; background: linear-gradient(135deg, #3b82f6, #1d4ed8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Dz</span>
                 </div>
@@ -6808,6 +6808,11 @@
                 var reqComp = params.get('requires_profile_completion') === 'true';
                 if (token) {
                     localStorage.setItem('token', token);
+                    try {
+                        var storedUser = params.get('userData');
+                        if (storedUser) localStorage.setItem('userData', storedUser);
+                        if (role) localStorage.setItem('user_role', role);
+                    } catch (e) {}
                     var redirect = params.get('redirectTo') || (role === 'teacher' ? '/teacher-dashboard.html' : '/student-dashboard.html');
                     if (reqComp) {
                         redirect += (redirect.includes('?') ? '&' : '?') + 'complete_profile=true';
@@ -6856,6 +6861,30 @@
                     if (match) refCode = decodeURIComponent(match[2]);
                 }
             } catch (e) {}
+
+            // داخل تطبيق أندرويد: نفتح متصفح النظام ليختار المستخدم حسابه
+            // المحفوظ في جوجل بضغطة واحدة (بدون كتابة كلمة المرور)، ثم يعود
+            // للتطبيق تلقائياً عبر zoomdz://auth مسجّلاً بالفعل.
+            var isNativeAppAuth = false;
+            try {
+                isNativeAppAuth = !!(window.ZoomDzNative && window.ZoomDzNative.isNativeApp && window.ZoomDzNative.isNativeApp());
+            } catch (e) {}
+            if (isNativeAppAuth) {
+                showNotification('جاري فتح متصفح النظام لاختيار حساب Google...', 'info');
+                try {
+                    var nativeRes = await fetch('/api/auth/google/url?role=' + encodeURIComponent(role) + '&app=1' + (refCode ? '&ref=' + encodeURIComponent(refCode) : ''));
+                    var nativeData = await nativeRes.json();
+                    if (nativeData && nativeData.url) {
+                        // shouldOverrideUrlLoading في التطبيق يحوّل هذا الرابط إلى متصفح النظام
+                        window.location.href = nativeData.url;
+                        return;
+                    }
+                } catch (nativeErr) {
+                    console.warn('Native Google auth start failed:', nativeErr);
+                }
+                showNotification('تعذر بدء تسجيل الدخول عبر Google، حاول مرة أخرى', 'warning');
+                return;
+            }
 
             showNotification('جاري فتح تسجيل الدخول عبر Google...', 'info');
 

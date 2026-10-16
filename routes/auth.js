@@ -1126,7 +1126,8 @@ router.get(['/auth/google/url', '/google/url'], async (req, res) => {
             });
         }
         
-        const authUrl = getGoogleAuthUrl(redirectUri, JSON.stringify({ role, type: 'login' }));
+        const stateObj = { role, type: 'login', app: req.query.app ? 1 : 0 };
+        const authUrl = getGoogleAuthUrl(redirectUri, JSON.stringify(stateObj));
         
         res.json({
             success: true,
@@ -1151,11 +1152,11 @@ router.get(['/google/config', '/auth/google/config'], (req, res) => {
 // 2. توليد رابط تفويض Google OAuth للمصادقة
 router.get(['/google/url', '/auth/google/url'], (req, res) => {
     try {
-        const { role = 'student', ref = '' } = req.query;
+        const { role = 'student', ref = '', app = '' } = req.query;
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = req.get('host');
         const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
-        const stateObj = { role, ref, redirectUri };
+        const stateObj = { role, ref, redirectUri, app: app ? 1 : 0 };
         const state = encodeURIComponent(JSON.stringify(stateObj));
         const authUrl = getGoogleAuthUrl(redirectUri, state);
 
@@ -1447,6 +1448,13 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
 router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/google/callback', '/auth/google/callback/', '/google/callback'], async (req, res) => {
     try {
         const { code, state, error: googleError } = req.query;
+        // هل بدأت العملية من تطبيق أندرويد؟ عندها نعيده إليه عبر zoomdz://auth
+        let appHandoff = false;
+        if (state && typeof state === 'string') {
+            try { appHandoff = !!(JSON.parse(state).app); } catch (e1) {
+                try { appHandoff = !!(JSON.parse(decodeURIComponent(state)).app); } catch (e2) {}
+            }
+        }
         if (googleError || !code) {
             return res.status(400).send(`
                 <!DOCTYPE html>
@@ -1456,7 +1464,9 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                     <h2 style="color:#ef4444;">❌ تم إلغاء العملية عبر Google</h2>
                     <p>${googleError || 'لم يتم استلام كود المصادقة'}</p>
                     <script>
-                        if (window.opener) {
+                        if (${appHandoff ? 'true' : 'false'}) {
+                            location.href = 'zoomdz://auth?cancelled=1';
+                        } else if (window.opener) {
                             window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: '${googleError || 'تم الإلغاء'}' }, '*');
                             setTimeout(() => window.close(), 2000);
                         } else {
@@ -1663,7 +1673,30 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                     localStorage.setItem('token', authPayload.token);
                     localStorage.setItem('userData', JSON.stringify(authPayload.user));
 
-                    if (window.opener) {
+                    const isAppHandoff = ${appHandoff ? 'true' : 'false'};
+                    const handoffQuery = 'token=' + encodeURIComponent(authPayload.token)
+                        + '&role=' + encodeURIComponent(authPayload.role)
+                        + '&redirectTo=' + encodeURIComponent(authPayload.redirectTo)
+                        + (authPayload.requires_profile_completion ? '&requires_profile_completion=true' : '')
+                        + '&userData=' + encodeURIComponent(JSON.stringify(authPayload.user));
+                    const handoffUrl = 'zoomdz://auth?' + handoffQuery;
+
+                    if (isAppHandoff) {
+                        // تطبيق أندرويد: نعيده لجلسته داخل التطبيق تلقائياً
+                        document.body.innerHTML = '<div class="card"><div class="icon">🔄</div><h2>العودة إلى تطبيق ZoomDz...</h2><p>جاري إكمال تسجيل الدخول داخل التطبيق تلقائياً.</p></div>';
+                        location.href = handoffUrl;
+                        setTimeout(function() {
+                            var card = document.querySelector('.card');
+                            if (card && !document.getElementById('handoffBackBtn')) {
+                                var btn = document.createElement('button');
+                                btn.id = 'handoffBackBtn';
+                                btn.textContent = 'العودة إلى التطبيق';
+                                btn.setAttribute('style', 'margin-top:16px; padding:12px 28px; border:none; border-radius:30px; background:#16a34a; color:#fff; font-weight:700; font-size:1rem; cursor:pointer;');
+                                btn.onclick = function() { location.href = handoffUrl; };
+                                card.appendChild(btn);
+                            }
+                        }, 2500);
+                    } else if (window.opener) {
                         window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', ...authPayload, data: authPayload }, '*');
                         setTimeout(() => window.close(), 1200);
                     } else {
@@ -1683,7 +1716,22 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
             <body style="font-family:sans-serif; text-align:center; padding:50px; background:#fef2f2;">
                 <h2 style="color:#dc2626;">❌ حدث خطأ أثناء المصادقة عبر Google</h2>
                 <p>${e.message}</p>
-                <script>setTimeout(() => { window.location.href = '/'; }, 3000);</script>
+                <script>
+                    (function() {
+                        var back = '/';
+                        try {
+                            var st = new URLSearchParams(location.search).get('state');
+                            if (st) {
+                                var parsedState = null;
+                                try { parsedState = JSON.parse(st); } catch (x) {
+                                    try { parsedState = JSON.parse(decodeURIComponent(st)); } catch (y) {}
+                                }
+                                if (parsedState && parsedState.app) back = 'zoomdz://auth?cancelled=1';
+                            }
+                        } catch (e) {}
+                        setTimeout(() => { window.location.href = back; }, 3000);
+                    })();
+                </script>
             </body>
             </html>
         `);
