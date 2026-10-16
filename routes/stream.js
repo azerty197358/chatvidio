@@ -2306,12 +2306,21 @@ async function handleSendChatMessage(req, res) {
                 message: message.trim(),
                 created_at: msgObj.created_at
             };
+            let persistErr = null;
             if (replyTo) {
                 // ✅ تدرّج: إن لم يوجد عمود reply_to بعد (قبل تشغيل الترحيل) نحفظ بدونه — الرد يبقى ظاهراً في البث المباشر
                 const { error: rtErr } = await supabase.from('stream_chat_messages').insert({ ...dbRow, reply_to: replyTo });
-                if (rtErr) await supabase.from('stream_chat_messages').insert(dbRow);
+                if (rtErr) {
+                    const { error: baseErr } = await supabase.from('stream_chat_messages').insert(dbRow);
+                    persistErr = baseErr;
+                }
             } else {
-                await supabase.from('stream_chat_messages').insert(dbRow);
+                const { error: baseErr } = await supabase.from('stream_chat_messages').insert(dbRow);
+                persistErr = baseErr;
+            }
+            // ✅ الفشل يُسجَّل في سجلات الخادم فقط (مثال: الجدول لم يُنشأ بعد في قاعدة البيانات) — لا شيء يظهر للمستخدم
+            if (persistErr) {
+                logger.warn('⚠️ تعذر حفظ رسالة الدردشة في stream_chat_messages:', String(persistErr.message || persistErr.code || '').slice(0, 160));
             }
         } catch (e) {}
 
@@ -2590,7 +2599,8 @@ router.post('/chat/mute', authenticate, authorize(['teacher']), async (req, res)
 
         try {
             if (mute && !wasMuted) {
-                await supabase.from('stream_mutes').insert({ offer_id: offerId, student_id: studentId, created_at: new Date().toISOString() });
+                const { error: mErr } = await supabase.from('stream_mutes').insert({ offer_id: offerId, student_id: studentId, created_at: new Date().toISOString() });
+                if (mErr) logger.warn('⚠️ تعذر حفظ الكتم في stream_mutes:', String(mErr.message || mErr.code || '').slice(0, 160));
             } else if (!mute) {
                 await supabase.from('stream_mutes').delete().eq('offer_id', offerId).eq('student_id', studentId);
             }
