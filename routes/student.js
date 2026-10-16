@@ -1125,32 +1125,57 @@ router.post('/cancel-session/:session_id', authenticate, authorize(['student']),
         }
 
         if (session.payment_status === 'pending_stream' && session.payment_amount > 0 && !isOfferFree) {
-            refundAmount = session.payment_amount;
-            
+            // ✅ ثابت الاسترداد: الاسترداد ≤ min(المدفوع, سعر الحصص) − ما حصل عليه الأستاذ مسبقاً — رسوم المنصة لا تُسترد أبداً
+            const totalSessionsCount = parseInt(offer?.total_sessions) || 1;
+            const totalTeacherPrice = (session.teacher_earned && parseFloat(session.teacher_earned) > 0)
+                ? parseFloat(session.teacher_earned)
+                : (offer && parseFloat(offer.total_teacher_price) > 0
+                    ? parseFloat(offer.total_teacher_price)
+                    : ((parseFloat(offer?.price_per_session || offer?.price) || 0) * totalSessionsCount));
+            let teacherReleasedSoFar = 0;
+            try {
+                const { data: subRow } = await supabase
+                    .from('stream_subscriptions')
+                    .select('teacher_released_so_far')
+                    .eq('offer_id', session.offer_id)
+                    .eq('student_id', student_id)
+                    .maybeSingle();
+                teacherReleasedSoFar = parseFloat(subRow?.teacher_released_so_far) || 0;
+            } catch (e) { /* لا يوجد اشتراك */ }
+            const previouslyRefunded = parseFloat(session.refunded_amount) || 0;
+            refundAmount = Math.max(0, Math.round((
+                Math.min(parseFloat(session.payment_amount) || 0, totalTeacherPrice)
+                - teacherReleasedSoFar - previouslyRefunded
+            ) * 100) / 100);
+            // خصم من رصيد الأستاذ المعلق بنفس مبلغ الاسترداد (لا يتجاوز ما حصل عليه)
+            const teacherDeduction = refundAmount;
+
             const student = await getOne('students', 'id', student_id);
-            if (student) {
+            if (student && refundAmount > 0) {
                 await updateWithCondition('students', student_id, 'wallet_balance', student.wallet_balance, {
                     wallet_balance: (student.wallet_balance || 0) + refundAmount
                 });
             }
 
-            if (offer) {
+            if (offer && teacherDeduction > 0) {
                 const teacher = await getOne('teachers', 'id', offer.teacher_id);
                 if (teacher) {
                     await updateWithCondition('teachers', offer.teacher_id, 'pending_withdraw', teacher.pending_withdraw, {
-                        pending_withdraw: Math.max(0, (teacher.pending_withdraw || 0) - refundAmount)
+                        pending_withdraw: Math.max(0, (teacher.pending_withdraw || 0) - teacherDeduction)
                     });
                 }
             }
 
-            await insert('wallet_transactions', {
-                student_id: student_id,
-                amount: refundAmount,
-                type: 'refund',
-                status: 'completed',
-                description: `استرداد مبلغ حجز "${offer?.subject_name || 'غير معروف'}"`,
-                created_at: new Date().toISOString()
-            });
+            if (refundAmount > 0) {
+                await insert('wallet_transactions', {
+                    student_id: student_id,
+                    amount: refundAmount,
+                    type: 'refund',
+                    status: 'completed',
+                    description: `استرداد مبلغ حجز "${offer?.subject_name || 'غير معروف'}"`,
+                    created_at: new Date().toISOString()
+                });
+            }
         }
 
         await supabase

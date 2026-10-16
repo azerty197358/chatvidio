@@ -109,6 +109,10 @@ function attachSignalingServer(httpServer) {
                 case 'offer':
                 case 'answer':
                 case 'ice-candidate':
+                //  طلب/بيانات المزامنة: يمرّرها الخادم كما تمرّر العروض — الطالب
+                //  يطلب العرض عند انقطاعه فيُعيد الأستاذ بناء المسار بالكامل
+                case 'sync-request':
+                case 'sync-data':
                     if (message.to) {
                         const room = rooms.get(info.roomId);
                         if (room) {
@@ -159,4 +163,27 @@ function attachSignalingServer(httpServer) {
     return wss;
 }
 
-module.exports = { attachSignalingServer, broadcastToRoom };
+/**
+ * لقطة الغرف النشطة لواجهة إدارة المنصة (بدال فتح أي اتصال)
+ * تُرجع معرف الغرفة وعدد المشاركين وحالة الأستاذ لكل غرفة WebRTC نشطة
+ */
+function getRoomsSnapshot() {
+    const snapshot = [];
+    for (const [roomId, room] of rooms.entries()) {
+        const participantsList = [];
+        let teacherOnline = false;
+        room.forEach((p) => {
+            if (p.role === 'teacher') teacherOnline = true;
+            participantsList.push({ userId: p.userId, role: p.role, joinedAt: p.joinedAt });
+        });
+        snapshot.push({
+            room_id: roomId,
+            participants_count: participantsList.length,
+            teacher_online: teacherOnline,
+            participants: participantsList
+        });
+    }
+    return snapshot;
+}
+
+module.exports = { attachSignalingServer, broadcastToRoom, getRoomsSnapshot };

@@ -166,7 +166,18 @@ async function calculateBookingRefundDetails({ session, offer, studentId }) {
     } else {
         const totalSessions = parseInt(offer.total_sessions) || 1;
         const sessionDuration = parseInt(offer.session_duration || offer.duration) || 60;
-        const defaultPlatformFeePerSession = Math.round((sessionDuration / 45) * 50);
+        // ✅ قراءة رسوم المنصة لكل 45 دقيقة من إعدادات لوحة الإدارة (بدون قيمة محفوظة على العرض)
+        let feePer45Min = 50;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            const val = parseFloat(revRow?.value?.stream_platform_fee_per_45_min);
+            if (!isNaN(val)) feePer45Min = val;
+        } catch (e) { /* استخدام القيمة الافتراضية */ }
+        const defaultPlatformFeePerSession = Math.round((sessionDuration / 45) * feePer45Min);
         const platformFeePerSession = parseFloat(offer.platform_fee_per_session || defaultPlatformFeePerSession);
         totalPlatformFee = money(offer.total_platform_fee || (platformFeePerSession * totalSessions));
 

@@ -39,6 +39,9 @@
     let onChatMessageCallback = null;
     let onModerationCallback = null;
     let onScreenShareCallback = null;
+    let knownParticipants = new Map(); // userId -> role (آخر قائمة مشاركة معروفة من الخادم)
+    let healthSweepTimer = null;        // فحص دوري لصحة اتصالات الأقران
+    let reapplyCapsTimer = null;        // إعادة تطبيق سقف البِت ريت عند تغيّر العدد
 
     function getSignalingUrl() {
         //  الافتراضي: نفس خادم المنصة (Signaling مدمج على /ws-signaling)
@@ -51,8 +54,26 @@
         return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
     }
 
-    async function connect(roomId, userId, role, token) {
-        if (ws) disconnect();
+    async function connect(roomId, userId, role, token, opts) {
+        const isReconnect = !!(opts && opts.isReconnect);
+        const savedAttempts = reconnectAttempts;
+
+        if (ws) {
+            if (isReconnect) {
+                //  إعادة اتصال الإشارات فقط: تُغلق الفقاعة القديمة دون تفكيك الوسائط
+                //  أو الاتصالات القائمة — مسار الفيديو مستقل عن WebSocket، فبقاؤه
+                //  يمنع وميض الكاميرا وقطع البث عند كل ومضة شبكة قصيرة
+                const oldWs = ws;
+                ws = null;
+                try { oldWs.close(); } catch (e) { /* تجاهل */ }
+                stopPing();
+            } else {
+                disconnect();
+            }
+        }
+        //  الحفاظ على عدّاد المحاولات أثناء إعادة الاتصال (ال츨ليق كان يعيد ضبطه
+        //  إلى الحد الأقصى فيُستسلم الاتصال بعد محاولة واحدة فقط)
+        if (isReconnect) reconnectAttempts = savedAttempts;
 
         currentRoom = roomId;
         currentUserId = userId || generateId();
@@ -85,6 +106,7 @@
                     reconnectAttempts = 0;
                     console.log('[ZoomyRTC] Connected to signaling server');
                     startPing();
+                    startHealthSweep();
                     if (onConnectionStateCallback) onConnectionStateCallback('connected');
                     resolve();
                 };
@@ -141,19 +163,126 @@
         console.log(`[ZoomyRTC] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
         reconnectTimer = setTimeout(() => {
             if (currentRoom && currentUserId) {
-                connect(currentRoom, currentUserId, currentRole).catch(() => {});
+                connect(currentRoom, currentUserId, currentRole, null, { isReconnect: true }).catch(() => {});
             }
         }, delay);
+    }
+
+    // ==========================================================================
+    //  سلملة البِت ريت التكيّفية: كل طالب يحمل تدفّقاً مرسَلاً من الأستاذ
+    //  (تولوجيا نجمية)، فكلما كثر المتصلون خُفِّض سقف الفيديو لأبقاء الرفع
+    //  ضمن حدود الشبكة: ≤10 طلاب 700k (720p) | ≤30 طلاب 350k (480p) | >30 : 250k (360p)
+    // ==========================================================================
+    function videoBitrateForPeers() {
+        const n = peerConnections.size;
+        if (n <= 10) return 700000;
+        if (n <= 30) return 350000;
+        return 250000;
+    }
+
+    //  إعادة تطبيق السقف على كل الاتصالات عند تغيّر عدد المتصلين (مجمّعة وتيرة واحدة)
+    function reapplyBitrateCapsSoon() {
+        if (reapplyCapsTimer) return;
+        reapplyCapsTimer = setTimeout(() => {
+            reapplyCapsTimer = null;
+            peerConnections.forEach((pc) => applyBitrateCaps(pc));
+        }, 1200);
+    }
+
+    // ==========================================================================
+    //  فحص صحة الاتصالات كل 15 ثانية: اتصال "فاشل" أو "منقطع" منذ مدة يُستعاد
+    //  تلقائياً — الأستاذ يُعيد إنشاء الاتصال ويرسل عرضاً جديداً، والطالب يطلب
+    //  مزامنة (sync-request بطلب عرض) فيُعيد الأستاذ بناء المسار كاملاً
+    // ==========================================================================
+    function startHealthSweep() {
+        stopHealthSweep();
+        healthSweepTimer = setInterval(runHealthSweep, 15000);
+    }
+
+    function stopHealthSweep() {
+        if (healthSweepTimer) clearInterval(healthSweepTimer);
+        healthSweepTimer = null;
+    }
+
+    function runHealthSweep() {
+        //  لا استعادة بلا اتصال إشارات حي (تُعدَّل الحالة لاحقاً عند عودة ws)
+        if (!ws || ws.readyState !== 1 || !peerConnections.size) return;
+        const now = Date.now();
+
+        peerConnections.forEach((pc, userId) => {
+            const state = pc.connectionState;
+
+            if (state === 'connected') {
+                pc._zoomdzStaleSince = 0;
+                return;
+            }
+
+            //  حالات تحتاج وقتاً للتعافي: فشل ICE يُعالَج بالمنعش أولاً (3 مرات)،
+            //  والانقطاع مؤقت على الشبكات المتنقلة — سماحية 15/25 ثانية قبل التدخل
+            if (state === 'failed' || state === 'disconnected' || state === 'connecting' || state === 'new') {
+                if (!pc._zoomdzStaleSince) {
+                    pc._zoomdzStaleSince = now;
+                    return;
+                }
+                const staleFor = now - pc._zoomdzStaleSince;
+                const limit = state === 'failed' ? 15000 : (state === 'disconnected' ? 25000 : 45000);
+                if (staleFor < limit) return;
+
+                pc._zoomdzStaleSince = 0;
+                console.log(`[ZoomyRTC] Health sweep: recovering ${userId} (${state}, ${Math.round(staleFor / 1000)}s)`);
+                recoverPeer(userId);
+            }
+        });
+    }
+
+    function recoverPeer(userId) {
+        closePeerConnection(userId);
+        if (currentRole === 'teacher') {
+            //  الأستاذ المبادر يُنشئ اتصالاً جديداً ويرسل عرضاً فورياً
+            createPeerConnection(userId, true);
+        } else {
+            //  الطالب يطلب مزامنة بطلب عرض — الخادم يمرّرها للأستاذ فيُعيد البناء
+            sendSyncRequest();
+        }
+    }
+
+    function sendSyncRequest() {
+        if (!ws || ws.readyState !== 1) return;
+        //  بدون to مقصود: بثّ للغرفة — الأستاذ وحده من يستجيب، وهويته قد تتغيّر
+        //  بعد إعادة تحميل صفحته فيصل الطلب لأي أستاذ متصل بالغرفة
+        ws.send(JSON.stringify({
+            type: 'sync-request',
+            requestOffer: true,
+            timestamp: Date.now()
+        }));
     }
 
     async function handleSignalingMessage(msg) {
         switch (msg.type) {
             case 'joined':
                 console.log('[ZoomyRTC] Joined room:', msg.roomId, 'Participants:', msg.participants.length);
+                //  تحديث قائمة المشاركين المعروفة (لتحديد هوية الأستاذ والعثور على من غاب)
+                knownParticipants = new Map();
+                const listedIds = new Set();
+                (Array.isArray(msg.participants) ? msg.participants : []).forEach(function (p) {
+                    if (!p || !p.userId) return;
+                    knownParticipants.set(p.userId, p.role);
+                    listedIds.add(p.userId);
+                });
+                //  إغلاق أي اتصال بأسماء لم تعد في الغرفة (أُعيد انضمامنا بعد انقطاع وخرج الآخرون)
+                peerConnections.forEach(function (pc, uid) {
+                    if (!listedIds.has(uid)) {
+                        console.log('[ZoomyRTC] Closing stale peer (not in room):', uid);
+                        closePeerConnection(uid);
+                    }
+                });
                 //  الأستاذ ينشئ اتصالاً بالمشاركين الموجودين مسبقاً (طالب دخل قبل الأستاذ)
-                if (currentRole === 'teacher' && Array.isArray(msg.participants)) {
+                if (currentRole === 'teacher') {
                     msg.participants.forEach(function (p) {
                         if (p && p.userId !== currentUserId && p.role === 'student') {
+                            //  اتصال عالق بحالة فشل يُغلق أولاً ليُعاد عرضه من جديد
+                            const existing = peerConnections.get(p.userId);
+                            if (existing && existing.connectionState === 'failed') closePeerConnection(p.userId);
                             createPeerConnection(p.userId, true);
                         }
                     });
@@ -162,16 +291,20 @@
 
             case 'participant-joined':
                 console.log('[ZoomyRTC] Participant joined:', msg.userId, msg.role);
+                if (msg.userId) knownParticipants.set(msg.userId, msg.role);
                 if (onParticipantJoinedCallback) onParticipantJoinedCallback(msg.userId, msg.role);
                 // إذا كنا نعلم، ننشئ اتصال للطالب الجديد
                 if (currentRole === 'teacher') {
                     createPeerConnection(msg.userId, true);
+                    reapplyBitrateCapsSoon(); // قد يتغيّر حجم السقف مع عدد المتصلين
                 }
                 break;
 
             case 'participant-left':
                 console.log('[ZoomyRTC] Participant left:', msg.userId);
+                if (msg.userId) knownParticipants.delete(msg.userId);
                 closePeerConnection(msg.userId);
+                if (currentRole === 'teacher') reapplyBitrateCapsSoon();
                 if (onParticipantLeftCallback) onParticipantLeftCallback(msg.userId);
                 break;
 
@@ -209,9 +342,15 @@
                 break;
 
             case 'sync-request':
-                // طلب مزامنة من طالب
+                //  طلب مزامنة من طالب: الأستاذ يُعيد إنشاء الاتصال ويرسل عرضاً جديداً
+                //  (طلب العرض صريح requestOffer — يُستعمل بعد انقطاع أو انقعاد الاتصال)
                 if (currentRole === 'teacher') {
-                    sendSyncData(msg.from);
+                    if (msg.requestOffer) {
+                        closePeerConnection(msg.from);
+                        createPeerConnection(msg.from, true);
+                    } else {
+                        sendSyncData(msg.from);
+                    }
                 }
                 break;
 
@@ -225,10 +364,9 @@
         }
     }
 
-    // تحديد سقف البِت ريت لكل مسار مُرسَل: الأستاذ يرفع تدفّقاً واحداً محدوداً
-    // لكل طالب (≈700 كيلوبت للفيديو +64 للصوت) بدل الجودة الكاملة لكل طالب.
-    // هذه أهم إجراءات الاستيعاب: تخفض رفع الأستاذ من ≈2 ميغابت للطالب إلى
-    // أقل من ميغابت، فتصمد الحصص الطويلة وأعداد الطلاب الأكبر دون قطع البث.
+    // تحديد سقف البِت ريت لكل مسار مُرسَل حسب سلملة تكيّفية (videoBitrateForPeers):
+    // ≤10 طلاب 700k | ≤30 طلاب 350k | >30 طلاب 250k — فترفع الأستاذ تدفّقاً واحداً
+    // محدوداً لكل طالب بدل الجودة الكاملة، وتُعاد السلملة تلقائياً عند تغيّر العدد.
     async function applyBitrateCaps(pc) {
         try {
             const senders = pc.getSenders() || [];
@@ -237,7 +375,7 @@
                 const params = sender.getParameters();
                 if (!params.encodings || !params.encodings.length) params.encodings = [{}];
                 if (sender.track.kind === 'video') {
-                    params.encodings[0].maxBitrate = 700000;
+                    params.encodings[0].maxBitrate = videoBitrateForPeers();
                 } else if (sender.track.kind === 'audio') {
                     params.encodings[0].maxBitrate = 64000;
                 }
@@ -570,6 +708,9 @@
 
     function disconnect() {
         stopPing();
+        stopHealthSweep();
+        if (reapplyCapsTimer) clearTimeout(reapplyCapsTimer);
+        reapplyCapsTimer = null;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectAttempts = maxReconnectAttempts; // منع إعادة الاتصال
         

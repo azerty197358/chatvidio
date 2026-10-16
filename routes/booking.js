@@ -433,9 +433,10 @@ router.post('/create', authenticate, authorize(['student']), [
             success: true,
             session_id: session.id,
             is_free: isFree,
-            pending_balance: isFree ? 0 : offer.price,
-            platform_fee: isFree ? 0 : (offer.duration <= 120 ? 100 : (offer.duration <= 240 ? 200 : 600)),
-            teacher_amount: isFree ? 0 : Math.max(0, offer.price - (offer.duration <= 120 ? 100 : (offer.duration <= 240 ? 200 : 600))),
+            pending_balance: isFree ? 0 : totalTeacherPrice,
+            platform_fee: isFree ? 0 : totalPlatformFee,
+            teacher_amount: isFree ? 0 : totalTeacherPrice,
+            total_cost: isFree ? 0 : totalCostForStudent,
             message: 'تم حجز هذا الدرس، سيتم إرسال إشعار لك عند بدء البث، انتظر هذا.',
             total_booked: totalBooked,
             room_password: studentPassword,
@@ -728,10 +729,24 @@ router.post('/confirm-session-incomplete', authenticate, authorize(['teacher', '
         }
 
         // ✅ حساب المبلغ بدقة (حصة من إجمالي مبلغ الأستاذ المعلق)
-        const teacherSharePerSession = parseFloat(sub.teacher_total_escrow) / parseFloat(sub.total_sessions);
+        const totalSessionsN = parseFloat(sub.total_sessions) || 1;
+        const teacherSharePerSession = parseFloat(sub.teacher_total_escrow) / totalSessionsN;
 
-        // ✅ إعادة المبلغ للطالب (إجمالي مبلغ الاشتراك / عدد الحصص)
-        const amountPerSessionForStudent = parseFloat(sub.total_amount_paid) / parseFloat(sub.total_sessions);
+        // ✅ ثابت الاسترداد: حصّة الطالب من هذه الحصة = سعر الحصة بدون رسوم المنصة،
+        // وبحد أقصى: min(المدفوع, سعر الحصص) − ما حصل عليه الأستاذ مسبقاً − استردادات سابقة
+        const teacherEscrowTotal = parseFloat(sub.teacher_total_escrow) > 0
+            ? parseFloat(sub.teacher_total_escrow)
+            : (parseFloat(sub.total_amount_paid) || 0);
+        const pricePerSessionForStudent = parseFloat(sub.price_per_session) > 0
+            ? parseFloat(sub.price_per_session)
+            : (teacherEscrowTotal / totalSessionsN);
+        const totalCapForSub = Math.max(0, Math.min(parseFloat(sub.total_amount_paid) || 0, teacherEscrowTotal));
+        const remainingRefundableForSub = Math.max(0, Math.round((
+            totalCapForSub
+            - (parseFloat(sub.teacher_released_so_far) || 0)
+            - (parseFloat(sub.refunded_amount) || 0)
+        ) * 100) / 100);
+        const amountPerSessionForStudent = Math.max(0, Math.min(pricePerSessionForStudent, remainingRefundableForSub));
 
         const student = await getOne('students', 'id', sub.student_id);
         const teacher = await getOne('teachers', 'id', sub.teacher_id);

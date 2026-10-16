@@ -282,7 +282,7 @@ async function creditWalletTransaction(transaction) {
 // ============================================================
 router.post('/deposit', authenticate, authorize(['student']), [
     body('student_id').isInt().withMessage('معرف الطالب غير صالح'),
-    body('amount').isInt({ min: 100, max: 1000000 }).withMessage('المبلغ يجب أن يكون بين 100 و 1,000,000 دج')
+    body('amount').isInt({ min: 1, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى يُحدَّد من إعدادات المنصة)')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -301,8 +301,29 @@ router.post('/deposit', authenticate, authorize(['student']), [
             return res.status(404).json({ success: false, error: 'الطالب غير موجود' });
         }
 
-        const finalAmount = Math.round(Math.max(Number(amount), 100));
-        const paymentFee = Math.round(finalAmount * 0.01);
+        // ✅ قراءة رسوم شحن الرصيد والحد الأدنى من إعدادات لوحة الإدارة
+        let depositFeePct = 1, depositFeeFixed = 0, minDepositAmount = 100;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            if (revRow && revRow.value) {
+                const pct = parseFloat(revRow.value.deposit_fee_percentage);
+                const fixed = parseFloat(revRow.value.deposit_fee_fixed);
+                const minDep = parseFloat(revRow.value.min_deposit_amount);
+                if (!isNaN(pct)) depositFeePct = pct;
+                if (!isNaN(fixed)) depositFeeFixed = fixed;
+                if (!isNaN(minDep) && minDep >= 0) minDepositAmount = minDep;
+            }
+        } catch (e) { /* استخدام القيم الافتراضية */ }
+        if (Number(amount) < minDepositAmount) {
+            return res.status(400).json({ success: false, error: `الحد الأدنى لشحن الرصيد هو ${minDepositAmount} دج` });
+        }
+
+        const finalAmount = Math.round(Math.max(Number(amount), minDepositAmount));
+        const paymentFee = Math.round(finalAmount * (depositFeePct / 100)) + depositFeeFixed;
         const totalCharged = finalAmount + paymentFee;
 
         const transaction = await insert('wallet_transactions', {
@@ -310,7 +331,7 @@ router.post('/deposit', authenticate, authorize(['student']), [
             amount: finalAmount,
             type: 'deposit',
             status: 'pending',
-            description: `طلب شحن رصيد بقيمة ${finalAmount} دج (+ 1% رسوم دفع: ${paymentFee} دج | الإجمالي المسدد: ${totalCharged} دج)`,
+            description: `طلب شحن رصيد بقيمة ${finalAmount} دج (+ ${depositFeePct}% رسوم دفع: ${paymentFee} دج | الإجمالي المسدد: ${totalCharged} دج)`,
             created_at: new Date().toISOString()
         });
 
@@ -375,7 +396,7 @@ router.post('/deposit', authenticate, authorize(['student']), [
 // ============================================================
 router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
     body('teacher_id').isInt().withMessage('معرف الأستاذ غير صالح'),
-    body('amount').isInt({ min: 100, max: 1000000 }).withMessage('المبلغ يجب أن يكون بين 100 و 1,000,000 دج')
+    body('amount').isInt({ min: 1, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى يُحدَّد من إعدادات المنصة)')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -394,8 +415,29 @@ router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
             return res.status(404).json({ success: false, error: 'الأستاذ غير موجود' });
         }
 
-        const finalAmount = Math.round(Math.max(Number(amount), 100));
-        const paymentFee = Math.round(finalAmount * 0.01);
+        // ✅ قراءة رسوم شحن الرصيد والحد الأدنى من إعدادات لوحة الإدارة
+        let depositFeePct = 1, depositFeeFixed = 0, minDepositAmount = 100;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            if (revRow && revRow.value) {
+                const pct = parseFloat(revRow.value.deposit_fee_percentage);
+                const fixed = parseFloat(revRow.value.deposit_fee_fixed);
+                const minDep = parseFloat(revRow.value.min_deposit_amount);
+                if (!isNaN(pct)) depositFeePct = pct;
+                if (!isNaN(fixed)) depositFeeFixed = fixed;
+                if (!isNaN(minDep) && minDep >= 0) minDepositAmount = minDep;
+            }
+        } catch (e) { /* استخدام القيم الافتراضية */ }
+        if (Number(amount) < minDepositAmount) {
+            return res.status(400).json({ success: false, error: `الحد الأدنى لشحن الرصيد هو ${minDepositAmount} دج` });
+        }
+
+        const finalAmount = Math.round(Math.max(Number(amount), minDepositAmount));
+        const paymentFee = Math.round(finalAmount * (depositFeePct / 100)) + depositFeeFixed;
         const totalCharged = finalAmount + paymentFee;
 
         const transaction = await insert('wallet_transactions', {
@@ -403,7 +445,7 @@ router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
             amount: finalAmount,
             type: 'deposit',
             status: 'pending',
-            description: `طلب شحن رصيد بقيمة ${finalAmount} دج للأستاذ (+ 1% رسوم دفع: ${paymentFee} دج | الإجمالي المسدد: ${totalCharged} دج)`,
+            description: `طلب شحن رصيد بقيمة ${finalAmount} دج للأستاذ (+ ${depositFeePct}% رسوم دفع: ${paymentFee} دج | الإجمالي المسدد: ${totalCharged} دج)`,
             created_at: new Date().toISOString()
         });
 
@@ -508,8 +550,19 @@ router.post('/manual-deposit', authenticate, upload.single('receipt'), async (re
         const notes = req.body.notes || '';
         let receiptUrl = req.body.receipt_url || '';
 
-        if (!amount || isNaN(amount) || amount < 100) {
-            return res.status(400).json({ success: false, error: 'المبلغ المطلوب شحنه يجب أن لا يقل عن 100 دج' });
+        // ✅ الحد الأدنى لشحن الرصيد من إعدادات لوحة الإدارة
+        let minDepositAmount = 100;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            const minDep = parseFloat(revRow?.value?.min_deposit_amount);
+            if (!isNaN(minDep) && minDep >= 0) minDepositAmount = minDep;
+        } catch (e) { /* استخدام القيمة الافتراضية */ }
+        if (!amount || isNaN(amount) || amount < minDepositAmount) {
+            return res.status(400).json({ success: false, error: `المبلغ المطلوب شحنه يجب ألا يقل عن ${minDepositAmount} دج` });
         }
 
         // معالجة رفع صورة الوصل

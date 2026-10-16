@@ -941,6 +941,9 @@
             <button class="nav-tab" onclick="showTab('archived-streams')" id="archivedStreamsNavBtn">
                 <i class="fas fa-history" style="color: #ec4899;"></i> أرشيف وأدلة البث المحذوفة
             </button>
+            <button class="nav-tab" onclick="showTab('live-streams')" id="liveStreamsNavBtn">
+                <i class="fas fa-tower-broadcast" style="color: #16a34a;"></i> البث المباشر والحجوزات
+            </button>
         </div>
 
         <!-- ===== PACKAGES MANAGEMENT TAB ===== -->
@@ -2022,6 +2025,71 @@
             </div>
         </div>
 
+        <!-- نظرة عامة على البث المباشر والحجوزات والإنجاز (Live Streams Overview) -->
+        <div id="live-streamsTab" style="display: none; margin-top: 20px;">
+            <div style="background: #ffffff; border-radius: 16px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04); border: 1px solid #e2e8f0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+                    <div>
+                        <h3 style="color: #0f172a; margin: 0; font-size: 1.25rem; font-weight: 800; display: flex; align-items: center; gap: 10px;">
+                            <i class="fas fa-tower-broadcast" style="color: #16a34a;"></i>
+                            <span>البث المباشر والحجوزات والإنجاز</span>
+                        </h3>
+                        <p style="color: #64748b; font-size: 0.85rem; margin-top: 4px; margin-bottom: 0;">حالة كل درس، الطلاب المحجزون وأسماؤهم، الإيرادات المحصلة، نسبة إنجاز الحصص، وغرف WebRTC النشطة الآن مباشرة من خادم الإشارات.</p>
+                    </div>
+                    <button onclick="loadStreamsOverview()" style="background: #16a34a; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <i class="fas fa-sync-alt"></i> تحديث
+                    </button>
+                </div>
+
+                <!-- إحصائيات سريعة -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px;">
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 14px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 800; color: #16a34a;" id="liveStreamsCount">0</div>
+                        <div style="font-size: 0.8rem; color: #166534; font-weight: 700; margin-top: 4px;"><i class="fas fa-signal"></i> بثوث نشطة الآن</div>
+                    </div>
+                    <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 14px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 800; color: #2563eb;" id="liveBookedCount">0</div>
+                        <div style="font-size: 0.8rem; color: #1e40af; font-weight: 700; margin-top: 4px;"><i class="fas fa-users"></i> إجمالي الحجوزات (آخر 60 درساً)</div>
+                    </div>
+                    <div style="background: #fff7ed; border: 1px solid #ffedd5; border-radius: 12px; padding: 14px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 800; color: #ea580c;" id="liveRevenueTotal">0</div>
+                        <div style="font-size: 0.8rem; color: #9a3412; font-weight: 700; margin-top: 4px;"><i class="fas fa-coins"></i> إجمالي المحصل (دج)</div>
+                    </div>
+                    <div style="background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 12px; padding: 14px; text-align: center;">
+                        <div style="font-size: 1.8rem; font-weight: 800; color: #7c3aed;" id="liveRoomsCount">0</div>
+                        <div style="font-size: 0.8rem; color: #5b21b6; font-weight: 700; margin-top: 4px;"><i class="fas fa-video"></i> غرف WebRTC نشطة (إشارات)</div>
+                    </div>
+                </div>
+
+                <!-- جدول نظرة البث -->
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: right; font-size: 0.88rem;">
+                        <thead>
+                            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; color: #475569;">
+                                <th style="padding: 12px;">ID الدرس</th>
+                                <th style="padding: 12px;">المادة</th>
+                                <th style="padding: 12px;">الأستاذ</th>
+                                <th style="padding: 12px;">الحالة</th>
+                                <th style="padding: 12px;">الطلاب المحجزون</th>
+                                <th style="padding: 12px;">المحصل (دج)</th>
+                                <th style="padding: 12px;">إنجاز الحصص</th>
+                                <th style="padding: 12px;">غرفة البث الآن</th>
+                                <th style="padding: 12px;">تاريخ الإنشاء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="liveStreamsTableBody">
+                            <tr>
+                                <td colspan="9" style="text-align: center; padding: 30px; color: #64748b;">
+                                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                    <div style="margin-top: 10px;">جاري تحميل نظرة البث والحجوزات...</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- أرشيف وأدلة البث المحذوفة (Archived Streams & Proof Log) -->
         <div id="archived-streamsTab" style="display: none; margin-top: 20px;">
             <div style="background: #ffffff; border-radius: 16px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04); border: 1px solid #e2e8f0;">
@@ -3035,6 +3103,7 @@
             if (document.getElementById('blogs-adminTab')) document.getElementById('blogs-adminTab').style.display = tab === 'blogs-admin' ? 'block' : 'none';
             if (document.getElementById('packages-adminTab')) document.getElementById('packages-adminTab').style.display = tab === 'packages-admin' ? 'block' : 'none';
             if (document.getElementById('archived-streamsTab')) document.getElementById('archived-streamsTab').style.display = tab === 'archived-streams' ? 'block' : 'none';
+            if (document.getElementById('live-streamsTab')) document.getElementById('live-streamsTab').style.display = tab === 'live-streams' ? 'block' : 'none';
             
             document.querySelectorAll('.nav-tab').forEach(t => {
                 t.classList.remove('active');
@@ -3065,6 +3134,7 @@
             else if (tab === 'logs') loadAdminLogs();
             else if (tab === 'blogs-admin') loadAdminBlogs();
             else if (tab === 'archived-streams') loadArchivedStreamsAdmin();
+            else if (tab === 'live-streams') loadStreamsOverview();
         }
 
         // ==========================================
@@ -7181,6 +7251,97 @@ window.certifyAllTeachers = certifyAllTeachers;
                     </tr>
                 `;
             }
+        }
+
+        async function loadStreamsOverview() {
+            const tbody = document.getElementById('liveStreamsTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #64748b;"><i class="fas fa-spinner fa-spin fa-2x" style="color: #16a34a;"></i><div style="margin-top: 10px; font-weight: 700;">جاري جلب حالة البث والحجوزات...</div></td></tr>';
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch('/api/admin/streams-overview', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await res.json();
+                if (data.success && Array.isArray(data.streams)) {
+                    renderStreamsOverview(data.streams, data.live_rooms || []);
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 20px; color: #64748b;"><i class="fas fa-info-circle"></i> تعذر تحميل البيانات حالياً، أعد المحاولة بعد قليل</td></tr>';
+                }
+            } catch (error) {
+                console.warn('streams-overview load failed:', error.message);
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 20px; color: #64748b;"><i class="fas fa-info-circle"></i> تعذر الاتصال بالخادم، أعد المحاولة بعد قليل</td></tr>';
+            }
+        }
+
+        function renderStreamsOverview(list, liveRooms) {
+            const tbody = document.getElementById('liveStreamsTableBody');
+            if (!tbody) return;
+
+            const esc = (typeof escapeHtml === 'function') ? escapeHtml : function (s) { return String(s == null ? '' : s); };
+            const statusBadge = function (s) {
+                const map = {
+                    live: ['بث مباشر', '#16a34a', '#f0fdf4'],
+                    teacher_ready: ['جاهز للبث', '#2563eb', '#eff6ff'],
+                    paused: ['متوقف مؤقتاً', '#d97706', '#fffbeb'],
+                    pending: ['مجدول', '#2563eb', '#eff6ff'],
+                    scheduled: ['مجدول', '#2563eb', '#eff6ff'],
+                    active: ['نشط', '#16a34a', '#f0fdf4'],
+                    ended: ['منتهٍ', '#64748b', '#f1f5f9'],
+                    completed: ['مكتمل', '#16a34a', '#f0fdf4'],
+                    cancelled: ['ملغي', '#ef4444', '#fef2f2']
+                };
+                const m = map[s] || [s || 'غير محدد', '#64748b', '#f1f5f9'];
+                return '<span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:0.75rem;font-weight:800;color:' + m[1] + ';background:' + m[2] + ';">' + esc(m[0]) + '</span>';
+            };
+
+            document.getElementById('liveStreamsCount').innerText = list.filter(function (x) { return x.live; }).length;
+            document.getElementById('liveBookedCount').innerText = list.reduce(function (a, x) { return a + (x.booked_count || 0); }, 0);
+            document.getElementById('liveRevenueTotal').innerText = list.reduce(function (a, x) { return a + (x.revenue_total || 0); }, 0).toLocaleString('en-US');
+            document.getElementById('liveRoomsCount').innerText = (liveRooms || []).length;
+
+            if (!list.length) {
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: #64748b;">لا توجد دروس لعرضها حالياً</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = list.map(function (x) {
+                const students = x.booked_students || [];
+                let studentsHtml;
+                if (!students.length) {
+                    studentsHtml = '<span style="color:#94a3b8;">لا حجوزات</span>';
+                } else {
+                    const names = students.slice(0, 4).map(function (s) {
+                        return '<span style="display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:2px 8px;margin:1px;font-size:0.75rem;font-weight:700;color:#334155;">' + esc(s.student_name) + ' <span style="color:#94a3b8;">(' + (s.payment_amount || 0).toLocaleString('en-US') + ')</span></span>';
+                    }).join(' ');
+                    const extra = students.length > 4 ? ' <span style="font-size:0.75rem;font-weight:800;color:#2563eb;">+' + (students.length - 4) + ' طلاب</span>' : '';
+                    studentsHtml = names + extra;
+                }
+
+                const pct = Math.max(0, Math.min(100, x.completion_percent || 0));
+                const pctColor = pct >= 80 ? '#16a34a' : (pct >= 40 ? '#d97706' : '#ef4444');
+                const completionHtml = '<div style="min-width:110px;">' +
+                    '<div style="font-size:0.78rem;font-weight:800;color:' + pctColor + ';">' + pct + '% (' + (x.sessions_completed || 0) + '/' + (x.sessions_total || 0) + ')</div>' +
+                    '<div style="height:7px;background:#e2e8f0;border-radius:99px;margin-top:4px;overflow:hidden;">' +
+                    '<div style="height:100%;width:' + pct + '%;background:' + pctColor + ';border-radius:99px;"></div></div></div>';
+
+                const roomHtml = (x.signaling_participants > 0 || x.signaling_teacher_online)
+                    ? '<span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:0.75rem;font-weight:800;color:#166534;background:#dcfce7;">' + (x.signaling_teacher_online ? 'الأستاذ متصل • ' : '') + x.signaling_participants + ' مشارك</span>'
+                    : (x.live ? '<span style="color:#d97706;font-size:0.78rem;font-weight:700;">نشط (لا أحد متصل الآن)</span>' : '<span style="color:#94a3b8;">—</span>');
+
+                return '<tr style="border-bottom: 1px solid #f1f5f9;">' +
+                    '<td style="padding: 12px; font-weight: 800; color: #0f172a;">#' + x.offer_id + '</td>' +
+                    '<td style="padding: 12px;"><div style="font-weight: 700; color: #1e293b;">' + esc(x.subject_name || 'غير محدد') + '</div>' +
+                    '<div style="font-size:0.75rem;color:#94a3b8;">' + (x.duration || 60) + ' د | ' + (x.total_sessions || 1) + ' حصص | ' + (x.is_free ? 'مجاني' : (x.price || 0).toLocaleString('en-US') + ' دج/حصة') + '</div></td>' +
+                    '<td style="padding: 12px; font-weight: 700;">' + esc(x.teacher_name || '—') + '</td>' +
+                    '<td style="padding: 12px;">' + statusBadge(x.status) + '</td>' +
+                    '<td style="padding: 12px; max-width: 340px;">' + studentsHtml + '</td>' +
+                    '<td style="padding: 12px; font-weight: 800; color: #ea580c;">' + (x.revenue_total || 0).toLocaleString('en-US') + '</td>' +
+                    '<td style="padding: 12px;">' + completionHtml + '</td>' +
+                    '<td style="padding: 12px;">' + roomHtml + '</td>' +
+                    '<td style="padding: 12px; color:#64748b; font-size:0.78rem;">' + (x.created_at ? new Date(x.created_at).toLocaleDateString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric' }) : '—') + '</td>' +
+                    '</tr>';
+            }).join('');
         }
 
         function filterArchivedStreams() {

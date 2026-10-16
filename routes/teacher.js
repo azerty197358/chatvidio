@@ -1267,7 +1267,7 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
 // ============================================================
 router.post('/request-withdraw-otp', authenticate, authorize(['teacher']), [
     body('teacher_id').isInt().withMessage('معرف الأستاذ غير صالح'),
-    body('amount').isFloat({ min: 1000, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى 1000 دج)')
+    body('amount').isFloat({ min: 1, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى يُحدَّد من إعدادات المنصة)')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -1279,6 +1279,21 @@ router.post('/request-withdraw-otp', authenticate, authorize(['teacher']), [
 
         if (req.user.userId !== parseInt(teacher_id)) {
             return res.status(403).json({ success: false, error: 'غير مصرح لك بطلب السحب' });
+        }
+
+        // ✅ الحد الأدنى للمبلغ المطلوب للسحب من إعدادات لوحة الإدارة
+        let minWithdrawalAmount = 500;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            const minVal = parseFloat(revRow?.value?.min_withdrawal_amount);
+            if (!isNaN(minVal) && minVal >= 0) minWithdrawalAmount = minVal;
+        } catch (e) { /* استخدام القيمة الافتراضية */ }
+        if (parseFloat(amount) < minWithdrawalAmount) {
+            return res.status(400).json({ success: false, error: `الحد الأدنى لمبلغ السحب هو ${minWithdrawalAmount} دج` });
         }
 
         const teacher = await getOne('teachers', 'id', teacher_id);
@@ -1345,7 +1360,7 @@ router.post('/request-withdraw-otp', authenticate, authorize(['teacher']), [
 // ============================================================
 router.post('/withdraw-request', authenticate, authorize(['teacher']), [
     body('teacher_id').isInt().withMessage('معرف الأستاذ غير صالح'),
-    body('amount').isFloat({ min: 1000, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى 1000 دج)'),
+    body('amount').isFloat({ min: 1, max: 1000000 }).withMessage('المبلغ غير صالح (الحد الأدنى يُحدَّد من إعدادات المنصة)'),
     body('otp_code').isLength({ min: 6, max: 6 }).withMessage('رمز التحقق يجب أن يتكون من 6 أرقام')
 ], async (req, res) => {
     try {
@@ -1358,6 +1373,21 @@ router.post('/withdraw-request', authenticate, authorize(['teacher']), [
 
         if (req.user.userId !== parseInt(teacher_id)) {
             return res.status(403).json({ success: false, error: 'غير مصرح لك بطلب السحب' });
+        }
+
+        // ✅ الحد الأدنى للمبلغ المطلوب للسحب من إعدادات لوحة الإدارة
+        let minWithdrawalAmount = 500;
+        try {
+            const { data: revRow } = await supabase
+                .from('platform_settings')
+                .select('value')
+                .eq('key', 'revenue_settings')
+                .maybeSingle();
+            const minVal = parseFloat(revRow?.value?.min_withdrawal_amount);
+            if (!isNaN(minVal) && minVal >= 0) minWithdrawalAmount = minVal;
+        } catch (e) { /* استخدام القيمة الافتراضية */ }
+        if (parseFloat(amount) < minWithdrawalAmount) {
+            return res.status(400).json({ success: false, error: `الحد الأدنى لمبلغ السحب هو ${minWithdrawalAmount} دج` });
         }
 
             // التحقق من صحة رمز التحقق OTP

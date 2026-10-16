@@ -974,7 +974,7 @@ function appendOptimisticMessage(text, reply) {
 
         /* ===== NEWS TICKER ===== */
         .news-ticker {
-            background: var(--gradient-main);
+            background: linear-gradient(90deg, #b91c1c 0%, #dc2626 50%, #b91c1c 100%);
             color: white;
             padding: 12px 20px;
             overflow: hidden;
@@ -6283,14 +6283,14 @@ function appendOptimisticMessage(text, reply) {
                     }
                 } else {
                     const token = localStorage.getItem('token');
-                    const agoraUrl = `/api/join-zoom/${offerId}/${studentId}?token=${encodeURIComponent(token)}`;
+                    const roomJoinUrl = `/api/join-zoom/${offerId}/${studentId}?token=${encodeURIComponent(token)}`;
                     try {
-                        const newWindow = window.open(agoraUrl, '_blank');
+                        const newWindow = window.open(roomJoinUrl, '_blank');
                         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-                            window.location.href = agoraUrl;
+                            window.location.href = roomJoinUrl;
                         }
                     } catch(e) {
-                        window.location.href = agoraUrl;
+                        window.location.href = roomJoinUrl;
                     }
                 }
             } else if (data.is_waiting) {
@@ -8871,14 +8871,14 @@ toast.className = `toast ${kind}`;
         }
 
         const token = localStorage.getItem('token');
-        const agoraUrl = `/api/join-zoom/${offerId}/${studentId}?token=${encodeURIComponent(token)}`;
+        const roomJoinUrl = `/api/join-zoom/${offerId}/${studentId}?token=${encodeURIComponent(token)}`;
         try {
-            const newWindow = window.open(agoraUrl, '_blank');
+            const newWindow = window.open(roomJoinUrl, '_blank');
             if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-                window.location.href = agoraUrl;
+                window.location.href = roomJoinUrl;
             }
         } catch(e) {
-            window.location.href = agoraUrl;
+            window.location.href = roomJoinUrl;
         }
     }
 
@@ -10374,8 +10374,10 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         const amount = parseFloat(amountInput ? amountInput.value : 0);
         const notes = document.getElementById('manualDepositNotes')?.value || '';
 
-        if (!amount || isNaN(amount) || amount < 100) {
-            showToast('يرجى كتابة مبلغ صحيح لا يقل عن 100 دج', 'error');
+        const sMan = await getRevSettings();
+        const minDepositMan = getDepositMinFrom(sMan);
+        if (!amount || isNaN(amount) || amount < minDepositMan) {
+            showToast('يرجى كتابة مبلغ صحيح لا يقل عن ' + minDepositMan + ' دج', 'warning');
             return;
         }
 
@@ -10426,12 +10428,32 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         }
     }
 
-    function updateStudentDepositFee() {
+    // ✅ جلب إعدادات رسوم المنصة (مخزن مؤقت) — لعرض الرسوم والحدود الدقيقة كما يحددها المدير
+    let __revSettingsCache = null;
+    async function getRevSettings() {
+        if (__revSettingsCache) return __revSettingsCache;
+        try {
+            const res = await fetch('/api/settings/revenue_settings');
+            const data = await res.json();
+            if (data && typeof data === 'object') __revSettingsCache = data;
+        } catch (e) { /* استخدام القيم الافتراضية */ }
+        return __revSettingsCache || {};
+    }
+
+    function getDepositMinFrom(s) { const v = parseFloat(s && s.min_deposit_amount); return (!isNaN(v) && v >= 0) ? v : 100; }
+
+    async function updateStudentDepositFee() {
         const val = parseFloat(document.getElementById('depositAmount').value) || 0;
+        const s = await getRevSettings();
+        const minDeposit = getDepositMinFrom(s);
+        const pctRaw = parseFloat(s.deposit_fee_percentage);
+        const feePct = isNaN(pctRaw) ? 1 : pctRaw;
+        const fixedRaw = parseFloat(s.deposit_fee_fixed);
+        const feeFixed = isNaN(fixedRaw) ? 0 : fixedRaw;
         const box = document.getElementById('studentDepositFeeBox');
         if (!box) return;
-        if (val >= 100) {
-            const fee = Math.round(val * 0.01);
+        if (val >= minDeposit) {
+            const fee = Math.round(val * feePct / 100) + feeFixed;
             const total = val + fee;
             document.getElementById('studentDepositNetDisplay').innerText = val.toLocaleString() + ' دج';
             document.getElementById('studentDepositFeeDisplay').innerText = fee.toLocaleString() + ' دج';
@@ -10444,8 +10466,10 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
     async function depositWallet() {
         const amount = document.getElementById('depositAmount').value;
-        if (!amount || amount < 100) {
-            showToast('المبلغ يجب أن لا يقل عن 100 دج', 'error');
+        const s = await getRevSettings();
+        const minDeposit = getDepositMinFrom(s);
+        if (!amount || parseFloat(amount) < minDeposit) {
+            showToast('الحد الأدنى لشحن الرصيد هو ' + minDeposit + ' دج', 'warning');
             return;
         }
         const btn = document.querySelector('#goldCardSection .save-btn') || document.querySelector('#depositModal .save-btn');

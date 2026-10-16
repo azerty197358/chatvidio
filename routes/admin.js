@@ -21,6 +21,7 @@ const { processReferralReward } = require('../utils/referral');
 const { uploadToSupabase, validateUploadedFiles, getPublicImageUrl, deleteTeacherVerificationDocs, deleteStorageFile } = require('../utils/upload');
 const { sendTeacherApprovalEmail, sendTeacherRejectionEmail, sendEmail } = require('../utils/email');
 const { sendPushNotification } = require('../utils/notification');
+const { getRoomsSnapshot } = require('../utils/signaling');
 
 const storage = multer.memoryStorage();
 const upload = multer({ 
@@ -1019,6 +1020,120 @@ router.get('/all-offers', authenticate, authorize(['admin']), async (req, res) =
 });
 
 // ============================================================
+// ✅ نظرة عامة على البثوث والحجوزات والإنجاز (لوحة الإدارة)
+// ============================================================
+router.get('/streams-overview', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        // 1️⃣ آخر الدروس مع اسم الأستاذ
+        const { data: offers, error: offersError } = await supabase
+            .from('offers')
+            .select('id, subject_name, status, is_free, price, duration, session_duration, total_sessions, booked_count, stream_active, is_paused, created_at, teacher_id, teachers:teacher_id (full_name)')
+            .order('created_at', { ascending: false })
+            .limit(60);
+        if (offersError) throw offersError;
+
+        const offerIds = (offers || []).map(o => o.id);
+
+        // 2️⃣ حجوزات الطلاب (الأسعار والحالات)
+        let sessions = [];
+        if (offerIds.length) {
+            const { data: sessRows } = await supabase
+                .from('sessions')
+                .select('id, offer_id, student_id, payment_amount, payment_status, students:student_id (full_name)')
+                .in('offer_id', offerIds)
+                .in('payment_status', ['paid', 'pending_stream']);
+            sessions = sessRows || [];
+        }
+
+        // 3️⃣ سجلات الحصص التفصيلية (حساب نسبة الإنجاز)
+        let streamSessions = [];
+        if (offerIds.length) {
+            const { data: ssRows } = await supabase
+                .from('stream_sessions')
+                .select('offer_id, status')
+                .in('offer_id', offerIds);
+            streamSessions = ssRows || [];
+        }
+
+        // 4️⃣ البثوث النشطة حالياً
+        let activeRows = [];
+        if (offerIds.length) {
+            const { data: aRows } = await supabase
+                .from('active_stream')
+                .select('offer_id')
+                .in('offer_id', offerIds);
+            activeRows = aRows || [];
+        }
+
+        // 5️⃣ الغرف الحية عبر خادم الإشارات WebRTC (غرف بصيغة offer_<id>)
+        let roomsSnapshot = [];
+        try { roomsSnapshot = getRoomsSnapshot(); } catch (e) { /* خادم الإشارات غير مفعّل */ }
+        const roomsByOffer = {};
+        for (const r of roomsSnapshot) {
+            const m = /^offer_(\d+)/.exec(r.room_id);
+            if (m) roomsByOffer[parseInt(m[1])] = r;
+        }
+
+        const asName = (v) => Array.isArray(v) ? (v[0] && v[0].full_name) : (v && v.full_name) || null;
+
+        const streams = (offers || []).map(o => {
+            const oSessions = sessions.filter(s => s.offer_id === o.id);
+            const oSS = streamSessions.filter(s => s.offer_id === o.id);
+            const totalSS = oSS.length;
+            const completedSS = oSS.filter(s => s.status === 'completed').length;
+            const refundedSS = oSS.filter(s => s.status === 'refunded').length;
+            const room = roomsByOffer[o.id];
+            const isActive = activeRows.some(a => a.offer_id === o.id);
+            const live = isActive || o.status === 'live' || !!(room && room.participants_count > 0);
+
+            let completionPercent = 0;
+            if (totalSS > 0) completionPercent = Math.round((completedSS / totalSS) * 100);
+            else if (o.status === 'ended' || o.status === 'completed') completionPercent = 100;
+
+            return {
+                offer_id: o.id,
+                subject_name: o.subject_name,
+                status: o.status,
+                is_free: !!o.is_free,
+                price: parseFloat(o.price) || 0,
+                duration: o.duration || o.session_duration || 60,
+                total_sessions: o.total_sessions || 1,
+                created_at: o.created_at,
+                teacher_name: asName(o.teachers),
+                booked_count: oSessions.length || o.booked_count || 0,
+                booked_students: oSessions.map(s => ({
+                    student_name: asName(s.students) || 'طالب',
+                    payment_amount: parseFloat(s.payment_amount) || 0,
+                    payment_status: s.payment_status
+                })),
+                revenue_total: oSessions.reduce((a, s) => a + (parseFloat(s.payment_amount) || 0), 0),
+                live,
+                active_stream: isActive,
+                signaling_participants: room ? room.participants_count : 0,
+                signaling_teacher_online: room ? !!room.teacher_online : false,
+                sessions_total: totalSS,
+                sessions_completed: completedSS,
+                sessions_refunded: refundedSS,
+                completion_percent: completionPercent
+            };
+        });
+
+        res.json({
+            success: true,
+            streams,
+            live_rooms: roomsSnapshot.map(r => ({
+                room_id: r.room_id,
+                participants: r.participants_count,
+                teacher_online: r.teacher_online
+            }))
+        });
+    } catch (error) {
+        logger.error('❌ خطأ في نظرة البث العامة:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================================
 // ✅ إلغاء درس (من قبل المدير)
 // ============================================================
 router.post('/cancel-offer/:id', [
@@ -1059,8 +1174,33 @@ router.post('/cancel-offer/:id', [
 
         if (sessions && sessions.length > 0) {
             const isOfferFree = offer ? (offer.is_free === true || offer.is_free === 'true' || offer.is_free === 1 || offer.price === 0 || parseFloat(offer.price) === 0) : false;
+            const totalSessionsCount = parseInt(offer.total_sessions) || 1;
+            const totalTeacherPrice = parseFloat(offer.total_teacher_price) > 0
+                ? parseFloat(offer.total_teacher_price)
+                : ((parseFloat(offer.price_per_session || offer.price) || 0) * totalSessionsCount);
+
+            // ✅ جلب ما تم تحريره للأستاذ واستردادات سابقة لكل طالب
+            const releasedByStudent = {};
+            const refundedByStudent = {};
+            try {
+                const { data: subsRows } = await supabase
+                    .from('stream_subscriptions')
+                    .select('student_id, teacher_released_so_far, refunded_amount')
+                    .eq('offer_id', offerId);
+                for (const row of (subsRows || [])) {
+                    releasedByStudent[row.student_id] = parseFloat(row.teacher_released_so_far) || 0;
+                    refundedByStudent[row.student_id] = parseFloat(row.refunded_amount) || 0;
+                }
+            } catch (e) { /* لا يوجد اشتراكات */ }
+
             for (const session of sessions) {
-                const refundAmount = (!isOfferFree && session.payment_amount > 0) ? session.payment_amount : 0;
+                const paid = parseFloat(session.payment_amount) || 0;
+                const released = parseFloat(releasedByStudent[session.student_id]) || 0;
+                const prevRefunded = parseFloat(refundedByStudent[session.student_id]) || 0;
+                // ✅ ثابت الاسترداد: الاسترداد ≤ min(المدفوع, سعر الحصص) − ما حصل عليه الأستاذ مسبقاً − استردادات سابقة (رسوم المنصة لا تُسترد)
+                const refundAmount = (!isOfferFree && paid > 0)
+                    ? Math.max(0, Math.round((Math.min(paid, totalTeacherPrice) - released - prevRefunded) * 100) / 100)
+                    : 0;
                 if (refundAmount > 0) {
                     const student = await getOne('students', 'id', session.student_id);
                     if (student) {

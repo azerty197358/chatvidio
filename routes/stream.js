@@ -379,10 +379,6 @@ const handleStreamStart = async (req, res) => {
     }
 };
 
-router.post('/start-agora-stream', authenticate, authorize(['teacher']), checkNoActiveStream, [
-    body('offer_id').isInt().withMessage('معرف الدرس غير صالح')
-], handleStreamStart);
-
 router.post('/start-jitsi-stream', authenticate, authorize(['teacher']), checkNoActiveStream, [
     body('offer_id').isInt().withMessage('معرف الدرس غير صالح')
 ], handleStreamStart);

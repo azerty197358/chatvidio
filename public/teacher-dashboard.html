@@ -830,7 +830,7 @@ function appendOptimisticMessage(text, reply) {
         
         /* ===== NEWS TICKER ===== */
         .news-ticker {
-            background: var(--gradient-main);
+            background: linear-gradient(90deg, #b91c1c 0%, #dc2626 50%, #b91c1c 100%);
             color: white;
             padding: 12px 20px;
             overflow: hidden;
@@ -5612,7 +5612,7 @@ function appendOptimisticMessage(text, reply) {
                 <input type="number" id="depositAmount" placeholder="أدخل المبلغ (مثلاً: 1000)" min="100" oninput="updateTeacherDepositFee()" style="width: 100%; padding: 12px 14px; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 1rem; font-family: 'Cairo'; font-weight: 700;">
                 <span style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #64748b; font-weight: 800; font-size: 0.9rem;">دج</span>
             </div>
-            <p style="font-size:0.78rem; color:#64748b; margin: 0 0 10px 0;">الحد الأدنى للشحن: 100 دج</p>
+            <p id="depositMinHint" style="font-size:0.78rem; color:#64748b; margin: 0 0 10px 0;">الحد الأدنى للشحن: 100 دج</p>
 
             <div id="teacherDepositFeeBox" style="margin-top: 10px; padding: 12px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; font-size: 0.85rem; color: #166534; font-weight: 700; display: none;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
@@ -6272,7 +6272,7 @@ function appendOptimisticMessage(text, reply) {
         
         <div class="form-group" style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:6px; font-weight:700; color:var(--gray-800);">المبلغ المراد سحبه (بالدينار الجزائري)</label>
-            <input type="number" id="withdrawAmount" placeholder="أدخل المبلغ (الحد الأدنى 1000 دج)" min="1000" oninput="updateTeacherWithdrawFee()" style="width: 100%; padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--gray-300);">
+            <input type="number" id="withdrawAmount" placeholder="أدخل المبلغ" min="1" oninput="updateTeacherWithdrawFee()" style="width: 100%; padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--gray-300);">
             <div id="teacherWithdrawFeeBox" style="margin-top: 10px; padding: 10px 12px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; font-size: 0.82rem; color: #9f1239; font-weight: 700; display: none;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                     <span>المبلغ المخصوم من رصيدك:</span>
@@ -9734,7 +9734,7 @@ function updateUI() {
                             <button class="btn-primary" onclick="showDepositModal()" style="font-size:0.85rem; padding:8px 18px; background-color: var(--secondary); font-weight: 700;"><i class="fas fa-plus-circle"></i> شحن الرصيد</button>
                         </div>
                     </div>
-                    <p style="font-size: 0.72rem; color: var(--gray-500); margin-top: 6px; margin-bottom: 0;">* الحد الأدنى لطلب السحب: 1000 دج | يتم تحويل المستحقات مباشرة إلى حسابك الجاري CCP أو بريدي موب</p>
+                    <p style="font-size: 0.72rem; color: var(--gray-500); margin-top: 6px; margin-bottom: 0;">* الحد الأدنى لطلب السحب: <span id="minWithdrawHint">500</span> دج | يتم تحويل المستحقات مباشرة إلى حسابك الجاري CCP أو بريدي موب</p>
                 </div>
 
                 <!-- 🌟 بطاقات تفصيل مصادر الأرباح الثلاثة (الدروس، الباقات، الدورات) -->
@@ -9866,6 +9866,21 @@ function updateUI() {
 
     let currentDepositMethod = 'gold_card';
     let selectedDepositReceiptFile = null;
+
+    // ✅ جلب إعدادات رسوم المنصة (مخزن مؤقت) — لعرض الرسوم والحدود الدقيقة كما يحددها المدير
+    let __revSettingsCache = null;
+    async function getRevSettings() {
+        if (__revSettingsCache) return __revSettingsCache;
+        try {
+            const res = await fetch('/api/settings/revenue_settings');
+            const data = await res.json();
+            if (data && typeof data === 'object') __revSettingsCache = data;
+        } catch (e) { /* استخدام القيم الافتراضية */ }
+        return __revSettingsCache || {};
+    }
+
+    function getDepositMinFrom(s) { const v = parseFloat(s && s.min_deposit_amount); return (!isNaN(v) && v >= 0) ? v : 100; }
+    function getWithdrawMinFrom(s) { const v = parseFloat(s && s.min_withdrawal_amount); return (!isNaN(v) && v >= 0) ? v : 500; }
 
     function showDepositModal() {
         if (checkGuestAction()) return;
@@ -10081,8 +10096,10 @@ function updateUI() {
         const amount = parseFloat(amountInput ? amountInput.value : 0);
         const notes = document.getElementById('manualDepositNotes')?.value || '';
 
-        if (!amount || isNaN(amount) || amount < 100) {
-            showToast('يرجى كتابة مبلغ صحيح لا يقل عن 100 دج', 'error');
+        const sMan = await getRevSettings();
+        const minDepositMan = getDepositMinFrom(sMan);
+        if (!amount || isNaN(amount) || amount < minDepositMan) {
+            showToast('يرجى كتابة مبلغ صحيح لا يقل عن ' + minDepositMan + ' دج', 'warning');
             return;
         }
 
@@ -10133,12 +10150,20 @@ function updateUI() {
         }
     }
 
-    function updateTeacherDepositFee() {
+    async function updateTeacherDepositFee() {
         const val = parseFloat(document.getElementById('depositAmount').value) || 0;
+        const s = await getRevSettings();
+        const minDeposit = getDepositMinFrom(s);
+        const pctRaw = parseFloat(s.deposit_fee_percentage);
+        const feePct = isNaN(pctRaw) ? 1 : pctRaw;
+        const fixedRaw = parseFloat(s.deposit_fee_fixed);
+        const feeFixed = isNaN(fixedRaw) ? 0 : fixedRaw;
+        const minHint = document.getElementById('depositMinHint');
+        if (minHint) minHint.innerText = 'الحد الأدنى للشحن: ' + minDeposit + ' دج';
         const box = document.getElementById('teacherDepositFeeBox');
         if (!box) return;
-        if (val >= 100) {
-            const fee = Math.round(val * 0.01);
+        if (val >= minDeposit) {
+            const fee = Math.round(val * feePct / 100) + feeFixed;
             const total = val + fee;
             document.getElementById('teacherDepositNetDisplay').innerText = val.toLocaleString() + ' دج';
             document.getElementById('teacherDepositFeeDisplay').innerText = fee.toLocaleString() + ' دج';
@@ -10156,8 +10181,10 @@ function updateUI() {
 
     async function depositWallet() {
         const amount = document.getElementById('depositAmount').value;
-        if (!amount || amount < 100) {
-            showToast('المبلغ يجب أن لا يقل عن 100 دج', 'error');
+        const s = await getRevSettings();
+        const minDeposit = getDepositMinFrom(s);
+        if (!amount || parseFloat(amount) < minDeposit) {
+            showToast('الحد الأدنى لشحن الرصيد هو ' + minDeposit + ' دج', 'warning');
             return;
         }
         const btn = document.querySelector('#goldCardSection .save-btn') || document.querySelector('#depositModal .save-btn');
@@ -11659,14 +11686,14 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 showToast(`✅ تم فتح شاشة البث (الحصة رقم ${sessionNumber || 1}) بنجاح! اضغط على "👈 انقر هنا لإدخال الطلاب وبدء البث" لإتاحة الحضور للطلاب.`, 'success');
                 
                 const token = localStorage.getItem('token');
-                const teacherAgoraUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
+                const teacherRoomUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
                 try {
-                    const newWindow = window.open(teacherAgoraUrl, '_blank');
+                    const newWindow = window.open(teacherRoomUrl, '_blank');
                     if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-                        window.location.href = teacherAgoraUrl;
+                        window.location.href = teacherRoomUrl;
                     }
                 } catch(e) {
-                    window.location.href = teacherAgoraUrl;
+                    window.location.href = teacherRoomUrl;
                 }
                 setTimeout(() => loadOffers(), 1500);
             } else {
@@ -11721,14 +11748,14 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 }
             } catch(oErr) {}
 
-            const agoraUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
+            const roomJoinUrl = `/api/teacher-zoom/${offerId}?token=${encodeURIComponent(token)}`;
             try {
-                const newWindow = window.open(agoraUrl, '_blank');
+                const newWindow = window.open(roomJoinUrl, '_blank');
                 if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-                    window.location.href = agoraUrl;
+                    window.location.href = roomJoinUrl;
                 }
             } catch(e) {
-                window.location.href = agoraUrl;
+                window.location.href = roomJoinUrl;
             }
         } catch (e) {
             if (e.message !== 'انتهت صلاحية الجلسة') {
@@ -12361,12 +12388,18 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         loadBalance();
     }
 
-    function updateTeacherWithdrawFee() {
+    async function updateTeacherWithdrawFee() {
         const val = parseFloat(document.getElementById('withdrawAmount').value) || 0;
+        const s = await getRevSettings();
+        const minWithdraw = getWithdrawMinFrom(s);
+        const minHint = document.getElementById('minWithdrawHint');
+        if (minHint) minHint.innerText = minWithdraw;
+        const pctRaw = parseFloat(s.teacher_withdrawal_commission);
+        const feePct = isNaN(pctRaw) ? 1 : pctRaw;
         const box = document.getElementById('teacherWithdrawFeeBox');
         if (!box) return;
-        if (val >= 1000) {
-            const fee = Math.round(val * 0.01);
+        if (val >= minWithdraw) {
+            const fee = Math.round(val * feePct / 100);
             const net = val - fee;
             document.getElementById('teacherWithdrawGrossDisplay').innerText = val.toLocaleString() + ' دج';
             document.getElementById('teacherWithdrawFeeDisplay').innerText = fee.toLocaleString() + ' دج';
@@ -12395,8 +12428,10 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
     async function requestWithdrawOtp() {
         const amount = document.getElementById('withdrawAmount').value;
-        if (!amount || amount < 1000) {
-            showToast('المبلغ يجب أن لا يقل عن 1000 دج', 'error');
+        const sMin = await getRevSettings();
+        const minWithdraw = getWithdrawMinFrom(sMin);
+        if (!amount || parseFloat(amount) < minWithdraw) {
+            showToast('الحد الأدنى لمبلغ السحب هو ' + minWithdraw + ' دج', 'warning');
             return;
         }
 
@@ -12445,8 +12480,10 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
     async function submitWithdrawRequest() {
         const amount = document.getElementById('withdrawAmount').value;
-        if (!amount || amount < 1000) {
-            showToast('المبلغ يجب أن لا يقل عن 1000 دج', 'error');
+        const sMin = await getRevSettings();
+        const minWithdraw = getWithdrawMinFrom(sMin);
+        if (!amount || parseFloat(amount) < minWithdraw) {
+            showToast('الحد الأدنى لمبلغ السحب هو ' + minWithdraw + ' دج', 'warning');
             return;
         }
 
