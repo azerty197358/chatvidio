@@ -1002,11 +1002,11 @@ let studentData = null;
 
 const token = localStorage.getItem('token');
 
-// 🔒 حماية الصفحة والتحقق من تسجيل الدخول
-if (!token || token === 'guest_token') {
-    alert('عذراً، يجب تسجيل الدخول بحسابك لاستخدام معلم الذكاء الاصطناعي.');
-    window.location.href = '/?login=true';
-}
+// 👋 وضع الزائر: الصفحة مفتوحة للجميع — يظهر رصيد تجريبي يحفّز على التسجيل،
+// والكتابة في المحادثة مسموحة، ويُطلب تسجيل الدخول فقط عند إرسال أول رسالة
+// لتفعيل الرصيد الحقيقي وحفظ المحادثة.
+const isGuestMode = !token || token === 'guest_token';
+const DEMO_GUEST_POINTS = 50;
 
 let dailyFreePoints = 0;
 
@@ -1045,7 +1045,35 @@ async function loadStudentData() {
     }
 }
 
-loadStudentData();
+if (isGuestMode) {
+    initGuestModeUi();
+} else {
+    loadStudentData();
+}
+
+// إعداد واجهة الزائر: رصيد تجريبي مرئي يحفّز على التسجيل + دعوة التسجيل
+function initGuestModeUi() {
+    const tokensEl = document.querySelector('#tokensCount');
+    const walletEl = document.querySelector('#modalWalletBalance');
+    const noteEl = document.querySelector('#dailyPointsNote');
+    if (tokensEl) tokensEl.textContent = DEMO_GUEST_POINTS;
+    if (walletEl) walletEl.textContent = '🎁 هدية تجريبية';
+    if (noteEl) noteEl.textContent = '🎁 رصيد تجريبي مجاني — سجّل الدخول لتفعيله والمحادثة فوراً';
+    const badgeRow = tokensEl && tokensEl.parentElement;
+    if (badgeRow && !document.getElementById('demoPointsChip')) {
+        const chip = document.createElement('span');
+        chip.id = 'demoPointsChip';
+        chip.textContent = 'تجريبي';
+        chip.setAttribute('style', 'font-size: 0.62rem; background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; padding: 2px 8px; border-radius: 20px; font-weight: 800;');
+        badgeRow.appendChild(chip);
+    }
+}
+
+function openLoginGateModal() {
+    const modal = document.getElementById('loginGateModal');
+    if (modal) modal.style.display = 'flex';
+}
+window.openLoginGateModal = openLoginGateModal;
 
 // إدارة باقات النقاط
 function selectPackage(packageId) {
@@ -1058,6 +1086,7 @@ function selectPackage(packageId) {
 
 // فتح وإغلاق المودال لشحن النقاط
 buyTokensBtn.onclick = () => {
+    if (isGuestMode) { openLoginGateModal(); return; }
     document.querySelector('#modalWalletBalance').textContent = (studentData ? studentData.wallet_balance || studentData.balance || 0 : 0) + ' دج';
     buyTokensModal.style.display = 'flex';
 };
@@ -1191,7 +1220,13 @@ send.onclick = submit;
 async function submit() {
     const text = input.value.trim();
     if (!text && !imageData) return;
-    
+
+    // 👋 الزائر: عند محاولة المحادثة نفتح دعوة التسجيل لتفعيل رصيده التجريبي
+    if (isGuestMode) {
+        openLoginGateModal();
+        return;
+    }
+
     // التحقق من وجود توكن متبقي قبل الإرسال الفعلي
     const currentTokens = studentData ? (studentData.ai_tokens !== undefined ? studentData.ai_tokens : dailyFreePoints) : 0;
     if (currentTokens <= 0) {
@@ -1310,6 +1345,10 @@ async function loadConversationsList() {
 }
 
 function toggleHistoryDrawer() {
+    if (isGuestMode) {
+        openLoginGateModal();
+        return;
+    }
     const drawer = document.getElementById('historyDrawer');
     if (drawer.style.display === 'flex') {
         drawer.style.display = 'none';
@@ -1411,5 +1450,20 @@ window.addEventListener("offline", function() {
     }
 });
 </script>
+    <!-- نافذة دعوة الزائر للتسجيل لتفعيل رصيد تجريبي -->
+    <div id="loginGateModal" style="display:none; position:fixed; inset:0; background: rgba(15, 23, 42, 0.72); backdrop-filter: blur(4px); z-index: 100000; align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: #fff; width: 100%; max-width: 430px; border-radius: 22px; box-shadow: 0 25px 50px rgba(0,0,0,0.3); padding: 30px 24px; text-align: center; position: relative; overflow: hidden;">
+            <div style="font-size: 54px; margin-bottom: 4px;">🎁</div>
+            <h3 style="margin: 0 0 10px; color: #0f172a; font-size: 1.25rem; font-weight: 900;">رصيدك التجريبي جاهز: <span style="color: #7c3aed;">50 نقطة Zoomy</span></h3>
+            <p style="color: #475569; font-size: 0.92rem; line-height: 1.75; margin: 0 0 20px;">
+                سجّل الدخول الآن أو أنشئ حساباً مجانياً في ثوانٍ لتفعيل نقاطك، وحفظ محادثاتك مع <strong>Zoomy</strong>، وحل التمارين والأسئلة بالردود الفورية.
+            </p>
+            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                <button onclick="window.location.href='/?register=true'" style="background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; border: none; padding: 13px 28px; border-radius: 30px; font-weight: 800; font-size: 0.95rem; cursor: pointer; box-shadow: 0 8px 20px rgba(124, 58, 237, 0.35);">إنشاء حساب مجاني ✨</button>
+                <button onclick="window.location.href='/?login=true'" style="background: #f1f5f9; color: #0f172a; border: 1.5px solid #e2e8f0; padding: 13px 28px; border-radius: 30px; font-weight: 700; font-size: 0.95rem; cursor: pointer;">لدي حساب — دخول</button>
+            </div>
+            <button onclick="document.getElementById('loginGateModal').style.display='none'" style="margin-top: 16px; background: none; border: none; color: #94a3b8; font-size: 0.85rem; cursor: pointer; text-decoration: underline;">أكمل التجربة لاحقاً</button>
+        </div>
+    </div>
 </body>
 </html>
