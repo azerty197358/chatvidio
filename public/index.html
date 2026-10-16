@@ -6846,6 +6846,23 @@
             }, 600);
         }
 
+        // مسار متصفح النظام لجوجل (المسار الأساسي داخل التطبيق مع خط احتياطي)
+        async function startGoogleBrowserFlow(roleArg, refArg) {
+            showNotification('جاري فتح متصفح النظام لاختيار حساب Google...', 'info');
+            try {
+                var bRes = await fetch('/api/auth/google/url?role=' + encodeURIComponent(roleArg) + '&app=1' + (refArg ? '&ref=' + encodeURIComponent(refArg) : ''));
+                var bData = await bRes.json();
+                if (bData && bData.url) {
+                    // shouldOverrideUrlLoading في التطبيق يحوّل هذا الرابط إلى متصفح النظام
+                    window.location.href = bData.url;
+                    return;
+                }
+            } catch (bErr) {
+                console.warn('Google browser flow failed to start:', bErr);
+            }
+            showNotification('تعذر بدء تسجيل الدخول عبر Google، حاول مرة أخرى', 'warning');
+        }
+
         async function initiateGoogleAuth(requestedRole) {
             var role = requestedRole;
             if (role === 'login') {
@@ -6862,27 +6879,29 @@
                 }
             } catch (e) {}
 
-            // داخل تطبيق أندرويد: نفتح متصفح النظام ليختار المستخدم حسابه
-            // المحفوظ في جوجل بضغطة واحدة (بدون كتابة كلمة المرور)، ثم يعود
-            // للتطبيق تلقائياً عبر zoomdz://auth مسجّلاً بالفعل.
+            // داخل تطبيق أندرويد: أولاً نعرض قائمة حسابات جوجل المحفوظة على
+            // الجهاز نفسه (Play Services) لاختيار واحدة بضغطة واحدة، ومع أي
+            // تعذّر ننتقل لمسار متصفح النظام، ثم يعود المستخدم للتطبيق مسجّلاً.
             var isNativeAppAuth = false;
             try {
                 isNativeAppAuth = !!(window.ZoomDzNative && window.ZoomDzNative.isNativeApp && window.ZoomDzNative.isNativeApp());
             } catch (e) {}
             if (isNativeAppAuth) {
-                showNotification('جاري فتح متصفح النظام لاختيار حساب Google...', 'info');
+                window.__zoomdzGoogleNativeFailed = function() {
+                    startGoogleBrowserFlow(role, refCode);
+                };
+                var nativeStarted = false;
                 try {
-                    var nativeRes = await fetch('/api/auth/google/url?role=' + encodeURIComponent(role) + '&app=1' + (refCode ? '&ref=' + encodeURIComponent(refCode) : ''));
-                    var nativeData = await nativeRes.json();
-                    if (nativeData && nativeData.url) {
-                        // shouldOverrideUrlLoading في التطبيق يحوّل هذا الرابط إلى متصفح النظام
-                        window.location.href = nativeData.url;
-                        return;
-                    }
-                } catch (nativeErr) {
-                    console.warn('Native Google auth start failed:', nativeErr);
+                    nativeStarted = !!(window.ZoomDzNative.googleSignIn && window.ZoomDzNative.googleSignIn(role, refCode || ''));
+                } catch (e) {
+                    console.warn('Native Google picker unavailable, using browser flow:', e);
                 }
-                showNotification('تعذر بدء تسجيل الدخول عبر Google، حاول مرة أخرى', 'warning');
+                if (nativeStarted) {
+                    showNotification('اختر حساب Google من نافذة الجهاز...', 'info');
+                    return;
+                }
+                // تعذّر مسار الجهاز: متصفح النظام مباشرة
+                startGoogleBrowserFlow(role, refCode);
                 return;
             }
 

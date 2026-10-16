@@ -12,8 +12,8 @@ android {
     applicationId = "com.aistudio.chatvidio.zoomdz"
     minSdk = 24
     targetSdk = 35
-    versionCode = 7
-    versionName = "2.3.0"
+    versionCode = 8
+    versionName = "2.4.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -51,6 +51,7 @@ android {
 
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
+  implementation("com.google.android.gms:play-services-auth:21.3.0")
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)

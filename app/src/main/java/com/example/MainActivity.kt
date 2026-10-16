@@ -69,6 +69,12 @@ class MainActivity : ComponentActivity() {
     private var persistentWebView: WebView? = null
     // رابط عميق (zoomdz://auth?...) بانتظار تجهيز الـ WebView عند فتح التطبيق
     @Volatile private var pendingDeepLinkUrl: String? = null
+    // مُشغّل نافذة اختيار حساب Google من حسابات الجهاز (Google Play Services)
+    private val googleSignInLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        handleGoogleSignInResult(result.data)
+    }
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var savedWebViewState: Bundle? = null
@@ -234,6 +240,155 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {}
         return PLATFORM_URL.trimEnd('/')
+    }
+
+    // ============ تسجيل الدخول عبر Google بحسابات الجهاز (اختيار مباشر) ============
+    @Volatile private var pendingGoogleRole: String = "student"
+    @Volatile private var pendingGoogleRef: String = ""
+
+    // فتح قائمة اختيار حسابات جوجل المحفوظة على الجهاز نفسه (بدون متصفح)
+    fun startNativeGoogleSignIn(role: String?, ref: String?): Boolean {
+        return try {
+            pendingGoogleRole = if (role.isNullOrBlank()) "student" else role
+            pendingGoogleRef = ref ?: ""
+            Thread {
+                try {
+                    val clientId = fetchGoogleClientId()
+                    if (clientId.isBlank()) {
+                        notifyGoogleNativeFailed("تعذر تهيئة تسجيل الدخول عبر Google")
+                        return@Thread
+                    }
+                    runOnUiThread {
+                        try {
+                            val options = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+                                com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+                            )
+                                .requestIdToken(clientId)
+                                .requestEmail()
+                                .build()
+                            val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(this@MainActivity, options)
+                            // نخرج من أي جلسة سابقة ليظهر دائماً قائمة الاختيار
+                            // بجميع حسابات الجهاز بدل الدخول الصامت بحساب واحد
+                            client.signOut().addOnCompleteListener {
+                                try {
+                                    googleSignInLauncher.launch(client.signInIntent)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    notifyGoogleNativeFailed("تعذر فتح قائمة حسابات Google")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            notifyGoogleNativeFailed("تعذر فتح قائمة حسابات Google")
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    notifyGoogleNativeFailed("تعذر الاتصال بخدمات Google")
+                }
+            }.start()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // جلب معرّف تطبيق الويب من خادم المنصة (مطلوب لمطابقة رمز الدخول)
+    private fun fetchGoogleClientId(): String {
+        return try {
+            val url = java.net.URL("${currentPlatformOrigin()}/api/auth/google/config")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            Regex("\"client_id\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)?.trim() ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    // فشل مسار الجهاز → نُعلم الصفحة بالانتقال لمسار متصفح النظام الاحتياطي
+    private fun notifyGoogleNativeFailed(message: String) {
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            try {
+                persistentWebView?.evaluateJavascript(
+                    "(function(){ try { if (window.__zoomdzGoogleNativeFailed) window.__zoomdzGoogleNativeFailed(); } catch(e) {} })()",
+                    null
+                )
+            } catch (e: Exception) {}
+        }
+    }
+
+    // نتيجة اختيار الحساب: نستبدل الرمز بجلسة المنصة وندخل داخل التطبيق
+    private fun handleGoogleSignInResult(data: Intent?) {
+        Thread {
+            try {
+                val accountTask = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(data)
+                val account = accountTask.getResult(com.google.android.gms.api.ApiException::class.java)
+                val idToken = account?.idToken
+                if (idToken.isNullOrBlank()) {
+                    notifyGoogleNativeFailed("لم يتم استلام رمز الحساب، حاول مجدداً")
+                    return@Thread
+                }
+                val origin = currentPlatformOrigin()
+                val conn = java.net.URL("$origin/api/auth/google").openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                val payload = org.json.JSONObject().apply {
+                    put("credential", idToken)
+                    put("role", pendingGoogleRole)
+                    if (pendingGoogleRef.isNotBlank()) put("ref", pendingGoogleRef)
+                }
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                val respCode = conn.responseCode
+                val body = (if (respCode in 200..299) conn.inputStream else conn.errorStream)
+                    ?.bufferedReader()?.use { it.readText() } ?: ""
+                conn.disconnect()
+                if (respCode !in 200..299) {
+                    notifyGoogleNativeFailed("رفض الخادم تسجيل الدخول، سننقلك للمتصفح")
+                    return@Thread
+                }
+                val json = org.json.JSONObject(body)
+                val sessionToken = json.optString("token", "")
+                if (!json.optBoolean("success", false) || sessionToken.isBlank()) {
+                    notifyGoogleNativeFailed(json.optString("error", "تعذر إتمام الدخول، سننقلك للمتصفح"))
+                    return@Thread
+                }
+                val role = json.optString("role", pendingGoogleRole)
+                val redirectTo = json.optString(
+                    "redirectTo",
+                    if (role == "teacher") "/teacher-dashboard.html" else "/student-dashboard.html"
+                )
+                val requiresCompletion = json.optBoolean("requires_profile_completion", false)
+                val userValue = json.opt("user")
+                val userEnc = java.net.URLEncoder.encode(
+                    if (userValue != null && userValue !== org.json.JSONObject.NULL) userValue.toString() else "",
+                    "UTF-8"
+                )
+                val sessionUrl = "$origin/?token=" + java.net.URLEncoder.encode(sessionToken, "UTF-8") +
+                    "&role=" + java.net.URLEncoder.encode(role, "UTF-8") +
+                    "&redirectTo=" + java.net.URLEncoder.encode(redirectTo, "UTF-8") +
+                    (if (requiresCompletion) "&requires_profile_completion=true" else "") +
+                    "&userData=" + userEnc
+                runOnUiThread { persistentWebView?.loadUrl(sessionUrl) }
+            } catch (e: com.google.android.gms.api.ApiException) {
+                if (e.statusCode == 12501) {
+                    // المستخدم أغلق قائمة الاختيار بنفسه — لا شيء نفعل
+                    runOnUiThread { Toast.makeText(this, "تم إلغاء اختيار حساب Google", Toast.LENGTH_SHORT).show() }
+                } else {
+                    e.printStackTrace()
+                    notifyGoogleNativeFailed("تعذر إكمال الدخول، سننقلك لمتصفح النظام")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                notifyGoogleNativeFailed("تعذر إكمال الدخول، سننقلك لمتصفح النظام")
+            }
+        }.start()
     }
 
     private fun getRequiredPermissions(): Array<String> {
@@ -1021,7 +1176,10 @@ class MainActivity : ComponentActivity() {
 
             addJavascriptInterface(object {
                 @JavascriptInterface fun isNativeApp() = true
-                @JavascriptInterface fun getAppVersion() = "2.3.0"
+                @JavascriptInterface fun getAppVersion() = "2.4.0"
+                @JavascriptInterface fun googleSignIn(role: String?, ref: String?): Boolean {
+                    return this@MainActivity.startNativeGoogleSignIn(role, ref)
+                }
                 @JavascriptInterface fun requestMediaPermissions() {
                     requestAppStartupPermissions()
                 }
