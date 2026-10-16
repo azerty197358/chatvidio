@@ -1115,7 +1115,7 @@ const {
 router.get(['/auth/google/url', '/google/url'], async (req, res) => {
     try {
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        const host = req.get('host');
+        const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
         const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
         const role = req.query.role || 'student';
         
@@ -1154,7 +1154,7 @@ router.get(['/google/url', '/auth/google/url'], (req, res) => {
     try {
         const { role = 'student', ref = '', app = '' } = req.query;
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        const host = req.get('host');
+        const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
         const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
         const stateObj = { role, ref, redirectUri, app: app ? 1 : 0 };
         const state = encodeURIComponent(JSON.stringify(stateObj));
@@ -1188,7 +1188,7 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
             googleUser = await verifyGoogleIdToken(credential);
         } else if (code) {
             const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-            const host = req.get('host');
+            const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
             const defaultRedirect = `${protocol}://${host}/api/auth/google/callback`;
             googleUser = await exchangeGoogleCode(code, redirect_uri || defaultRedirect);
         }
@@ -1503,7 +1503,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
         const targetRole = (role === 'teacher' || role === 'admin') ? 'teacher' : 'student';
 
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        const host = req.get('host');
+        const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
         const defaultRedirect = `${protocol}://${host}/api/auth/google/callback`;
         const effectiveRedirectUri = redirectUri || defaultRedirect;
 

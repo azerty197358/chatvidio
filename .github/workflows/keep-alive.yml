@@ -1,0 +1,28 @@
+name: Keep Render backend awake
+
+# يستهدف النطاق الذي تخدمه الواجهة حالياً (Vercel للواجهة + Render للخلفية).
+# سكون Render المجاني يتوقف بعد ~15 دقيقة بلا طلبات HTTP، فنبعث نبضة كل10 دقائق
+# ليبقى الخادم مستيقظاً (API + إشارة WebRTC + المؤقتات) بلا بدء بارد مزعج.
+# ملاحظة: جدولة GitHub تعمل فقط إذا سجّل المستخدم دخولاً على المستودع كل60 يوماً.
+
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Render /api/health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit Render health endpoint
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 120 \
+              "https://chatvidio.onrender.com/api/health" || echo 000)
+            echo "attempt $i -> $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 20
+          done
+          echo "Render is cold-starting or unavailable; will retry in10 minutes."
+          exit 0

@@ -1240,6 +1240,21 @@
 
                 <div class="dashboard-expl">
                     <div class="dashboard-expl-header">
+                        <h5><i class="fas fa-server"></i> الاستضافة الهجّينة (Vercel + Render)</h5>
+                        <span class="section-badge">بنية</span>
+                    </div>
+                    <div class="dashboard-expl-body">
+                        <ul class="details-list">
+                            <li><strong>الواجهة على Vercel:</strong> الصفحات الثابتة تُخدَم من شبكة Vercel العالمية بسرعة تحميل فورية وبلا سكون/نوم، بينما تبقى المنطق كله (API وقواعد البيانات والمدفوعات وإشارة WebRTC) على خادم Render نفسه دون أي تغيير في الكود.</li>
+                            <li><strong>شفافية كاملة:</strong> جميع طلبات /api تُمرَّر تلقائياً من Vercel إلى Render، فتعمل الروابط والجلسات والدفع كما هي تماماً — ومن اختبر المنصة على Render مباشرة لا يشعر بأي فرق.</li>
+                            <li><strong>البث يعمل كالمعتاد:</strong> صوت وصورة الأستاذ تنتقل مباشرة بين المتصفحات (WebRTC)، وإشارة الغرف والدردشة اللحظية تتصل بخادم Render صراحةً عبر إعداد js/platform-config.js.</li>
+                            <li><strong>إبقاء الخادم مستيقظاً:</strong> جدولة على GitHub ترسل نبضة صحية كل10 دقائق إلى Render لمنع سكونه المجاني وبدءه البارد المتكرر.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="dashboard-expl">
+                    <div class="dashboard-expl-header">
                         <h5><i class="fas fa-video"></i> البث والدروس المباشر</h5>
                         <span class="section-badge">عروض</span>
                     </div>
