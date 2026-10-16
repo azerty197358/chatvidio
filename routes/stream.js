@@ -5,6 +5,10 @@ const logger = require('../utils/logger');
 
 const express = require('express');
 const router = express.Router();
+
+// ✅ حارس الإنهاء المزدوج: نقرة مكررة أو استدعاء متزامن لـ /end يعالج مرة واحدة فقط
+//    (المدفوعات محميّة بالقفل والعلامات، لكن الإشعارات والأرشفة كانت تتكرر عند التكرار)
+const recentlyEndingOffers = new Set();
 const { body, param, validationResult } = require('express-validator');
 const path = require('path');
 const crypto = require('crypto');
@@ -405,6 +409,14 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
         const offer_id = parseInt(req.params.offer_id);
         const early_end = req.body.early_end === true || req.query.early_end === 'true' || req.body.cancel_before_start === true;
 
+        // ✅ حارس التكرار السريع — استدعاء ثانٍ خلال ثوانٍ (نقرة مزدوجة على زر الإنهاء)
+        //    لا يعيد المعالجة ولا يكرر الإشعارات
+        if (recentlyEndingOffers.has(offer_id)) {
+            return res.json({ success: true, message: 'تم إنهاء البث بالفعل', already_ended: true });
+        }
+        recentlyEndingOffers.add(offer_id);
+        setTimeout(() => recentlyEndingOffers.delete(offer_id), 12000);
+
         // ✅ إعادة حساب الموقت على الخادم قبل القياس النهائي — نتجاهل أي "متبقي" يرسله العميل
         //    (المؤقت يعتمد على المدة المختارة عند الإنشاء ولحظة البدء والإيقافات المسجلة — محاولة التلاعب تُلغى)
         try {
@@ -435,19 +447,8 @@ router.post('/end/:offer_id', authenticate, authorize(['teacher']), validateOffe
             if (early_end) {
                 console.log(`⚠️ إنهاء مبكر - البدء في معالجة الاستردادات`);
                 await processStreamPayments(offer_id, true);
-                
-                try {
-                    await supabase.from('notifications').insert({
-                        user_id: req.user.userId,
-                        user_type: 'teacher',
-                        title: '🔴 تم إنهاء البث وحذف الدرس',
-                        message: `لقد تم إنهاء البث الخاص بـ "${currentOffer.subject_name}" وحذف الدرس واسترداد الرصيد للطلاب.`,
-                        is_read: false,
-                        created_at: new Date().toISOString()
-                    });
-                } catch (notifError) {
-                    logger.error('⚠️ خطأ في إرسال إشعار الإنهاء للأستاذ:', notifError.message);
-                }
+                // ✅ إشعار الإنهاء يأتي من التسوية نفسها (⚠️ أو 📊) مرة واحدة وبنسب دقيقة —
+                //    إشعار منفصل هنا كان يتكرر مع كل استدعاء مكرر لـ /end
             } else {
                 console.log(`✅ إنهاء البث - معالجة توزيع الرصيد للأستاذ/الاسترداد حسب وقت البث`);
                 await processStreamPayments(offer_id, false);

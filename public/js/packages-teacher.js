@@ -92,6 +92,10 @@ function renderTeacherPackages() {
 
                 <div style="padding:16px; flex:1; display:flex; flex-direction:column;">
                     <h3 style="font-size:1.05rem; font-weight:800; color:#0f172a; margin-bottom:8px; line-height:1.4;">${pkg.title}</h3>
+                    ${(pkg.status === 'rejected' && pkg.rejection_reason) ? `
+                        <div style="background:#fef2f2; border:1px solid #fecaca; border-right:4px solid #ef4444; padding:8px 10px; border-radius:8px; margin-bottom:10px; font-size:0.8rem; color:#991b1b; line-height:1.6; word-break:break-word;">
+                            <i class="fas fa-exclamation-circle"></i> <strong>سبب الرفض:</strong> ${String(pkg.rejection_reason).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                        </div>` : ''}
                     <p style="font-size:0.82rem; color:#64748b; line-height:1.5; margin-bottom:14px; flex:1; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
                         ${pkg.description || 'باقة تعليمية شاملة تحتوي على دروس ومحاور ومرفقات وسلاسل تمارين ودورات مكثفة.'}
                     </p>

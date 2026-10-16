@@ -6862,15 +6862,18 @@ window.certifyAllTeachers = certifyAllTeachers;
 
         async function rejectCourse(id) {
             if (!confirm('هل أنت متأكد من رفض طلب نشر هذه الدورة؟')) return;
+            // ✅ سبب الرفض اختياري لكنه يظهر للأستاذ في إشعار وبطاقة الدورة
+            const reason = (prompt('سبب الرفض — سيظهر للأستاذ في إشعاراته (اختياري):', '') || '').slice(0, 500);
             try {
                 const token = localStorage.getItem('token');
                 const res = await fetch(`/api/admin/courses/${id}/reject`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason })
                 });
                 const data = await res.json();
                 if (data.success) {
-                    alert('❌ تم رفض طلب نشر الدورة.');
+                    alert('❌ تم رفض الدورة.' + (reason ? ' أُرسل إشعار للأستاذ يحتوي على سبب الرفض.' : ''));
                     loadPendingCourses();
                     updateAdminCounts();
                 } else {
@@ -7137,15 +7140,18 @@ window.certifyAllTeachers = certifyAllTeachers;
 
         async function rejectPackage(id) {
             if (!confirm('هل أنت متأكد من رفض طلب نشر هذه الباقة؟ لن تظهر للطلاب.')) return;
+            // ✅ سبب الرفض اختياري لكنه يظهر للأستاذ في إشعار وبطاقة الباقة
+            const reason = (prompt('سبب الرفض — سيظهر للأستاذ في إشعاراته (اختياري):', '') || '').slice(0, 500);
             try {
                 const token = localStorage.getItem('token');
                 const res = await fetch(`/api/admin/packages/${id}/reject`, {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token }
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason })
                 });
                 const data = await res.json();
                 if (data.success) {
-                    alert('❌ تم رفض طلب نشر الباقة');
+                    alert('❌ تم رفض الباقة.' + (reason ? ' أُرسل إشعار للأستاذ يحتوي على سبب الرفض.' : ''));
                     loadPendingPackages();
                     updateAdminCounts();
                 } else {

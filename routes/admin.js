@@ -2870,6 +2870,20 @@ router.post('/courses/:id/approve', authenticate, authorize(['admin']), async (r
             return res.status(500).json({ success: false, error: error.message });
         }
 
+        // ✅ إشعار الأستاذ بالقبول — يعرف فوراً أن دورته صارت منشورة
+        const approvedCourse = data && data[0];
+        if (approvedCourse && approvedCourse.teacher_id) {
+            const { error: nErr } = await supabase.from('notifications').insert({
+                user_id: approvedCourse.teacher_id,
+                user_type: 'teacher',
+                title: '✅ تم قبول ونشر دورتك',
+                message: `دورتك "${approvedCourse.title}" تمت مراجعتها وتم نشرها الآن في المنصة — أصبحت متاحة للطلاب. بالتوفيق!`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            if (nErr) logger.warn('⚠️ تعذر إرسال إشعار قبول الدورة:', nErr.message);
+        }
+
         res.json({ success: true, message: '✅ تم قبول الدورة ونشرها بنجاح', course: data?.[0] });
     } catch (error) {
         logger.error('❌ خطأ في قبول نشر الدورة:', error.message);
@@ -2877,7 +2891,7 @@ router.post('/courses/:id/approve', authenticate, authorize(['admin']), async (r
     }
 });
 
-// POST /api/admin/courses/:id/reject - رفض طلب نشر الدورة
+// POST /api/admin/courses/:id/reject - رفض طلب نشر الدورة (مع سبب الرفض في إشعار الأستاذ)
 router.post('/courses/:id/reject', authenticate, authorize(['admin']), async (req, res) => {
     try {
         const courseId = parseInt(req.params.id);
@@ -2885,18 +2899,45 @@ router.post('/courses/:id/reject', authenticate, authorize(['admin']), async (re
             return res.status(400).json({ success: false, error: 'معرف الدورة غير صالح' });
         }
 
-        const { data, error } = await supabase
+        const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500);
+
+        // ✅ تخزين سبب الرفض (إن وجد عمود rejection_reason) — وإلا يُحفظ الحالة فقط
+        //    (الإشعار الذي يصل للأستاذ يحمل السبب في كل الأحوال)
+        let { data, error } = await supabase
             .from('courses')
-            .update({ status: 'rejected' })
+            .update({ status: 'rejected', rejection_reason: reason || null })
             .eq('id', courseId)
             .select();
+        if (error) {
+            const retry = await supabase
+                .from('courses')
+                .update({ status: 'rejected' })
+                .eq('id', courseId)
+                .select();
+            data = retry.data;
+            error = retry.error;
+        }
 
         if (error) {
             logger.error('❌ خطأ في رفض الدورة:', error.message);
             return res.status(500).json({ success: false, error: error.message });
         }
 
-        res.json({ success: true, message: '❌ تم رفض طلب نشر الدورة', course: data?.[0] });
+        // ✅ إشعار الأستاذ بسبب الرفض — يظهر في جرس إشعاراته فوراً
+        const rejectedCourse = data && data[0];
+        if (rejectedCourse && rejectedCourse.teacher_id) {
+            const { error: nErr } = await supabase.from('notifications').insert({
+                user_id: rejectedCourse.teacher_id,
+                user_type: 'teacher',
+                title: '❌ تم رفض نشر دورتك',
+                message: `دورتك "${rejectedCourse.title}" مرفوضة من الإدارة.${reason ? ' سبب الرفض: ' + reason : ' تواصل مع الإدارة لمعرفة التفاصيل.'} يمكنك التعديل وإعادة الإرسال للمراجعة.`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            if (nErr) logger.warn('⚠️ تعذر إرسال إشعار رفض الدورة:', nErr.message);
+        }
+
+        res.json({ success: true, message: '❌ تم رفض طلب نشر الدورة' + (reason ? ' وأُبلغ الأستاذ بالسبب في إشعاراته' : ''), course: data?.[0] });
     } catch (error) {
         logger.error('❌ خطأ في رفض الدورة:', error.message);
         res.status(500).json({ success: false, error: error.message });
@@ -2944,6 +2985,20 @@ router.post('/packages/:id/approve', authenticate, authorize(['admin']), async (
             return res.status(500).json({ success: false, error: 'تعذر قبول الباقة' });
         }
 
+        // ✅ إشعار الأستاذ بالقبول — يعرف فوراً أن باقته صارت منشورة
+        const approvedPkg = data && data[0];
+        if (approvedPkg && approvedPkg.teacher_id) {
+            const { error: nErr } = await supabase.from('notifications').insert({
+                user_id: approvedPkg.teacher_id,
+                user_type: 'teacher',
+                title: '✅ تم قبول ونشر باقتك',
+                message: `باقتك "${approvedPkg.title}" تمت مراجعتها وتم قبولها ونشرها الآن — أصبحت متاحة للاشتراك لدى الطلاب. بالتوفيق!`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            if (nErr) logger.warn('⚠️ تعذر إرسال إشعار قبول الباقة:', nErr.message);
+        }
+
         res.json({ success: true, message: '✅ تم قبول الباقة ونشرها للطلاب', package: data?.[0] });
     } catch (error) {
         logger.error('❌ خطأ في قبول نشر الباقة:', error.message);
@@ -2951,7 +3006,7 @@ router.post('/packages/:id/approve', authenticate, authorize(['admin']), async (
     }
 });
 
-// POST /api/admin/packages/:id/reject - رفض طلب نشر الباقة
+// POST /api/admin/packages/:id/reject - رفض طلب نشر الباقة (مع سبب الرفض في إشعار الأستاذ)
 router.post('/packages/:id/reject', authenticate, authorize(['admin']), async (req, res) => {
     try {
         const packageId = parseInt(req.params.id);
@@ -2959,18 +3014,45 @@ router.post('/packages/:id/reject', authenticate, authorize(['admin']), async (r
             return res.status(400).json({ success: false, error: 'معرف الباقة غير صالح' });
         }
 
-        const { data, error } = await supabase
+        const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500);
+
+        // ✅ تخزين سبب الرفض (إن وجد عمود rejection_reason) — وإلا يُحفظ الحالة فقط
+        //    (الإشعار الذي يصل للأستاذ يحمل السبب في كل الأحوال)
+        let { data, error } = await supabase
             .from('packages')
-            .update({ status: 'rejected', updated_at: new Date().toISOString() })
+            .update({ status: 'rejected', rejection_reason: reason || null, updated_at: new Date().toISOString() })
             .eq('id', packageId)
             .select();
+        if (error) {
+            const retry = await supabase
+                .from('packages')
+                .update({ status: 'rejected', updated_at: new Date().toISOString() })
+                .eq('id', packageId)
+                .select();
+            data = retry.data;
+            error = retry.error;
+        }
 
         if (error) {
             logger.error('❌ خطأ في رفض الباقة:', error.message);
             return res.status(500).json({ success: false, error: 'تعذر رفض الباقة' });
         }
 
-        res.json({ success: true, message: '❌ تم رفض طلب نشر الباقة', package: data?.[0] });
+        // ✅ إشعار الأستاذ بسبب الرفض — يظهر في جرس إشعاراته فوراً
+        const rejectedPkg = data && data[0];
+        if (rejectedPkg && rejectedPkg.teacher_id) {
+            const { error: nErr } = await supabase.from('notifications').insert({
+                user_id: rejectedPkg.teacher_id,
+                user_type: 'teacher',
+                title: '❌ تم رفض نشر باقتك',
+                message: `باقتك "${rejectedPkg.title}" مرفوضة من الإدارة.${reason ? ' سبب الرفض: ' + reason : ' تواصل مع الإدارة لمعرفة التفاصيل.'} يمكنك تعديلها وإعادة إرسالها للمراجعة.`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+            if (nErr) logger.warn('⚠️ تعذر إرسال إشعار رفض الباقة:', nErr.message);
+        }
+
+        res.json({ success: true, message: '❌ تم رفض طلب نشر الباقة' + (reason ? ' وأُبلغ الأستاذ بالسبب في إشعاراته' : ''), package: data?.[0] });
     } catch (error) {
         logger.error('❌ خطأ في رفض الباقة:', error.message);
         res.status(500).json({ success: false, error: 'تعذر رفض الباقة' });

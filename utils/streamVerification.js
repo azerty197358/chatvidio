@@ -621,15 +621,17 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     }
 
     if (isMultiSession) {
+        let releaseResult = null;
+        let refundResult = null;
         if (isCompleted && !earlyEnd) {
             try {
-                await releasePlanSessionEscrow(offerId);
+                releaseResult = await releasePlanSessionEscrow(offerId);
             } catch (e) {
                 console.error('خطأ في تحرير مستحقات حصة الخطة:', e.message);
             }
         } else {
             try {
-                await refundPlanSessionEscrow(offerId);
+                refundResult = await refundPlanSessionEscrow(offerId);
             } catch (e) {
                 console.error('خطأ في استرداد مبلغ الحصة للطلاب:', e.message);
             }
@@ -657,16 +659,22 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
                 .eq('payment_status', 'pending_stream');
         }
         
-        await supabase
-            .from('notifications')
-            .insert({
-                user_id: offer.teacher_id,
-                user_type: 'teacher',
-                title: '📊 تقرير حصة',
-                message: `تم إنهاء حصة من الخطة "${offer.subject_name}". ${(isCompleted && !earlyEnd) ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}`,
-                is_read: false,
-                created_at: new Date().toISOString()
-            });
+        // ✅ إشعار واحد فقط عند عمل حقيقي هذه المرة:
+        //    التحرير يُشعر بـ 💰 داخل releasePlanSessionEscrow، والاسترداد الفعلي يُشعر هنا بـ 📊 —
+        //    الاستدعاء المكرر (نقرة مزدوجة على الإنهاء أو حذف الدرس بعد إنتهائه) لا يولّد إشعاراً ثانياً
+        const planRefundedNow = !!(refundResult && refundResult.success && !refundResult.already_processed);
+        if (planRefundedNow) {
+            await supabase
+                .from('notifications')
+                .insert({
+                    user_id: offer.teacher_id,
+                    user_type: 'teacher',
+                    title: '📊 تقرير حصة',
+                    message: `تم إنهاء حصة من الخطة "${offer.subject_name}". ${(isCompleted && !earlyEnd) ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}`,
+                    is_read: false,
+                    created_at: new Date().toISOString()
+                });
+        }
             
         return;
     }
@@ -716,7 +724,9 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
     const settleElapsed = Math.min(settleTotal, Math.max(0, actualSeconds || 0));
     const settleStartMs = Date.now() - settleElapsed * 1000;
 
+    let settledAny = false;
     for (const session of (sessions || [])) {
+        settledAny = true;
         // ✅ دخول متأخر: حتى على درس مكتمل لا يُضاف للأستاذ إلا وقته الفعلي مع هذا الطالب
         const bookedMsLate = session.created_at ? Date.parse(session.created_at) : NaN;
         const isLateJoiner = !isNaN(bookedMsLate) && bookedMsLate > settleStartMs;
@@ -840,16 +850,20 @@ async function processStreamPaymentsUnlocked(offerId, earlyEnd = false) {
         }
     }
     
-    await supabase
-        .from('notifications')
-        .insert({
-            user_id: offer.teacher_id,
-            user_type: 'teacher',
-            title: '📊 تقرير البث',
-            message: `تم إنهاء البث "${offer.subject_name}". ${isCompleted ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}${releasedSessionTotal > 0 ? ` حُرر ${releasedSessionTotal} دج من المبلغ أثناء البث.` : ''}`,
-            is_read: false,
-            created_at: new Date().toISOString()
-        });
+    // ✅ إشعار واحد فقط إن سوّت جلسة فعلياً هذه المرة — استدعاء الإنهاء المكرر
+    //    (نقرة مزدوجة أو حذف الدرس بعد إنتهائه) لا يعيد نفس الإشعار
+    if (settledAny) {
+        await supabase
+            .from('notifications')
+            .insert({
+                user_id: offer.teacher_id,
+                user_type: 'teacher',
+                title: '📊 تقرير البث',
+                message: `تم إنهاء البث "${offer.subject_name}". ${isCompleted ? 'تمت الحصة بنجاح.' : 'لم يتم إكمال مدة البث المطلوبة.'}${releasedSessionTotal > 0 ? ` حُرر ${releasedSessionTotal} دج من المبلغ أثناء البث.` : ''}`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+    }
 }
 
 
@@ -1417,6 +1431,16 @@ async function refundPlanSessionEscrow(offerId, sessionNumber = null) {
                 if (!error) break;
             } catch (e) {}
         }
+
+        // ✅ نتيجة الاسترداد الفعلي — يستعملها معالج الإنهاء لتقرير إشعار واحد فقط
+        //    (مسارات الحماية المبكرة تعود بـ already_processed وبدون تكرار)
+        return {
+            success: true,
+            already_processed: false,
+            session_number: currentSessionNum,
+            amount_refunded: amountToRefundTotal,
+            refunded_students: (students || []).length
+        };
 
     } catch (e) {
         console.error('خطأ في refundPlanSessionEscrow:', e);

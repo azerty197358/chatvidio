@@ -6513,7 +6513,7 @@ function appendOptimisticMessage(text, reply) {
     </div>
     <div class="modal-footer" style="padding: 14px 20px;">
         <button class="cancel-btn" onclick="closeModal()">إلغاء</button>
-        <button class="save-btn" onclick="createOffer()"><i class="fas fa-check"></i> إنشاء البث / الخطة</button>
+        <button class="save-btn" id="createOfferBtn" onclick="createOffer()"><i class="fas fa-check"></i> إنشاء البث / الخطة</button>
     </div>
 </div>
 
@@ -6823,7 +6823,7 @@ function appendOptimisticMessage(text, reply) {
     </div>
     <div class="modal-footer">
         <button class="cancel-btn" onclick="closeModal()">إلغاء</button>
-        <button class="save-btn" onclick="createCourse()">إنشاء الدورة</button>
+        <button class="save-btn" id="createCourseBtn" onclick="createCourse()">إنشاء الدورة</button>
     </div>
 </div>
 
@@ -12215,6 +12215,14 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         });
 
         isCreatingOffer = true;
+        // ✅ عجلة تحميل فورية على الزر + تعطيله — الأستاذ يرى أن الإنشاء جارٍ ولا ينقر مكرراً
+        const createOfferBtn = document.getElementById('createOfferBtn');
+        if (createOfferBtn) {
+            createOfferBtn.disabled = true;
+            createOfferBtn.style.opacity = '0.75';
+            createOfferBtn.style.cursor = 'wait';
+            createOfferBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري إنشاء الدرس... الرجاء الانتظار';
+        }
         try {
             const res = await fetchWithAuth('/api/offer/create', {
                 method: 'POST',
@@ -12246,6 +12254,12 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             }
         } finally {
             isCreatingOffer = false;
+            if (createOfferBtn) {
+                createOfferBtn.disabled = false;
+                createOfferBtn.style.opacity = '';
+                createOfferBtn.style.cursor = '';
+                createOfferBtn.innerHTML = '<i class="fas fa-check"></i> إنشاء البث / الخطة';
+            }
         }
     }
 
@@ -12914,6 +12928,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                     <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
                         <div style="flex:1; min-width:0;">
                             ${statusBadge}
+                            ${(c.status === 'rejected' && c.rejection_reason) ? `<div style="background:#fef2f2; border:1px solid #fecaca; border-right:4px solid #ef4444; padding:6px 10px; border-radius:8px; margin-bottom:6px; font-size:0.78rem; color:#991b1b; line-height:1.5; word-break:break-word;"><i class="fas fa-exclamation-circle"></i> <strong>سبب الرفض:</strong> ${escapeHtml(c.rejection_reason)}</div>` : ''}
                             <h3 style="font-size:1rem; margin-bottom:4px; color:var(--gray-900);">${escapeHtml(c.title)}</h3>
                             <p style="font-size:0.8rem; color:var(--gray-600); margin-bottom:6px;">${parseContentWithLinks(c.description || '')}</p>
                             <p style="font-size:0.8rem;"><strong>المستوى:</strong> ${escapeHtml(levelLabel)}</p>
@@ -13204,9 +13219,15 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         updateCourseCommissionCalc();
     }
 
+    let isSavingCourse = false;
     async function createCourse() {
         if (!checkTeacherProfileComplete()) return;
         if (checkGuestAction()) return;
+        // ✅ منع النقر المكرر أثناء الإنشاء (الضغط على الصور واستقبالها يستغرق وقتاً)
+        if (isSavingCourse) {
+            showToast('⏳ جاري حفظ الدورة، الرجاء الانتظار...', 'info');
+            return;
+        }
         const title = document.getElementById('courseTitle').value.trim();
         let description = document.getElementById('courseDescription').value.trim();
         const rawHashtags = document.getElementById('courseHashtags')?.value.trim();
@@ -13238,6 +13259,17 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             course_url: courseUrl
         });
 
+        isSavingCourse = true;
+        // ✅ عجلة تحميل فورية على الزر + تعطيله أثناء الحفظ
+        const createCourseBtn = document.getElementById('createCourseBtn');
+        if (createCourseBtn) {
+            createCourseBtn.dataset.oldHtml = createCourseBtn.innerHTML;
+            createCourseBtn.disabled = true;
+            createCourseBtn.style.opacity = '0.75';
+            createCourseBtn.style.cursor = 'wait';
+            createCourseBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحفظ... الرجاء الانتظار';
+        }
+
         try {
             const endpoint = editingId ? `/api/course/update/${editingId}` : '/api/course/create';
             const method = editingId ? 'PUT' : 'POST';
@@ -13268,6 +13300,14 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         } catch(e) {
             console.warn('Course save error:', e);
             if (e.message !== 'انتهت صلاحية الجلسة') showToast('⚠️ تعذر حفظ الدورة — أعد المحاولة', 'warning');
+        } finally {
+            isSavingCourse = false;
+            if (createCourseBtn) {
+                createCourseBtn.disabled = false;
+                createCourseBtn.style.opacity = '';
+                createCourseBtn.style.cursor = '';
+                createCourseBtn.innerHTML = createCourseBtn.dataset.oldHtml || '<i class="fas fa-check"></i> إنشاء الدورة';
+            }
         }
     }
 
