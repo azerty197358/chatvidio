@@ -6069,14 +6069,14 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 // ============================================================
 // Platform Settings (App Download & APK Cloud Storage URL)
 // ============================================================
-const GITHUB_APK_RELEASE_URL = 'https://github.com/azertyuio1265/zooooooom/releases/latest/download/zoomdz.apk';
-const GITHUB_APK_RAW_URL = 'https://raw.githubusercontent.com/azertyuio1265/zooooooom/main/public/downloads/zoomdz.apk';
+const GITHUB_APK_RELEASE_URL = 'https://github.com/mohhh20055-cell/chatvidio/releases/download/app/zoomdz-app.apk';
+const GITHUB_APK_RAW_URL = '/zoomdz.apk';
 
 const defaultAppDownloadSettings = {
     apk_url: GITHUB_APK_RELEASE_URL,
-    version: '1.3.0',
-    version_code: 4,
-    update_notes: 'النسخة الأصلية الجديدة والمحدثة (v1.3.0): تحديث أيقونة التطبيق الرسمية، دعم المزامنة الفورية للشعار والصور الجديدة، دعم كامل لجميع خدمات منصة ZoomDz والبث المباشر ومكالمات الفيديو (WebRTC).',
+    version: '2.2.0',
+    version_code: 6,
+    update_notes: 'النسخة 2.2.0: إصلاح فتح الروابط داخل التطبيق وتسجيل الدخول عبر جوجل في تطبيق أندرويد، دعم النوافذ الجديدة (window.open)، وزر تحميل APK جديد في واجهة المنصة — ويُحدَّث التطبيق تلقائياً مع كل عملية بناء.',
     is_active: true
 };
 let inMemoryAppDownloadSettings = { ...defaultAppDownloadSettings };
@@ -6091,7 +6091,9 @@ async function getAppDownloadSettings() {
 
         if (data && data.value) {
             inMemoryAppDownloadSettings = { ...defaultAppDownloadSettings, ...data.value };
-            if (!inMemoryAppDownloadSettings.apk_url || inMemoryAppDownloadSettings.apk_url === '') {
+            const savedApk = inMemoryAppDownloadSettings.apk_url;
+            // رابط المستودع القديم (azertyuio1265/zooooooom) بعد نقل المنصة لا يُعتمد
+            if (!savedApk || !savedApk.startsWith('http') || savedApk.includes('azertyuio1265')) {
                 inMemoryAppDownloadSettings.apk_url = GITHUB_APK_RELEASE_URL;
             }
             return inMemoryAppDownloadSettings;
@@ -6127,7 +6129,7 @@ app.post('/api/admin/settings/app_download', authenticate, authorize(['admin']),
     try {
         const { apk_url, version, version_code, update_notes, is_active } = req.body;
         const updated = {
-            apk_url: (apk_url && typeof apk_url === 'string') ? apk_url.trim() : GITHUB_APK_RELEASE_URL,
+            apk_url: (apk_url && typeof apk_url === 'string' && apk_url.trim().startsWith('http') && !apk_url.trim().includes('azertyuio1265')) ? apk_url.trim() : GITHUB_APK_RELEASE_URL,
             version: (version && typeof version === 'string') ? version.trim() : '1.1.0',
             version_code: parseInt(version_code) || 2,
             update_notes: (update_notes && typeof update_notes === 'string') ? update_notes.trim() : defaultAppDownloadSettings.update_notes,

@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build APK & AAB
@@ -71,3 +74,19 @@ jobs:
           name: zoomdz-release-aab
           path: app/build/outputs/bundle/release/*.aab
           retention-days: 30
+
+      - name: Publish APK to GitHub Release (رابط تحميل ثابت لزر المنصة)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk zoomdz-app.apk
+          if gh release view app --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload app zoomdz-app.apk --repo "${{ github.repository }}" --clobber
+          else
+            gh release create app zoomdz-app.apk \
+              --repo "${{ github.repository }}" \
+              --title "ZoomDz Android App (APK)" \
+              --notes "أحدث نسخة من تطبيق المنصة لأندرويد — تُحدَّث تلقائياً مع كل عملية بناء، والرابط ثابت لزر التحميل في الواجهة."
+          fi
+          echo "APK published: https://github.com/${{ github.repository }}/releases/download/app/zoomdz-app.apk"
