@@ -1327,10 +1327,9 @@
             document.getElementById('btnCam').style.display = '';
             document.getElementById('btnFlipCam').style.display = '';
             document.getElementById('micGainWrap').style.display = '';
-            //  مشاركة الشاشة تُخفى على الأجهزة التي لا تدعمها (معظم هواتف أندرويد/التطبيقات)
-            if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-                document.getElementById('btnScreen').style.display = '';
-            }
+            //  زر مشاركة الشاشة ظاهر دائماً للأستاذ — وعلى الأجهزة التي لا تدعم
+            //  التقاط الشاشة (مثل تطبيق أندرويد القديم) يظهر تنبيه هادئ عند الضغط
+            document.getElementById('btnScreen').style.display = '';
             localTile.style.display = '';
             refreshTileLayout();
         } else {

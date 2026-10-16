@@ -794,40 +794,86 @@
         return false;
     }
 
+    //  حالة مشاركة الشاشة (لإيقافها فعلياً واستعادة الكاميرا بعد الانتهاء)
+    let screenStreamRef = null;
+    let preShareVideoTrack = null;
+
     async function shareScreen() {
+        if (screenStreamRef) return screenStreamRef; //  مشاركة فعّالة بالفعل
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            const err = new Error('screen share unsupported on this device');
+            err.name = 'NotSupportedError';
+            throw err;
+        }
+        let screenStream = null;
         try {
-            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { cursor: 'always' },
                 audio: true
             });
-            const screenTrack = screenStream.getVideoTracks()[0];
-            
-            // استبدال المسار الفيديو في جميع الاتصالات
-            for (const [userId, pc] of peerConnections) {
-                const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                if (sender) await sender.replaceTrack(screenTrack);
-            }
-            
-            if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: 'screen-share-start' }));
-            }
-            
-            screenTrack.onended = () => stopScreenShare();
-            
-            return screenStream;
-        } catch (e) {
-            console.error('[ZoomyRTC] Screen share error:', e.message);
-            throw e;
+        } catch (firstErr) {
+            //  الهواتف (أندرويد) لا تدعم التقاط صوت الشاشة — نجرّب فيديو فقط
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         }
+        const screenTrack = screenStream.getVideoTracks()[0];
+        if (!screenTrack) {
+            screenStream.getTracks().forEach(function (t) { t.stop(); });
+            throw new Error('no screen track available');
+        }
+
+        //  استبدال المسار الفيديو في جميع الاتصالات
+        for (const [userId, pc] of peerConnections) {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) await sender.replaceTrack(screenTrack);
+        }
+
+        //  معاينة محلية: تظهر الشاشة في بلاطة الأستاذ — الكاميرا تُحفظ ولا تُوقف
+        //  حتى تُستعاد فوراً عند إنهاء المشاركة
+        if (localStream) {
+            preShareVideoTrack = localStream.getVideoTracks()[0] || null;
+            if (preShareVideoTrack) {
+                try { localStream.removeTrack(preShareVideoTrack); } catch (e) { /* تجاهل */ }
+            }
+            try { localStream.addTrack(screenTrack); } catch (e) { /* تجاهل */ }
+        }
+
+        if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'screen-share-start' }));
+        }
+
+        screenStreamRef = screenStream;
+        //  إيقاف المشاركة من شريط النظام في الجوال أو من متصفح سطح المكتب
+        screenTrack.onended = function () { stopScreenShare(); };
+
+        return screenStream;
     }
 
     async function stopScreenShare() {
-        if (localStream) {
-            const videoTrack = localStream.getVideoTracks()[0];
-            for (const [userId, pc] of peerConnections) {
-                const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-                if (sender && videoTrack) await sender.replaceTrack(videoTrack);
-            }
+        const screenStream = screenStreamRef;
+        const screenTrack = screenStream ? screenStream.getVideoTracks()[0] : null;
+        screenStreamRef = null;
+
+        //  إزالة مسار الشاشة من المعاينة
+        if (screenTrack && localStream) {
+            try { localStream.removeTrack(screenTrack); } catch (e) { /* تجاهل */ }
+        }
+
+        //  إعادة مسار الكاميرا إلى الاتصالات والمعاينة
+        const camTrack = (preShareVideoTrack && preShareVideoTrack.readyState === 'live')
+            ? preShareVideoTrack
+            : (localStream ? localStream.getVideoTracks()[0] : null);
+        preShareVideoTrack = null;
+        if (localStream && camTrack && localStream.getVideoTracks().indexOf(camTrack) === -1) {
+            try { localStream.addTrack(camTrack); } catch (e) { /* تجاهل */ }
+        }
+        for (const [userId, pc] of peerConnections) {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender && camTrack) await sender.replaceTrack(camTrack);
+        }
+
+        //  إيقاف التقاط الشاشة فعلياً — يُنزل شريط «يتم تسجيل الشاشة» في الجوال
+        if (screenStream) {
+            screenStream.getTracks().forEach(function (t) { t.stop(); });
         }
         if (ws && ws.readyState === 1) {
             ws.send(JSON.stringify({ type: 'screen-share-stop' }));
