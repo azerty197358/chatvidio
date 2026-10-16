@@ -1176,7 +1176,7 @@ class MainActivity : ComponentActivity() {
 
             addJavascriptInterface(object {
                 @JavascriptInterface fun isNativeApp() = true
-                @JavascriptInterface fun getAppVersion() = "2.4.0"
+                @JavascriptInterface fun getAppVersion() = "2.4.1"
                 @JavascriptInterface fun googleSignIn(role: String?, ref: String?): Boolean {
                     return this@MainActivity.startNativeGoogleSignIn(role, ref)
                 }
