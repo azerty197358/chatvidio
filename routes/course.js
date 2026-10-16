@@ -41,8 +41,8 @@ router.post('/create', authenticate, authorize(['teacher']), upload.single('thum
         }
 
         const coursePrice = is_free === 'true' || is_free === true ? 0 : parseFloat(price);
-        const isVip = Boolean(teacher.is_vip === true && (!teacher.vip_expires_at || new Date(teacher.vip_expires_at) > new Date()));
-        const courseStatus = isVip ? 'published' : 'pending';
+        // ✅ مراجعة إلزامية: لا تُنشر أي دورة مباشرة (بما فيها حسابات VIP) — تظهر في لوحة الأدمن للقبول أو الرفض
+        const courseStatus = 'pending';
 
         const courseData = {
             teacher_id: teacherId,
@@ -59,9 +59,7 @@ router.post('/create', authenticate, authorize(['teacher']), upload.single('thum
 
         res.json({
             success: true,
-            message: isVip 
-                ? '✅ تم إضافة ونشر دورتك تلقائياً وبنجاح دون مراجعة لأن حسابك مرقى ومميز (VIP)!'
-                : '✅ تم إرسال الدورة بنجاح، وتوجد حالياً قيد المراجعة من قبل الإدارة.',
+            message: '✅ تم إرسال الدورة إلى الإدارة للمراجعة — تظهر للطلاب فور موافقة الإدارة عليها.',
             course
         });
     } catch (error) {
@@ -208,7 +206,7 @@ router.get('/unread-count', async (req, res) => {
         let query = supabase
             .from('courses')
             .select('id', { count: 'exact', head: true })
-            .eq('status', 'approved');
+            .eq('status', 'published');
 
         if (last_viewed && last_viewed !== 'null' && last_viewed !== 'undefined' && last_viewed !== '') {
             query = query.gt('created_at', last_viewed);
@@ -279,6 +277,45 @@ router.get('/:id', [
             return res.status(404).json({ success: false, error: 'الدورة غير موجودة' });
         }
 
+        // ✅ الدورات غير المنشورة (قيد المراجعة أو مرفوضة) لا تُعرض للعامة —
+        //    يُسمح فقط للأستاذ المالك، وللإدارة (لمعاينة المحتوى)، ولمن اشترى الدورة بالفعل
+        if (data.status && data.status !== 'published') {
+            let viewerRole = null;
+            let viewerId = null;
+            try {
+                const authHeader = req.headers.authorization;
+                if (authHeader && authHeader.startsWith('Bearer ')) {
+                    const { verifyToken } = require('../utils/jwt');
+                    const decoded = verifyToken(authHeader.split(' ')[1]);
+                    if (decoded) {
+                        viewerRole = decoded.role;
+                        viewerId = decoded.userId;
+                    }
+                }
+            } catch (e) {}
+
+            let allowed = (viewerRole === 'admin') || (viewerRole === 'teacher' && data.teacher_id === viewerId);
+            if (!allowed && viewerRole === 'student' && viewerId) {
+                try {
+                    const { data: purchase } = await supabase
+                        .from('course_purchases')
+                        .select('id')
+                        .eq('course_id', courseId)
+                        .eq('student_id', viewerId)
+                        .maybeSingle();
+                    allowed = Boolean(purchase);
+                } catch (e) {}
+            }
+            if (!allowed) {
+                return res.status(404).json({
+                    success: false,
+                    error: data.status === 'pending'
+                        ? 'هذه الدورة قيد المراجعة من قبل الإدارة — ستظهر بعد الموافقة عليها'
+                        : 'هذه الدورة غير متاحة حالياً'
+                });
+            }
+        }
+
         const views = getViewCount('course', data.id, data.views_count || data.views || 0);
 
         res.json({
@@ -326,7 +363,7 @@ router.put('/update/:id', authenticate, authorize(['teacher']), upload.single('t
         }
 
         const updateData = {};
-        const allowedFields = ['title', 'description', 'price', 'is_free', 'education_level', 'course_url', 'status'];
+        const allowedFields = ['title', 'description', 'price', 'is_free', 'education_level', 'course_url'];
 
         for (const field of allowedFields) {
             if (req.body[field] !== undefined) {
@@ -344,6 +381,9 @@ router.put('/update/:id', authenticate, authorize(['teacher']), upload.single('t
                 else updateData[field] = req.body[field].trim();
             }
         }
+
+        // ✅ أي تعديل من الأستاذ يعيد الدورة إلى مراجعة الإدارة (منع تغيير المحتوى بعد الموافقة دون رؤيته)
+        updateData.status = 'pending';
 
         if (req.file) {
             try {
@@ -364,7 +404,7 @@ router.put('/update/:id', authenticate, authorize(['teacher']), upload.single('t
 
         res.json({
             success: true,
-            message: '✅ تم تحديث الدورة بنجاح',
+            message: '✅ تم تحديث الدورة — أُعيدت إلى مراجعة الإدارة وستعود للنشر بعد الموافقة عليها',
             course: updated
         });
     } catch (error) {
@@ -416,7 +456,7 @@ router.get('/unread-count', async (req, res) => {
         let query = supabase
             .from('courses')
             .select('id', { count: 'exact', head: true })
-            .eq('status', 'approved');
+            .eq('status', 'published');
 
         if (last_viewed && last_viewed !== 'null' && last_viewed !== 'undefined' && last_viewed !== '') {
             query = query.gt('created_at', last_viewed);
@@ -453,6 +493,16 @@ router.post('/buy/:id', authenticate, authorize(['student']), async (req, res) =
         const course = await getOne('courses', 'id', courseId);
         if (!course) {
             return res.status(404).json({ success: false, error: 'الدورة غير موجودة' });
+        }
+
+        // ✅ لا يمكن شراء دورة غير منشورة (لم تُعتمد نشرها بعد)
+        if (course.status && course.status !== 'published') {
+            return res.status(400).json({
+                success: false,
+                error: course.status === 'pending'
+                    ? 'هذه الدورة قيد المراجعة من قبل الإدارة — يمكن شراؤها بعد قبولها'
+                    : 'هذه الدورة غير متاحة حالياً'
+            });
         }
 
         // التحقق مما إذا كان الطالب قد اشترى الدورة سابقاً

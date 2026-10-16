@@ -912,6 +912,7 @@
             <button class="nav-tab" onclick="showTab('withdrawals')"><i class="fas fa-money-bill-wave"></i> طلبات السحب <span id="withdrawalsCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('manual-deposits')" id="manualDepositsNavBtn" style="background: #ecfdf5; color: #065f46; border: 1.5px solid #86efac;"><i class="fas fa-money-bill-transfer" style="color: #10b981;"></i> شحن بريدي موب / CCP <span id="manualDepositsCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('courses-review')" id="coursesReviewNavBtn" style="background: #fef3c7; color: #92400e;"><i class="fas fa-play-circle" style="color: #d97706;"></i> مراجعة الدورات <span id="pendingCoursesCount" class="badge-count" style="display:none"></span></button>
+            <button class="nav-tab" onclick="showTab('packages-review')" id="packagesReviewNavBtn" style="background: #f0fdf4; color: #166534;"><i class="fas fa-box-open" style="color: #16a34a;"></i> مراجعة الباقات <span id="pendingPackagesCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('packages-admin')" style="background: #ecfdf5; color: #047857; border: 1.5px solid #a7f3d0;"><i class="fas fa-cubes" style="color: #059669;"></i> إدارة الباقات التعليمية <span id="packagesAdminCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('support')"><i class="fas fa-envelope"></i> رسائل الدعم <span id="supportCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab notification-tab" onclick="showTab('notifications')" id="notifTab">
@@ -1921,6 +1922,22 @@
                 </button>
             </div>
             <div id="pendingCoursesList"></div>
+        </div>
+
+        <!-- مراجعة الباقات -->
+        <div id="packagesReviewTab" style="display: none;">
+            <div style="background: white; padding: 20px; border-radius: 16px; margin-top: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <h3 style="color: #166534; font-size: 1.3rem; font-weight: 800; margin-bottom: 4px;">
+                        <i class="fas fa-box-open" style="color: #16a34a;"></i> مراجعة طلبات نشر الباقات
+                    </h3>
+                    <p style="color: #64748b; font-size: 0.88rem;">افتح محتوى كل باقة (المواد والدروس والمرفقات) وتأكد أنها محتوى دراسي مخالف، ثم اقبلها لتظهر للطلاب أو ارفضها.</p>
+                </div>
+                <button onclick="loadPendingPackages()" style="background: #e2e8f0; color: #1e293b; border: none; padding: 8px 16px; border-radius: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-sync-alt"></i> تحديث
+                </button>
+            </div>
+            <div id="pendingPackagesList"></div>
         </div>
 
         <!-- الإبلاغات -->
@@ -3024,6 +3041,7 @@
             document.getElementById('emailRemindersTab').style.display = tab === 'email-reminders' ? 'block' : 'none';
             if (document.getElementById('developersTab')) document.getElementById('developersTab').style.display = tab === 'developers' ? 'block' : 'none';
             if (document.getElementById('coursesReviewTab')) document.getElementById('coursesReviewTab').style.display = tab === 'courses-review' ? 'block' : 'none';
+            if (document.getElementById('packagesReviewTab')) document.getElementById('packagesReviewTab').style.display = tab === 'packages-review' ? 'block' : 'none';
             if (document.getElementById('reportsTabContent')) document.getElementById('reportsTabContent').style.display = tab === 'reports' ? 'block' : 'none';
             if (document.getElementById('logsTab')) document.getElementById('logsTab').style.display = tab === 'logs' ? 'block' : 'none';
             if (document.getElementById('blogs-adminTab')) document.getElementById('blogs-adminTab').style.display = tab === 'blogs-admin' ? 'block' : 'none';
@@ -3048,6 +3066,7 @@
             else if (tab === 'withdrawals') loadWithdrawals();
             else if (tab === 'manual-deposits') loadManualDeposits();
             else if (tab === 'courses-review') loadPendingCourses();
+            else if (tab === 'packages-review') loadPendingPackages();
             else if (tab === 'packages-admin') loadAdminPackages();
             else if (tab === 'support') loadSupportMessages();
             else if (tab === 'notifications') loadSentNotifications();
@@ -6150,6 +6169,7 @@ window.certifyAllTeachers = certifyAllTeachers;
                 updateBadge('supportCount', counts.support);
                 updateBadge('noDocsCount', counts.noDocs);
                 updateBadge('pendingCoursesCount', counts.pendingCourses);
+                updateBadge('pendingPackagesCount', counts.pendingPackages);
             } catch (error) {
                 console.error('Error updating counts:', error);
             }
@@ -6861,6 +6881,282 @@ window.certifyAllTeachers = certifyAllTeachers;
             }
         }
         
+        // ============================================================
+        // 📦 إدارة مراجعة الباقات (Pending Packages Review)
+        // ============================================================
+        async function loadPendingPackages() {
+            const container = document.getElementById('pendingPackagesList');
+            if (!container) return;
+            container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;"><i class="fas fa-spinner fa-spin fa-2x"></i><p style="margin-top: 10px; font-weight: 700;">جاري جلب الباقات المعلقة للمراجعة...</p></div>';
+
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch('/api/admin/pending-packages', { headers: { 'Authorization': 'Bearer ' + token } });
+                const data = await res.json();
+                const packages = (data && data.success && Array.isArray(data.packages)) ? data.packages : [];
+
+                const badgeEl = document.getElementById('pendingPackagesCount');
+                if (badgeEl) {
+                    badgeEl.innerText = packages.length > 0 ? packages.length : '';
+                    badgeEl.style.display = packages.length > 0 ? 'inline' : 'none';
+                }
+
+                if (packages.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 50px 20px; background: white; border-radius: 16px; border: 1px dashed #cbd5e1; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+                            <i class="fas fa-check-circle" style="font-size: 3rem; color: #10b981; margin-bottom: 12px;"></i>
+                            <h3 style="font-size: 1.2rem; color: #1e293b; font-weight: 800;">لا توجد باقات معلقة للمراجعة</h3>
+                            <p style="color: #64748b; font-size: 0.9rem; margin-top: 6px;">جميع الباقات المقدمة تمت مراجعتها أو لا توجد باقات جديدة بانتظار الموافقة حالياً.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px;">';
+                for (const p of packages) {
+                    const teacherObj = p.teachers || {};
+                    const teacherName = p.teacher_name || teacherObj.full_name || 'أستاذ غير معروف';
+                    const teacherImage = teacherObj.profile_url || '/images/default-avatar.svg';
+                    const dateStr = p.created_at ? new Date(p.created_at).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+                    const priceBadge = p.is_free
+                        ? '<span style="background: #dcfce7; color: #15803d; font-weight: 800; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;"><i class="fas fa-gift"></i> مجانية</span>'
+                        : `<span style="background: #fef3c7; color: #b45309; font-weight: 800; padding: 4px 12px; border-radius: 20px; font-size: 0.78rem;"><i class="fas fa-tag"></i> فصلي: ${Number(p.term_price || 0)} دج • سنوي: ${Number(p.annual_price || 0)} دج</span>`;
+
+                    html += `
+                        <div style="background: white; border-radius: 16px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03); display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;">
+                                    <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+                                        <img src="${escapeHtml(teacherImage)}" onerror="this.src='/images/default-avatar.svg'"
+                                             style="width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 2px solid #e2e8f0; flex-shrink: 0;">
+                                        <div style="min-width: 0;">
+                                            <div style="font-weight: 800; color: #1e293b; font-size: 0.95rem;">${escapeHtml(teacherName)}</div>
+                                            <div style="font-size: 0.78rem; color: #64748b;">${escapeHtml(teacherObj.specialization || 'أستاذ بالمنصة')}</div>
+                                        </div>
+                                    </div>
+                                    ${priceBadge}
+                                </div>
+
+                                ${(p.thumbnail_url) ? `<img src="${escapeHtml(p.thumbnail_url)}" style="width: 100%; height: 150px; object-fit: cover; border-radius: 12px; margin-bottom: 12px;" onerror="this.style.display='none'">` : ''}
+
+                                <h4 style="font-size: 1.08rem; font-weight: 800; color: #0f172a; margin-bottom: 8px; line-height: 1.4;">${escapeHtml(p.title || '')}</h4>
+
+                                <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">
+                                    <i class="fas fa-graduation-cap" style="color: #16a34a; margin-left: 4px;"></i>
+                                    <strong>المستوى:</strong> ${escapeHtml(p.education_level || 'غير محدد')}
+                                    ${dateStr ? ` • <i class="fas fa-calendar-alt" style="margin-right: 6px; margin-left: 2px;"></i> ${dateStr}` : ''}
+                                </div>
+
+                                <div style="display: flex; gap: 8px; margin-bottom: 10px; font-size: 0.8rem;">
+                                    <span style="background: #f0fdf4; color: #15803d; padding: 3px 10px; border-radius: 8px; font-weight: 800;"><i class="fas fa-book"></i> ${Number(p.total_subjects || 0)} مادة</span>
+                                    <span style="background: #eff6ff; color: #1d4ed8; padding: 3px 10px; border-radius: 8px; font-weight: 800;"><i class="fas fa-play"></i> ${Number(p.total_lessons || 0)} درس</span>
+                                </div>
+
+                                ${p.description ? `
+                                    <div style="font-size: 0.85rem; color: #475569; background: #f8fafc; padding: 10px 12px; border-radius: 10px; margin-bottom: 14px; line-height: 1.5; border-right: 3px solid #cbd5e1;">
+                                        ${escapeHtml(p.description)}
+                                    </div>
+                                ` : ''}
+
+                                <button onclick="openPackageReviewModal(${p.id})"
+                                        style="width: 100%; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 10px; border-radius: 10px; font-weight: 800; cursor: pointer; font-size: 0.88rem; display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 12px; transition: 0.2s;">
+                                    <i class="fas fa-eye"></i> معاينة محتوى الباقة (المواد والدروس والمرفقات)
+                                </button>
+                            </div>
+
+                            <div style="display: flex; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 14px; margin-top: 4px;">
+                                <button onclick="approvePackage(${p.id})"
+                                        style="flex: 1; background: #10b981; color: white; border: none; padding: 10px; border-radius: 10px; font-weight: 800; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 6px; transition: 0.2s;">
+                                    <i class="fas fa-check-circle"></i> قبول ونشر
+                                </button>
+                                <button onclick="rejectPackage(${p.id})"
+                                        style="flex: 1; background: #ef4444; color: white; border: none; padding: 10px; border-radius: 10px; font-weight: 800; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 6px; transition: 0.2s;">
+                                    <i class="fas fa-times-circle"></i> رفض
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (error) {
+                console.warn('loadPendingPackages failed:', error);
+                container.innerHTML = '<div style="text-align: center; padding: 40px; background: white; border-radius: 16px; border: 1px dashed #cbd5e1; color: #64748b;"><i class="fas fa-exclamation-circle" style="font-size: 2rem; color: #f59e0b; margin-bottom: 8px;"></i><p style="font-weight: 700;">تعذر جلب الباقات المعلقة — أعد المحاولة</p></div>';
+            }
+        }
+
+        // 👁️ فتح محتوى الباقة كاملاً للمعاينة (مواد + وحدات + دروس + روابط المرفقات)
+        function openPackageReviewModal(id) {
+            let overlay = document.getElementById('pkgReviewOverlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'pkgReviewOverlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.65); z-index:10000; display:flex; align-items:center; justify-content:center; padding:20px; backdrop-filter:blur(3px);';
+            overlay.innerHTML = `
+                <div style="background:#fff; border-radius:16px; max-width:860px; width:100%; max-height:88vh; overflow:auto; padding:24px; position:relative;">
+                    <button id="pkgReviewClose" style="position:absolute; top:12px; left:12px; background:#f1f5f9; border:none; width:34px; height:34px; border-radius:50%; cursor:pointer; font-size:1.1rem; color:#475569;" title="إغلاق">✕</button>
+                    <div id="pkgReviewBody" style="text-align:center; padding:40px; color:#64748b;"><i class="fas fa-spinner fa-spin fa-2x"></i><p style="margin-top:10px; font-weight:700;">جاري فتح محتوى الباقة...</p></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const closeFn = function () { overlay.remove(); };
+            overlay.addEventListener('click', function (e) { if (e.target === overlay) closeFn(); });
+            document.getElementById('pkgReviewClose').addEventListener('click', closeFn);
+
+            const token = localStorage.getItem('token');
+            fetch(`/api/packages/${id}`, { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    const pkg = data && data.package;
+                    if (!pkg) throw new Error('no package');
+                    const bodyEl = document.getElementById('pkgReviewBody');
+                    if (bodyEl) bodyEl.innerHTML = renderPackageReviewContent(pkg);
+                })
+                .catch(function (err) {
+                    console.warn('package preview failed:', err);
+                    const bodyEl = document.getElementById('pkgReviewBody');
+                    if (bodyEl) bodyEl.innerHTML = '<p style="color:#b45309; font-weight:700;"><i class="fas fa-exclamation-circle"></i> تعذر فتح محتوى الباقة — أعد المحاولة</p>';
+                });
+        }
+
+        function renderPackageReviewContent(pkg) {
+            let subjects = pkg.subjects_data || pkg.subjects || [];
+            if (typeof subjects === 'string') { try { subjects = JSON.parse(subjects); } catch (e) { subjects = []; } }
+            if (!Array.isArray(subjects)) subjects = [];
+
+            const asArray = function (v) {
+                if (Array.isArray(v)) return v;
+                if (typeof v === 'string' && v) { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } }
+                return [];
+            };
+
+            let h = `
+                <div style="text-align:right;">
+                    <h3 style="color:#0f172a; font-weight:800; font-size:1.25rem; margin-bottom:4px; padding-left:40px;">${escapeHtml(pkg.title || 'باقة تعليمية')}</h3>
+                    <p style="color:#64748b; font-size:0.85rem; margin-bottom:14px;">
+                        <i class="fas fa-graduation-cap" style="color:#16a34a;"></i> ${escapeHtml(pkg.education_level || 'غير محدد')}
+                        • <i class="fas fa-user-graduate" style="color:#2563eb;"></i> ${escapeHtml(pkg.teacher_name || 'الأستاذ')}
+                        • ${pkg.is_free ? 'مجانية' : 'فصلي: ' + Number(pkg.term_price || 0) + ' دج • سنوي: ' + Number(pkg.annual_price || 0) + ' دج'}
+                    </p>
+                    ${pkg.description ? `<div style="font-size:0.87rem; color:#475569; background:#f8fafc; padding:12px 14px; border-radius:10px; margin-bottom:16px; line-height:1.6; border-right:3px solid #16a34a;">${escapeHtml(pkg.description)}</div>` : ''}
+            `;
+
+            if (subjects.length === 0) {
+                h += '<div style="text-align:center; padding:30px; background:#fffbeb; border:1px dashed #fcd34d; border-radius:12px; color:#92400e; font-weight:700;">⚠️ لا توجد مواد أو دروس مرفقة في هذه الباقة</div>';
+            }
+
+            subjects.forEach(function (s, sIdx) {
+                const modules = asArray(s.modules);
+                h += `
+                    <div style="border:1px solid #e2e8f0; border-radius:12px; margin-bottom:14px; overflow:hidden;">
+                        <div style="background:#f0fdf4; padding:10px 14px; font-weight:800; color:#166534; font-size:0.95rem;">
+                            📘 المادة ${sIdx + 1}: ${escapeHtml(s.subject_name || s.name || s.title || 'مادة بدون اسم')}
+                        </div>
+                        <div style="padding:12px 14px;">
+                `;
+                if (modules.length === 0) {
+                    h += '<p style="color:#94a3b8; font-size:0.82rem;">لا توجد وحدات في هذه المادة</p>';
+                }
+                modules.forEach(function (m) {
+                    const lessons = asArray(m.lessons);
+                    h += `
+                        <div style="margin-bottom:12px;">
+                            <div style="font-weight:800; color:#1e40af; font-size:0.88rem; margin-bottom:6px;">📂 ${escapeHtml(m.title || 'وحدة')}</div>
+                            ${m.description ? `<div style="font-size:0.78rem; color:#64748b; margin-bottom:6px;">${escapeHtml(m.description)}</div>` : ''}
+                    `;
+                    if (lessons.length === 0) {
+                        h += '<p style="color:#94a3b8; font-size:0.78rem; padding-right:14px;">لا توجد دروس</p>';
+                    }
+                    lessons.forEach(function (l) {
+                        const links = [];
+                        const vid = l.video_url || l.video || '';
+                        const sum = l.summary_pdf_url || l.summary_url || '';
+                        const exr = l.exercise_pdf_url || l.exercise_url || '';
+                        const sol = l.solution_video_url || l.solution_url || '';
+                        if (vid) links.push(`<a href="${escapeHtml(vid)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">🎥 فيديو الدرس</a>`);
+                        if (sum) links.push(`<a href="${escapeHtml(sum)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">📄 الملخص</a>`);
+                        if (exr) links.push(`<a href="${escapeHtml(exr)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">📝 التمارين</a>`);
+                        if (sol) links.push(`<a href="${escapeHtml(sol)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">✅ الحلول</a>`);
+                        h += `
+                            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; background:#f8fafc; border-radius:8px; padding:7px 10px; margin-bottom:6px; font-size:0.8rem;">
+                                <span style="color:#334155; font-weight:700;">🎬 ${escapeHtml(l.title || 'درس')}</span>
+                                ${links.length ? '<span style="display:flex; gap:10px; flex-wrap:wrap;">' + links.join('') + '</span>' : '<span style="color:#94a3b8;">بدون مرفقات</span>'}
+                            </div>
+                        `;
+                    });
+                    h += '</div>';
+                });
+
+                const intensive = (s.intensive_courses && typeof s.intensive_courses === 'object') ? s.intensive_courses : null;
+                if (intensive) {
+                    ['term_review', 'final_review'].forEach(function (key) {
+                        const ic = intensive[key];
+                        if (ic && ic.title) {
+                            const vids = asArray(ic.videos);
+                            const pdfs = asArray(ic.pdfs);
+                            h += `
+                                <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 10px; margin-bottom:8px; font-size:0.8rem;">
+                                    <strong style="color:#92400e;">📚 ${escapeHtml(ic.title)}</strong>
+                                    <span style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
+                                        ${vids.map(v => typeof v === 'string' ? `<a href="${escapeHtml(v)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">🎥 فيديو</a>` : '').join('')}
+                                        ${pdfs.map(v => typeof v === 'string' ? `<a href="${escapeHtml(v)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8; font-weight:700;">📄 ملف</a>` : '').join('')}
+                                    </span>
+                                </div>
+                            `;
+                        }
+                    });
+                }
+
+                h += '</div></div>';
+            });
+
+            h += '</div>';
+            return h;
+        }
+
+        async function approvePackage(id) {
+            if (!confirm('هل أنت متأكد من قبول نشر هذه الباقة؟ ستظهر لجميع الطلاب فوراً.')) return;
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch(`/api/admin/packages/${id}/approve`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('✅ تم قبول الباقة ونشرها للطلاب');
+                    loadPendingPackages();
+                    updateAdminCounts();
+                } else {
+                    alert('⚠️ تعذر قبول الباقة — أعد المحاولة');
+                }
+            } catch (error) {
+                console.warn('approvePackage failed:', error);
+                alert('⚠️ تعذر الاتصال بالخادم — أعد المحاولة');
+            }
+        }
+
+        async function rejectPackage(id) {
+            if (!confirm('هل أنت متأكد من رفض طلب نشر هذه الباقة؟ لن تظهر للطلاب.')) return;
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch(`/api/admin/packages/${id}/reject`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('❌ تم رفض طلب نشر الباقة');
+                    loadPendingPackages();
+                    updateAdminCounts();
+                } else {
+                    alert('⚠️ تعذر رفض الباقة — أعد المحاولة');
+                }
+            } catch (error) {
+                console.warn('rejectPackage failed:', error);
+                alert('⚠️ تعذر الاتصال بالخادم — أعد المحاولة');
+            }
+        }
+
         // ============================================================
         // ✅ جلب وإدارة أرشيف وسجلات البث المحذوفة والأدلة
         // ============================================================

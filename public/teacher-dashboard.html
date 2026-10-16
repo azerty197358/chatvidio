@@ -13247,12 +13247,14 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             });
             const data = await res.json();
             if (data.success) {
-                showToast(editingId ? '✅ تم تحديث الدورة' : '✅ تم إنشاء الدورة بنجاح', 'success');
+                showToast(data.message || (editingId ? '✅ تم تحديث الدورة' : '✅ تم إنشاء الدورة بنجاح'), 'success');
                 closeModal();
                 window.editingCourseId = null;
                 loadCourses();
                 const newCourseId = (data.course && data.course.id) || data.id;
-                if (!editingId && newCourseId) {
+                const newCourseStatus = (data.course && data.course.status) || null;
+                // مشاركة الرابط فقط إذا كانت الدورة منشورة فعلاً (غير قيد المراجعة)
+                if (!editingId && newCourseId && newCourseStatus !== 'pending') {
                     setTimeout(() => {
                         if (confirm('✅ تم إنشاء الدورة بنجاح!\n\nهل ترغب في نسخ رابط مشاركة هذه الدورة لمشاركتها مع الطلا خارج المنصة الآن؟')) {
                             shareCourse(newCourseId);
@@ -13260,10 +13262,12 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                     }, 400);
                 }
             } else {
-                showToast(data.error || '❌ حدث خطأ', 'error');
+                console.warn('Course save rejected:', data.error);
+                showToast(data.error || '⚠️ أكمل الحقول المطلوبة وحاول مرة أخرى', 'warning');
             }
         } catch(e) {
-            if (e.message !== 'انتهت صلاحية الجلسة') showToast('❌ حدث خطأ في الاتصال', 'error');
+            console.warn('Course save error:', e);
+            if (e.message !== 'انتهت صلاحية الجلسة') showToast('⚠️ تعذر حفظ الدورة — أعد المحاولة', 'warning');
         }
     }
 
@@ -13277,10 +13281,12 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 showToast('✅ تم حذف الدور', 'success');
                 loadCourses();
             } else {
-                showToast(data.error || '❌ حدث خطأ', 'error');
+                console.warn('Course delete rejected:', data.error);
+                showToast(data.error || '⚠️ تعذر حذف الدورة — أعد المحاولة', 'warning');
             }
         } catch(e) {
-            if (e.message !== 'انتهت صلاحية الجلسة') showToast('❌ حدث خطأ', 'error');
+            console.warn('Course delete error:', e);
+            if (e.message !== 'انتهت صلاحية الجلسة') showToast('⚠️ تعذر حذف الدورة — أعد المحاولة', 'warning');
         }
     }
 

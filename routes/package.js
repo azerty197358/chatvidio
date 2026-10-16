@@ -136,7 +136,9 @@ router.post('/create', authenticate, authorize(['teacher', 'admin']), upload.sin
             subjects_data: parsedSubjects,
             total_subjects: parsedSubjects.length || 0,
             total_lessons: totalLessonsCount,
-            status: 'active',
+            // ✅ مراجعة إلزامية: باقات الأساتذة لا تُنشر مباشرة — تظهر في لوحة الأدمن للقبول أو الرفض
+            //    (الباقات التي ينشئها الأدمن بنفسه تُنشر فوراً لأنه مصدر موثوق)
+            status: (req.user && req.user.role === 'admin') ? 'active' : 'pending_review',
             is_active: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -217,7 +219,9 @@ router.post('/create', authenticate, authorize(['teacher', 'admin']), upload.sin
 
         res.json({
             success: true,
-            message: '✅ تم إنشاء الباقة التعليمية بنجاح!',
+            message: packageData.status === 'pending_review'
+                ? '✅ تم إنشاء الباقة وإرسالها إلى الإدارة للمراجعة — تظهر للطلاب فور موافقة الإدارة عليها.'
+                : '✅ تم إنشاء الباقة التعليمية بنجاح!',
             package: newPackage
         });
     } catch (error) {
@@ -277,7 +281,8 @@ router.put('/update/:id', authenticate, authorize(['teacher', 'admin']), upload.
         if (annual_price !== undefined && !updateData.is_free) updateData.annual_price = parseFloat(annual_price) || 0;
         if (has_term !== undefined) updateData.has_term = has_term === 'true' || has_term === true;
         if (has_annual !== undefined) updateData.has_annual = has_annual === 'true' || has_annual === true;
-        if (status) updateData.status = status;
+        // ✅ تغيير حالة النشر مسموح للإدارة فقط — الأستاذ لا يستطيع نشر باقته بنفسه
+        if (status && req.user.role === 'admin') updateData.status = status;
 
         if (req.file) {
             const uploadRes = await uploadToSupabase(req.file, 'thumbnails');
@@ -309,11 +314,18 @@ router.put('/update/:id', authenticate, authorize(['teacher', 'admin']), upload.
             updateData.total_lessons = totalLessons;
         }
 
+        // ✅ أي تعديل من الأستاذ يعيد الباقة إلى مراجعة الإدارة (منع تغيير المحتوى بعد الموافقة دون رؤيته)
+        if (req.user.role !== 'admin') {
+            updateData.status = 'pending_review';
+        }
+
         const updatedPackage = await update('packages', packageId, updateData);
 
         res.json({
             success: true,
-            message: '✅ تم تحديث الباقة بنجاح!',
+            message: req.user.role === 'admin'
+                ? '✅ تم تحديث الباقة بنجاح!'
+                : '✅ تم تحديث الباقة — أُعيدت إلى مراجعة الإدارة قبل نشرها من جديد',
             package: updatedPackage
         });
     } catch (error) {
@@ -400,8 +412,10 @@ const handlePublicPackages = async (req, res) => {
             data = resFallback.data;
         }
 
-        // تصفية الباقات النشطة (status !== 'inactive' و is_active !== false)
-        const activeData = (data || []).filter(pkg => pkg.is_active !== false && pkg.status !== 'inactive' && pkg.status !== 'archived');
+        // تصفية الباقات: غير نشطة، مؤرشفة، أو ما زالت قيد المراجعة / مرفوضة (لا تظهر للعامة قبل الموافقة)
+        const activeData = (data || []).filter(pkg => pkg.is_active !== false
+            && pkg.status !== 'inactive' && pkg.status !== 'archived'
+            && pkg.status !== 'pending_review' && pkg.status !== 'rejected');
 
         // جلب إحصائيات المبيعات من جدول package_subscriptions لكل باقة
         let packages = await Promise.all(activeData.map(async (pkg) => {
@@ -649,6 +663,8 @@ router.get('/:id(\\d+)', async (req, res) => {
         // التحقق مما إذا كان المستخدم مسجلاً ولديه اشتراك نشط أو هو الأستاذ المالك
         let isSubscribed = false;
         let subscriptionDetails = null;
+        let viewerRole = null;
+        let viewerId = null;
 
         // فحص رأس Authorization يدوياً إذا وُجد
         const authHeader = req.headers.authorization;
@@ -657,6 +673,8 @@ router.get('/:id(\\d+)', async (req, res) => {
             const { verifyToken } = require('../utils/jwt');
             const decoded = verifyToken(token);
             if (decoded) {
+                viewerRole = decoded.role;
+                viewerId = decoded.userId;
                 if (decoded.role === 'admin' || (decoded.role === 'teacher' && pkg.teacher_id === decoded.userId)) {
                     isSubscribed = true;
                 } else if (decoded.role === 'student') {
@@ -678,6 +696,18 @@ router.get('/:id(\\d+)', async (req, res) => {
                     }
                 }
             }
+        }
+
+        // ✅ الباقات غير المنشورة (قيد المراجعة أو مرفوضة) لا تُعرض للعامة —
+        //    يُسمح للأستاذ المالك والإدارة والمشتركين الحاليين فقط (يُكمّلون محتواهم المدفوع)
+        const pkgStatus = pkg.status || 'active';
+        if (pkgStatus !== 'active' && !isSubscribed) {
+            return res.status(pkgStatus === 'pending_review' ? 403 : 404).json({
+                success: false,
+                error: pkgStatus === 'pending_review'
+                    ? 'هذه الباقة قيد المراجعة من قبل الإدارة — ستظهر بعد الموافقة عليها'
+                    : 'هذه الباقة غير متاحة حالياً'
+            });
         }
 
         // إذا كان مشتركاً نعيد المحتوى كاملاً، وإذا لم يكن مشتركاً نحجب الروابط الحساسة فقط
@@ -766,7 +796,12 @@ router.post('/subscribe', authenticate, authorize(['student']), [
 
         const pkg = await getOne('packages', 'id', package_id);
         if (!pkg || pkg.status !== 'active') {
-            return res.status(404).json({ success: false, error: 'الباقة التعليمية غير متوفرة حالياً' });
+            return res.status(404).json({
+                success: false,
+                error: (pkg && pkg.status === 'pending_review')
+                    ? 'هذه الباقة قيد المراجعة من قبل الإدارة — يمكن الاشتراك فيها بعد قبولها'
+                    : 'الباقة التعليمية غير متوفرة حالياً'
+            });
         }
 
         // تحديد السعر وفترة الاشتراك

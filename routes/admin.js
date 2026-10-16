@@ -196,6 +196,12 @@ router.get('/admin-counts', authenticate, authorize(['admin']), async (req, res)
             .select('id', { count: 'exact', head: true })
             .eq('status', 'pending');
 
+        // Pending packages (باقات الأساتذة بانتظار المراجعة)
+        const { count: pendingPackagesCount } = await supabase
+            .from('packages')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pending_review');
+
         // Manual deposit requests (بريدي موب / CCP)
         let manualDepositsCount = 0;
         try {
@@ -213,7 +219,8 @@ router.get('/admin-counts', authenticate, authorize(['admin']), async (req, res)
             support: supportCount || 0,
             noDocs: noDocsData ? noDocsData.length : 0,
             upgradeRequests: upgradeRequestsData ? upgradeRequestsData.length : 0,
-            pendingCourses: pendingCoursesCount || 0
+            pendingCourses: pendingCoursesCount || 0,
+            pendingPackages: pendingPackagesCount || 0
         });
     } catch (error) {
         logger.error('Error fetching admin counts:', error);
@@ -2893,6 +2900,80 @@ router.post('/courses/:id/reject', authenticate, authorize(['admin']), async (re
     } catch (error) {
         logger.error('❌ خطأ في رفض الدورة:', error.message);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================================
+// 📦 إدارة مراجعة الباقات (Admin Package Approval)
+// ============================================================
+
+// GET /api/admin/pending-packages - جلب الباقات المعلقة للمراجعة
+router.get('/pending-packages', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('packages')
+            .select('*, teachers:teacher_id (id, full_name, email, phone, specialization, profile_image, profile_url)')
+            .eq('status', 'pending_review')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        res.json({ success: true, packages: data || [] });
+    } catch (error) {
+        logger.error('❌ خطأ في جلب الباقات المعلقة:', error.message);
+        res.status(500).json({ success: false, error: 'حدث خطأ في الخادم أثناء جلب الباقات المعلقة' });
+    }
+});
+
+// POST /api/admin/packages/:id/approve - موافقة وقبول نشر الباقة
+router.post('/packages/:id/approve', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        const packageId = parseInt(req.params.id);
+        if (!packageId || isNaN(packageId)) {
+            return res.status(400).json({ success: false, error: 'معرف الباقة غير صالح' });
+        }
+
+        const { data, error } = await supabase
+            .from('packages')
+            .update({ status: 'active', is_active: true, updated_at: new Date().toISOString() })
+            .eq('id', packageId)
+            .select();
+
+        if (error) {
+            logger.error('❌ خطأ في قبول نشر الباقة:', error.message);
+            return res.status(500).json({ success: false, error: 'تعذر قبول الباقة' });
+        }
+
+        res.json({ success: true, message: '✅ تم قبول الباقة ونشرها للطلاب', package: data?.[0] });
+    } catch (error) {
+        logger.error('❌ خطأ في قبول نشر الباقة:', error.message);
+        res.status(500).json({ success: false, error: 'تعذر قبول الباقة' });
+    }
+});
+
+// POST /api/admin/packages/:id/reject - رفض طلب نشر الباقة
+router.post('/packages/:id/reject', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        const packageId = parseInt(req.params.id);
+        if (!packageId || isNaN(packageId)) {
+            return res.status(400).json({ success: false, error: 'معرف الباقة غير صالح' });
+        }
+
+        const { data, error } = await supabase
+            .from('packages')
+            .update({ status: 'rejected', updated_at: new Date().toISOString() })
+            .eq('id', packageId)
+            .select();
+
+        if (error) {
+            logger.error('❌ خطأ في رفض الباقة:', error.message);
+            return res.status(500).json({ success: false, error: 'تعذر رفض الباقة' });
+        }
+
+        res.json({ success: true, message: '❌ تم رفض طلب نشر الباقة', package: data?.[0] });
+    } catch (error) {
+        logger.error('❌ خطأ في رفض الباقة:', error.message);
+        res.status(500).json({ success: false, error: 'تعذر رفض الباقة' });
     }
 });
 

@@ -71,6 +71,13 @@ function renderTeacherPackages() {
         const lessonsCount = pkg.total_lessons || 0;
         const subsCount = pkg.subscribers_count || 0;
 
+        // شارة حالة المراجعة — الأستاذ يرى بوضوح أين وصلت باقته
+        let stBg = '#64748b', stText = 'مسودة';
+        if (pkg.status === 'active') { stBg = '#10b981'; stText = '✅ منشورة ومتاحة'; }
+        else if (pkg.status === 'pending_review') { stBg = '#f59e0b'; stText = '⏳ قيد المراجعة'; }
+        else if (pkg.status === 'rejected') { stBg = '#ef4444'; stText = '❌ مرفوضة'; }
+        else if (pkg.status === 'inactive' || pkg.status === 'archived') { stBg = '#94a3b8'; stText = 'موقوفة'; }
+
         return `
             <div class="package-card" style="background:#fff; border-radius:16px; border:1px solid #e2e8f0; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,0.04); display:flex; flex-direction:column; transition:transform 0.2s, box-shadow 0.2s;">
                 <div style="position:relative; height:160px; overflow:hidden;">
@@ -78,8 +85,8 @@ function renderTeacherPackages() {
                     <div style="position:absolute; top:10px; right:10px; background:rgba(15,23,42,0.85); backdrop-filter:blur(4px); color:white; padding:4px 10px; border-radius:8px; font-size:0.78rem; font-weight:700;">
                         🎓 ${pkg.education_level || 'عام'}
                     </div>
-                    <div style="position:absolute; top:10px; left:10px; background:${pkg.status === 'active' ? '#10b981' : '#f59e0b'}; color:white; padding:3px 8px; border-radius:6px; font-size:0.72rem; font-weight:700;">
-                        ${pkg.status === 'active' ? 'نشطة ومتاحة' : 'مسودة'}
+                    <div style="position:absolute; top:10px; left:10px; background:${stBg}; color:white; padding:3px 8px; border-radius:6px; font-size:0.72rem; font-weight:700;">
+                        ${stText}
                     </div>
                 </div>
 
@@ -764,24 +771,32 @@ async function submitPackageForm() {
 
         const data = await res.json();
         if (!data.success) {
-            throw new Error(data.error || 'حدث خطأ أثناء حفظ الباقة');
+            // رسالة تحقق من الخادم (حقل ناقص مثلاً) — تُعرض كتنبيه مفيد للملء
+            const verr = new Error(data.error || 'أكمل الحقول المطلوبة قبل الحفظ');
+            verr.isValidation = true;
+            throw verr;
         }
 
         if (window.showToast) {
-            showToast(editingPackageId ? '✅ تم تحديث الباقة بنجاح!' : '🎉 تم إنشاء ونشر الباقة التعليمية بنجاح!', 'success');
+            showToast(data.message || (editingPackageId ? '✅ تم تحديث الباقة' : '🎉 تم إنشاء الباقة — بانتظار مراجعة الإدارة'), 'success');
         } else {
-            alert('✅ تم حفظ الباقة بنجاح!');
+            alert(data.message || '✅ تم حفظ الباقة بنجاح!');
         }
 
         closePackageBuilderModal();
         loadTeacherPackages();
     } catch (err) {
-        console.error('Error submitting package:', err);
-        alert('❌ ' + err.message);
+        console.warn('Package submit failed:', err);
+        const hint = (err && err.isValidation) ? err.message : 'تعذر حفظ الباقة — أعد المحاولة';
+        if (window.showToast) {
+            showToast('⚠️ ' + hint, 'warning');
+        } else {
+            alert('⚠️ ' + hint);
+        }
     } finally {
         if (submitBtn) {
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="fas fa-check"></i> حفظ ونشر';
+            submitBtn.innerHTML = '<i class="fas fa-check"></i> حفظ الباقة';
         }
     }
 }
@@ -813,11 +828,14 @@ async function deletePackagePrompt(pkgId) {
             if (window.showToast) showToast('✅ تم حذف الباقة بنجاح', 'success');
             loadTeacherPackages();
         } else {
-            alert('❌ ' + (data.error || 'تعذر حذف الباقة'));
+            console.warn('Package delete failed:', data.error);
+            if (window.showToast) showToast('⚠️ تعذر حذف الباقة — أعد المحاولة', 'warning');
+            else alert('⚠️ تعذر حذف الباقة');
         }
     } catch (e) {
-        console.error('Error deleting package:', e);
-        alert('❌ حدث خطأ أثناء الحذف');
+        console.warn('Package delete error:', e);
+        if (window.showToast) showToast('⚠️ تعذر الاتصال بالخادم — أعد المحاولة', 'warning');
+        else alert('⚠️ تعذر حذف الباقة');
     }
 }
 

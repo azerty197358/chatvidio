@@ -2267,6 +2267,18 @@ async function handleSendChatMessage(req, res) {
             senderName = (role === 'teacher' ? 'الأستاذ' : 'طالب');
         }
 
+        // ✅ الرد على رسالة سابقة (اختياري) — تنظيف المعرّف والاسم والمقتطف قبل التخزين
+        let replyTo = null;
+        try {
+            const rt = req.body && req.body.reply_to;
+            if (rt && typeof rt === 'object') {
+                const rtId = rt.id != null ? String(rt.id).replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 64) : '';
+                const rtSender = sanitizeSenderName(rt.sender);
+                const rtText = String(rt.text != null ? rt.text : '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 120);
+                if (rtId && rtText) replyTo = { id: rtId, sender: rtSender, text: rtText };
+            }
+        } catch (e) {}
+
         const msgObj = {
             id: Date.now() + Math.random().toString(36).substr(2, 5),
             offer_id: offerId,
@@ -2276,6 +2288,7 @@ async function handleSendChatMessage(req, res) {
             message: message.trim(),
             created_at: new Date().toISOString()
         };
+        if (replyTo) msgObj.reply_to = replyTo;
 
         if (!streamMessagesStore.has(offerId)) {
             streamMessagesStore.set(offerId, []);
@@ -2285,14 +2298,21 @@ async function handleSendChatMessage(req, res) {
         if (msgs.length > 200) msgs.shift();
 
         try {
-            await supabase.from('stream_chat_messages').insert({
+            const dbRow = {
                 offer_id: offerId,
                 sender_id: userId,
                 sender_name: senderName,
                 sender_role: role,
                 message: message.trim(),
                 created_at: msgObj.created_at
-            });
+            };
+            if (replyTo) {
+                // ✅ تدرّج: إن لم يوجد عمود reply_to بعد (قبل تشغيل الترحيل) نحفظ بدونه — الرد يبقى ظاهراً في البث المباشر
+                const { error: rtErr } = await supabase.from('stream_chat_messages').insert({ ...dbRow, reply_to: replyTo });
+                if (rtErr) await supabase.from('stream_chat_messages').insert(dbRow);
+            } else {
+                await supabase.from('stream_chat_messages').insert(dbRow);
+            }
         } catch (e) {}
 
         // ✅ بث الرسالة فورياً إلى غرفة البث المفتوحة (WebRTC) — بدون أي استطلاع من المتصفحات
@@ -2303,6 +2323,7 @@ async function handleSendChatMessage(req, res) {
             sender: msgObj.sender_name,
             senderId: msgObj.sender_id,
             senderRole: msgObj.sender_role,
+            replyTo: replyTo || null,
             timestamp: Date.now()
         });
 

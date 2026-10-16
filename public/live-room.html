@@ -265,6 +265,47 @@
             color: #fbbf24; cursor: pointer;
             font-size: 0.8rem; padding: 0;
         }
+        /* ===== الرد على رسائل الدردشة ===== */
+        .chat-msg .msg-reply {
+            border-right: 3px solid #60a5fa;
+            background: rgba(96,165,250,.14);
+            border-radius: 8px;
+            padding: 4px 8px;
+            margin-bottom: 4px;
+            cursor: pointer;
+        }
+        .chat-msg.mine .msg-reply { border-right-color: #bfdbfe; background: rgba(255,255,255,.14); }
+        .msg-reply-sender { font-size: 0.64rem; font-weight: 800; color: #93c5fd; margin-bottom: 1px; }
+        .chat-msg.mine .msg-reply-sender { color: #dbeafe; }
+        .msg-reply-text { font-size: 0.7rem; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chat-msg.mine .msg-reply-text { color: rgba(255,255,255,.85); }
+        .chat-msg .reply-btn {
+            background: none; border: none;
+            color: rgba(147,197,253,.75);
+            font-size: 0.64rem; font-weight: 800;
+            padding: 0 4px; cursor: pointer;
+            margin-inline-start: auto;
+        }
+        .chat-msg .reply-btn:hover { color: #fff; }
+        .chat-msg.mine .reply-btn { color: rgba(219,234,254,.85); }
+        .chat-msg.flash { animation: msgFlash 1.5s ease; }
+        @keyframes msgFlash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px rgba(250,204,21,.85); } }
+        .reply-bar {
+            align-items: center; gap: 8px;
+            padding: 6px 10px;
+            background: rgba(37,99,235,.20);
+            border-top: 1px solid #1f2937;
+            font-size: 0.72rem;
+        }
+        .reply-bar-info { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: #93c5fd; overflow: hidden; }
+        .reply-bar-info strong { color: #dbeafe; }
+        .reply-bar-text { color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .reply-bar button {
+            background: none; border: none;
+            color: #94a3b8; font-size: 1rem;
+            cursor: pointer; padding: 0 4px;
+        }
+        .reply-bar button:hover { color: #fff; }
         .chat-mute-hint {
             padding: 8px 12px;
             background: #451a03;
@@ -415,6 +456,14 @@
             <div class="chat-empty" id="chatEmpty">لا توجد رسائل بعد — كن أول من يرسل رسالة!</div>
         </div>
         <div class="chat-mute-hint" id="chatMuteHint">تمكتمك من قبل الأستاذ في هذه الحصة — لا يمكنك إرسال رسائل</div>
+        <div class="reply-bar" id="replyBar" style="display:none;">
+            <div class="reply-bar-info">
+                <i class="fas fa-reply"></i>
+                <span>رد على <strong id="replyBarName"></strong></span>
+                <span class="reply-bar-text" id="replyBarText"></span>
+            </div>
+            <button type="button" id="replyBarCancel" title="إلغاء الرد">&times;</button>
+        </div>
         <div class="chat-input-row" id="chatInputRow" style="display:none;">
             <input type="text" id="chatInput" placeholder="اكتب رسالتك هنا..." maxlength="500" autocomplete="off">
             <button id="chatSend">إرسال</button>
@@ -707,6 +756,7 @@
         var streamEnded = false;
         var unreadCount = 0;
         var chatPanelOpen = false;
+        var replyTarget = null;
 
         function escText(s) {
             var d = document.createElement('div');
@@ -716,12 +766,22 @@
 
         function normalizeMsg(raw) {
             if (!raw) return null;
+            var rt = raw.reply_to || raw.replyTo || null;
+            var reply = null;
+            if (rt && typeof rt === 'object' && (rt.text || rt.sender)) {
+                reply = {
+                    id: rt.id != null ? rt.id : null,
+                    sender: String(rt.sender != null ? rt.sender : (rt.sender_name || '')).slice(0, 40),
+                    text: String(rt.text != null ? rt.text : '').slice(0, 120)
+                };
+            }
             return {
                 id: raw.id != null ? raw.id : (raw.msgId != null ? raw.msgId : null),
                 text: raw.text != null ? raw.text : raw.message,
                 sender: raw.sender != null ? raw.sender : raw.sender_name,
                 senderId: raw.senderId != null ? raw.senderId : raw.sender_id,
-                senderRole: raw.senderRole != null ? raw.senderRole : raw.sender_role
+                senderRole: raw.senderRole != null ? raw.senderRole : raw.sender_role,
+                reply: reply
             };
         }
 
@@ -775,6 +835,41 @@
             return false;
         }
 
+        // ===== الرد على رسائل الدردشة =====
+        function canReplyToMessages() {
+            return !streamEnded && canChat && !(role === 'student' && iAmMuted);
+        }
+
+        function setReplyTarget(msg) {
+            if (!canReplyToMessages() || !msg) return;
+            replyTarget = {
+                id: msg.id != null ? msg.id : null,
+                sender: String(msg.sender || '').slice(0, 40),
+                text: String(msg.text || '').slice(0, 120)
+            };
+            document.getElementById('replyBarName').textContent = replyTarget.sender || 'رسالة سابقة';
+            document.getElementById('replyBarText').textContent = '« ' + replyTarget.text + ' »';
+            document.getElementById('replyBar').style.display = 'flex';
+            try { chatInput.focus(); } catch (e) {}
+        }
+
+        function cancelReplyTarget() {
+            replyTarget = null;
+            document.getElementById('replyBar').style.display = 'none';
+        }
+
+        function jumpToMessage(id) {
+            if (id == null) return;
+            var sel = '[data-msg-id="' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
+            var el = null;
+            try { el = chatMessages.querySelector(sel); } catch (e) {}
+            if (el) {
+                try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+                el.classList.add('flash');
+                setTimeout(function () { el.classList.remove('flash'); }, 1500);
+            }
+        }
+
         function renderChat() {
             chatMessages.innerHTML = '';
             if (chatLog.length === 0) {
@@ -786,6 +881,26 @@
                 var isTeacherSender = msg.senderRole === 'teacher';
                 var el = document.createElement('div');
                 el.className = 'chat-msg' + (isMine ? ' mine' : '') + (isTeacherSender ? ' from-teacher' : '');
+                if (msg.id != null) el.setAttribute('data-msg-id', String(msg.id));
+
+                // اقتباس الرسالة المُردود عليها (أعلى الفقاعة — بالنقر ينتقل للرسالة الأصلية)
+                if (msg.reply && (msg.reply.text || msg.reply.sender)) {
+                    var quote = document.createElement('div');
+                    quote.className = 'msg-reply';
+                    quote.title = 'الانتقال إلى الرسالة الأصلية';
+                    var qSender = document.createElement('div');
+                    qSender.className = 'msg-reply-sender';
+                    qSender.textContent = '↩ رد على ' + (msg.reply.sender || 'رسالة سابقة');
+                    var qText = document.createElement('div');
+                    qText.className = 'msg-reply-text';
+                    qText.textContent = msg.reply.text || '';
+                    quote.appendChild(qSender);
+                    quote.appendChild(qText);
+                    (function (rid) {
+                        quote.addEventListener('click', function () { jumpToMessage(rid); });
+                    })(msg.reply.id);
+                    el.appendChild(quote);
+                }
 
                 var meta = document.createElement('div');
                 meta.className = 'msg-meta';
@@ -822,6 +937,17 @@
                     meta.appendChild(tag2);
                 }
 
+                // زر الرد على الرسالة
+                if (canReplyToMessages()) {
+                    var replyBtn = document.createElement('button');
+                    replyBtn.className = 'reply-btn';
+                    replyBtn.type = 'button';
+                    replyBtn.title = 'رد على هذه الرسالة';
+                    replyBtn.textContent = '↩ رد';
+                    replyBtn.addEventListener('click', function () { setReplyTarget(msg); });
+                    meta.appendChild(replyBtn);
+                }
+
                 var body = document.createElement('div');
                 body.textContent = String(msg.text);
 
@@ -837,6 +963,7 @@
             chatMuteHint.style.display = muted ? 'block' : 'none';
             chatInput.disabled = muted || streamEnded;
             chatSendBtn.disabled = muted || streamEnded;
+            if (muted || streamEnded) cancelReplyTarget();
             chatInput.placeholder = streamEnded ? 'انتهى البث المباشر'
                 : (muted ? 'تمكتمك من قبل الأستاذ' : 'اكتب رسالتك هنا...');
         }
@@ -1010,9 +1137,11 @@
             if (!text || streamEnded || !offerId || !canChat) return;
             if (role === 'student' && iAmMuted) return;
             chatInput.value = '';
+            var payload = { offer_id: offerId, message: text, sender_name: getMyDisplayName() };
+            if (replyTarget && replyTarget.id != null && replyTarget.text) payload.reply_to = replyTarget;
             api('/api/stream/chat/send', {
                 method: 'POST',
-                body: JSON.stringify({ offer_id: offerId, message: text, sender_name: getMyDisplayName() })
+                body: JSON.stringify(payload)
             }).then(function (data) {
                 if (data && data.success && data.message) {
                     ingestMessage({
@@ -1020,13 +1149,16 @@
                         text: data.message.message,
                         sender: data.message.sender_name,
                         senderId: data.message.sender_id,
-                        senderRole: data.message.sender_role
+                        senderRole: data.message.sender_role,
+                        reply_to: data.message.reply_to || null
                     });
+                    cancelReplyTarget();
                 } else if (data && data.success === false) {
                     //  مثال: كتم أثناء الكتابة — تحديث الحالة بصمت بدون أي رسالة خطأ
                     if (data.error && String(data.error).indexOf('كتم') !== -1) {
                         iAmMuted = true;
                         updateMuteHint();
+                        cancelReplyTarget();
                     }
                 }
             }).catch(function (e) {
@@ -1095,6 +1227,7 @@
         chatInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') sendChatMessage();
         });
+        document.getElementById('replyBarCancel').addEventListener('click', cancelReplyTarget);
 
         //  إظهار/إخفاء عناصر الدور
         if (role === 'teacher') {
