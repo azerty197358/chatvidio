@@ -80,6 +80,8 @@
                 <data android:scheme="https" android:host="zoomdz.com" />
                 <data android:scheme="http" android:host="www.zoomdz.com" />
                 <data android:scheme="https" android:host="www.zoomdz.com" />
+                <data android:scheme="http" android:host="chatvidio.onrender.com" />
+                <data android:scheme="https" android:host="chatvidio.onrender.com" />
             </intent-filter>
         </activity>
     </application>

@@ -814,42 +814,60 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                 bookingIndex.get(key).push(row);
             });
 
-            const { data: subscriptions, error: subscriptionsError } = await supabase
-                .from('stream_subscriptions')
-                .select(`
-                    id,
-                    offer_id,
-                    student_id,
-                    status,
-                    total_amount_paid,
-                    teacher_total_escrow,
-                    teacher_released_so_far,
-                    created_at,
-                    session_number,
-                    plan_type,
-                    price_per_session,
-                    total_sessions,
-                    completed_sessions,
-                    students:student_id (
-                        id,
-                        full_name,
-                        phone
-                    )
-                `)
-                .in('offer_id', offerIds)
-                .order('created_at', { ascending: false })
-                .limit(1000);
-
+            // اختيار متدرج الأعمدة: عمود session_number غير موجود في stream_subscriptions
+            // عند بعض قواعد البيانات، وعلاقة الـ FK قد تغيب أيضاً إذا أُنشئ الجدول
+            // بدون REFERENCES — لذلك نجرّب قائمة أقصر تلو الأطول بدل أن يفشل
+            // الاستعلام كله ويتلفير أرباح الدروس الثلاثة مع قائمة العمليات.
+            const subscriptionSelects = [
+                `id, offer_id, student_id, status, total_amount_paid, teacher_total_escrow, teacher_released_so_far, created_at, session_number, plan_type, price_per_session, total_sessions, completed_sessions, students:student_id ( id, full_name, phone )`,
+                `id, offer_id, student_id, status, total_amount_paid, teacher_total_escrow, teacher_released_so_far, created_at, plan_type, price_per_session, total_sessions, completed_sessions, students:student_id ( id, full_name, phone )`,
+                `id, offer_id, student_id, status, total_amount_paid, teacher_total_escrow, teacher_released_so_far, created_at, total_sessions, completed_sessions`,
+                `id, offer_id, student_id, status, total_amount_paid, teacher_released_so_far, created_at`
+            ];
+            let subscriptions = null;
+            let subscriptionsError = null;
+            for (const sel of subscriptionSelects) {
+                try {
+                    const r = await supabase
+                        .from('stream_subscriptions')
+                        .select(sel)
+                        .in('offer_id', offerIds)
+                        .order('created_at', { ascending: false })
+                        .limit(1000);
+                    if (!r.error) { subscriptions = r.data; subscriptionsError = null; break; }
+                    subscriptionsError = r.error;
+                } catch (e) {
+                    subscriptionsError = e;
+                }
+            }
             if (subscriptionsError) {
-                logger.error('خطأ في جلب الاشتراكات:', subscriptionsError.message);
+                logger.warn('تعذر جلب اشتراكات الدروس:', subscriptionsError.message || String(subscriptionsError));
             }
 
-            const { data: streamSessions, error: streamSessionsError } = await supabase
-                .from('stream_sessions')
-                .select('id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds')
-                .in('offer_id', offerIds)
-                .order('session_number', { ascending: true });
-            if (streamSessionsError) logger.error('خطأ في جلب الحصص:', streamSessionsError.message);
+            // actual_duration_seconds موجود في بعض ملفات المخططات فقط — ندرج
+            // الاختيار أيضاً حتى لا يفشل الاستعلام كلياً عند غيابه.
+            const streamSessionSelects = [
+                'id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds',
+                'id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at',
+                'id, offer_id, teacher_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url',
+                'id, offer_id, teacher_id, session_number, status'
+            ];
+            let streamSessions = null;
+            let streamSessionsError = null;
+            for (const sel of streamSessionSelects) {
+                try {
+                    const r = await supabase
+                        .from('stream_sessions')
+                        .select(sel)
+                        .in('offer_id', offerIds)
+                        .order('session_number', { ascending: true });
+                    if (!r.error) { streamSessions = r.data; streamSessionsError = null; break; }
+                    streamSessionsError = r.error;
+                } catch (e) {
+                    streamSessionsError = e;
+                }
+            }
+            if (streamSessionsError) logger.warn('تعذر جلب حصص البث:', streamSessionsError.message || String(streamSessionsError));
 
             const streamByOffer = new Map();
             for (const session of streamSessions || []) {
@@ -905,7 +923,7 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                     teacher_earned: Number(booking?.teacher_earned || 0) || earned,
                     teacher_released_so_far: Number(sub.teacher_released_so_far || 0),
                     created_at: sub.created_at,
-                    session_number: sub.session_number || 1,
+                    session_number: streamSession.session_number || 1,
                     plan_type: planType,
                     total_sessions: totalSessions,
                     completed_sessions: completedSessions,
@@ -917,7 +935,7 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                         subject_name: offer.subject_name || 'درس خاص',
                         price: offerPrice,
                         offer_date: offer.offer_date,
-                        session_number: sub.session_number || 1,
+                        session_number: streamSession.session_number || 1,
                         plan_type: planType,
                         total_sessions: totalSessions,
                         completed_sessions: completedSessions,
@@ -927,6 +945,57 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
                     },
                     student_name: sub.students?.full_name || 'مستخدم منصة ZoomDz'
                 });
+            });
+
+            // الحجوزات التي لا يقابلها صف اشتراك (أو تزيد عليه) تُعرض أيضاً،
+            // حتى لو كان جدول stream_subscriptions فارغاً أو استعلامه فشل —
+            // سجلات الحجز هي ما يحمل المدفوع والمُحرَّر فعلياً للأستاذ.
+            bookingIndex.forEach((pool, pairKey) => {
+                const consumed = usedPerPair.get(pairKey) || 0;
+                for (let i = consumed; i < pool.length; i++) {
+                    const booking = pool[i];
+                    const offer = offersMap.get(booking.offer_id) || {};
+                    const offerPrice = parseFloat(offer.price || 0);
+                    const streamSession = streamByOffer.get(booking.offer_id) || {};
+                    const earned = Number(booking.teacher_earned || 0)
+                        || Math.max(0, offerPrice - Number(offer.platform_fee_per_session || 50));
+                    const totalSessions = Math.max(1, Number(offer.total_sessions || 1));
+                    const planType = (offer.plan_type && offer.plan_type !== 'null')
+                        ? offer.plan_type
+                        : (totalSessions > 1 ? '1_month' : '1_day');
+                    rows.push({
+                        id: booking.id,
+                        offer_id: booking.offer_id,
+                        student_id: booking.student_id,
+                        payment_status: booking.payment_status || 'pending_stream',
+                        payment_amount: Number(booking.payment_amount || 0),
+                        platform_fee: Math.max(0, Number(booking.payment_amount || 0) - earned),
+                        teacher_earned: earned,
+                        teacher_released_so_far: Number(booking.teacher_earned || 0),
+                        created_at: booking.created_at,
+                        session_number: streamSession.session_number || 1,
+                        plan_type: planType,
+                        total_sessions: totalSessions,
+                        completed_sessions: 0,
+                        session_date: streamSession.session_date || offer.offer_date,
+                        duration_minutes: Number(streamSession.duration_minutes) || 60,
+                        status: streamSession.status || 'upcoming',
+                        title: streamSession.title || offer.subject_name,
+                        offers: {
+                            subject_name: offer.subject_name || 'درس خاص',
+                            price: offerPrice,
+                            offer_date: offer.offer_date,
+                            session_number: streamSession.session_number || 1,
+                            plan_type: planType,
+                            total_sessions: totalSessions,
+                            completed_sessions: 0,
+                            session_date: streamSession.session_date || offer.offer_date,
+                            duration_minutes: Number(streamSession.duration_minutes) || 60,
+                            status: streamSession.status || 'upcoming'
+                        },
+                        student_name: 'مستخدم منصة ZoomDz'
+                    });
+                }
             });
             allSessions = rows;
         }
@@ -944,29 +1013,29 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
             (teacherPackages || []).forEach(p => packagesMap.set(p.id, p));
 
             if (packageIds.length > 0) {
-                const { data: pkgSubs, error: pkgSubsErr } = await supabase
-                    .from('package_subscriptions')
-                    .select(`
-                        id,
-                        package_id,
-                        student_id,
-                        teacher_id,
-                        subscription_type,
-                        price_paid,
-                        gross_price,
-                        platform_fee,
-                        teacher_net_amount,
-                        status,
-                        created_at,
-                        students:student_id (
-                            id,
-                            full_name,
-                            phone,
-                            email
-                        )
-                    `)
-                    .in('package_id', packageIds)
-                    .order('created_at', { ascending: false });
+                // اختيار متدرج: إن غاب عمود (teacher_net_amount مثلاً) أو علاقة FK
+                // نجرّب قائمة أقصر بدل أن تختفي أرباح الباقات كلياً.
+                const pkgSelects = [
+                    `id, package_id, student_id, teacher_id, subscription_type, price_paid, gross_price, platform_fee, teacher_net_amount, status, created_at, students:student_id ( id, full_name, phone, email )`,
+                    `id, package_id, student_id, teacher_id, subscription_type, price_paid, status, created_at, students:student_id ( id, full_name, phone, email )`,
+                    `id, package_id, student_id, teacher_id, subscription_type, price_paid, status, created_at`
+                ];
+                let pkgSubs = null;
+                let pkgSubsErr = null;
+                for (const sel of pkgSelects) {
+                    try {
+                        const r = await supabase
+                            .from('package_subscriptions')
+                            .select(sel)
+                            .in('package_id', packageIds)
+                            .order('created_at', { ascending: false });
+                        if (!r.error) { pkgSubs = r.data; pkgSubsErr = null; break; }
+                        pkgSubsErr = r.error;
+                    } catch (e) {
+                        pkgSubsErr = e;
+                    }
+                }
+                if (pkgSubsErr) logger.warn('تعذر جلب اشتراكات الباقات:', pkgSubsErr.message || String(pkgSubsErr));
 
                 if (pkgSubs && !pkgSubsErr) {
                     packageEarnings = pkgSubs.map(sub => {
@@ -1014,26 +1083,29 @@ router.get('/balance/:teacher_id', authenticate, authorize(['teacher']), [
             (teacherCourses || []).forEach(c => coursesMap.set(c.id, c));
 
             if (courseIds.length > 0) {
-                const { data: coursePurchases, error: cpErr } = await supabase
-                    .from('course_purchases')
-                    .select(`
-                        id,
-                        course_id,
-                        student_id,
-                        teacher_id,
-                        price,
-                        platform_commission,
-                        teacher_earned,
-                        created_at,
-                        students:student_id (
-                            id,
-                            full_name,
-                            phone,
-                            email
-                        )
-                    `)
-                    .in('course_id', courseIds)
-                    .order('created_at', { ascending: false });
+                // اختيار متدرج أيضاً: teacher_earned/platform_commission قد تغيب
+                // من جدول course_purchases في بعض القواعد — نحسب النسبة حينها.
+                const cpSelects = [
+                    `id, course_id, student_id, teacher_id, price, platform_commission, teacher_earned, created_at, students:student_id ( id, full_name, phone, email )`,
+                    `id, course_id, student_id, teacher_id, price, created_at, students:student_id ( id, full_name, phone, email )`,
+                    `id, course_id, student_id, teacher_id, price, created_at`
+                ];
+                let coursePurchases = null;
+                let cpErr = null;
+                for (const sel of cpSelects) {
+                    try {
+                        const r = await supabase
+                            .from('course_purchases')
+                            .select(sel)
+                            .in('course_id', courseIds)
+                            .order('created_at', { ascending: false });
+                        if (!r.error) { coursePurchases = r.data; cpErr = null; break; }
+                        cpErr = r.error;
+                    } catch (e) {
+                        cpErr = e;
+                    }
+                }
+                if (cpErr) logger.warn('تعذر جلب مشتريات الدورات:', cpErr.message || String(cpErr));
 
                 if (coursePurchases && !cpErr) {
                     courseEarnings = coursePurchases.map(cp => {

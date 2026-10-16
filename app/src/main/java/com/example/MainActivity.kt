@@ -655,20 +655,34 @@ class MainActivity : ComponentActivity() {
                         return false
                     }
 
-                    // Keep platform URLs inside the WebView
-                    val isPlatform = host.contains("zoomdz.com") || host.contains("vercel.app") || host.contains("localhost") || targetUrl.startsWith("file://")
-                    if (isPlatform) return false
+                    // Keep platform URLs inside the WebView — النطاق المخصص + مضيف
+                    // Render. أي تحويل إلى onrender.com كان يُفتح خارج التطبيق
+                    // فيبدو كأن الروابط لا تُفتح داخله إطلاقاً.
+                    val isPlatform = host.contains("zoomdz.com") || host.contains("onrender.com") ||
+                        host.contains("vercel.app") || host.contains("localhost") || targetUrl.startsWith("file://")
+                    // تسجيل الدخول عبر جوجل يجب أن يكتمل داخل التطبيق حتى تُحفظ
+                    // جلسته في كوكيز الـ WebView — إرساله لمتصفح خارجي ينتهي
+                    // بجلسة في المتصفح الخارجي والتطبيق يبقى غير مسجّل الدخول.
+                    val isAuth = host.contains("google.com") || host.contains("googleapis.com")
+                    if (isPlatform || isAuth) return false
 
-                    // Open external links in browser or respective apps
+                    // Open external links in browser or respective apps — وإن تعذّر
+                    // فتحه خارجياً نُحمّله داخل التطبيق بدل أن يبقى الرابط ميتاً
                     if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://") || targetUrl.contains("t.me/") || targetUrl.startsWith("tg:") || targetUrl.contains("whatsapp") || targetUrl.startsWith("wa.me")) {
-                        try {
+                        return try {
                             ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        } catch (e: Exception) {}
-                        return true
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
                     }
                     if (targetUrl.startsWith("tel:") || targetUrl.startsWith("mailto:") || targetUrl.startsWith("sms:")) {
-                        try { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))) } catch (e: Exception) {}
-                        return true
+                        return try {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
                     }
                     return false
                 }
@@ -677,7 +691,7 @@ class MainActivity : ComponentActivity() {
                     super.onReceivedError(view, request, error)
                     if (request?.isForMainFrame == true) {
                         val failUrl = request.url.toString()
-                        if (failUrl.contains("zoomdz.com")) {
+                        if (failUrl.contains("zoomdz.com") || failUrl.contains("onrender.com")) {
                             view?.loadUrl(BACKUP_URL)
                         }
                     }
@@ -808,6 +822,38 @@ class MainActivity : ComponentActivity() {
                     customViewCallback = null
                     window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
                 }
+
+                // دعم window.open و target="_blank": بدون معالج نافذة جديدة
+                // تُفتح الروابط صامتاً ويبدو كأن التطبيق لا يدعم فتح الروابط إطلاقاً
+                override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                    val newWebView = WebView(view?.context ?: this@MainActivity)
+                    newWebView.settings.javaScriptEnabled = true
+                    newWebView.settings.domStorageEnabled = true
+                    newWebView.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                            val u = req?.url?.toString() ?: return false
+                            val h = req.url.host ?: ""
+                            val platform = h.contains("zoomdz.com") || h.contains("onrender.com") ||
+                                h.contains("vercel.app") || h.contains("localhost")
+                            val auth = h.contains("google.com")
+                            if (platform || auth || u.startsWith("blob:") || u.startsWith("data:")) {
+                                runOnUiThread { persistentWebView?.loadUrl(u) }
+                                return true
+                            }
+                            return try {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                true
+                            } catch (e: Exception) {
+                                runOnUiThread { persistentWebView?.loadUrl(u) }
+                                true
+                            }
+                        }
+                    }
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport
+                    transport?.webView = newWebView
+                    resultMsg?.sendToTarget()
+                    return true
+                }
             }
 
             val cookieManager = CookieManager.getInstance()
@@ -827,12 +873,12 @@ class MainActivity : ComponentActivity() {
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
                 javaScriptCanOpenWindowsAutomatically = true
-                setSupportMultipleWindows(false)
+                setSupportMultipleWindows(true)
                 setSupportZoom(true)
                 builtInZoomControls = true
                 displayZoomControls = false
                 textZoom = 100
-                userAgentString = "$userAgentString ZoomDzNativeAndroid/2.1.0"
+                userAgentString = "$userAgentString ZoomDzNativeAndroid/2.2.0"
             }
 
             setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
@@ -902,7 +948,7 @@ class MainActivity : ComponentActivity() {
 
             addJavascriptInterface(object {
                 @JavascriptInterface fun isNativeApp() = true
-                @JavascriptInterface fun getAppVersion() = "2.1.0"
+                @JavascriptInterface fun getAppVersion() = "2.2.0"
                 @JavascriptInterface fun requestMediaPermissions() {
                     requestAppStartupPermissions()
                 }
@@ -1006,6 +1052,9 @@ class MainActivity : ComponentActivity() {
                         }
                         override fun onHideCustomView() {
                             originalChrome?.onHideCustomView()
+                        }
+                        override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                            return originalChrome?.onCreateWindow(view, isDialog, isUserGesture, resultMsg) ?: false
                         }
                     }
                 }

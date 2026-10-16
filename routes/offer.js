@@ -1237,22 +1237,55 @@ router.get('/teacher/offers/:teacher_id', authenticate, authorize(['teacher']), 
         }
 
         const offerIds = offers.map(offer => offer.id);
-        const { data: subscriptions, error: subscriptionsError } = await supabase
-            .from('stream_subscriptions')
-            .select('offer_id, session_number, plan_type, total_sessions, completed_sessions, status, created_at')
-            .in('offer_id', offerIds)
-            .order('session_number', { ascending: true });
-
-        if (subscriptionsError) {
-            logger.warn('تعذر جلب بيانات اشتراكات الحصص:', subscriptionsError.message);
+        // اختيار متدرج: session_number غير موجود في stream_subscriptions
+        // عند بعض قواعد البيانات — لا نريد أن يفشل الاستعلام كله لذلك.
+        const subscriptionSelects = [
+            'offer_id, session_number, plan_type, total_sessions, completed_sessions, status, created_at',
+            'offer_id, plan_type, total_sessions, completed_sessions, status, created_at',
+            'offer_id, total_sessions, completed_sessions, status, created_at'
+        ];
+        let subscriptions = null;
+        let subscriptionsError = null;
+        for (const sel of subscriptionSelects) {
+            try {
+                const r = await supabase
+                    .from('stream_subscriptions')
+                    .select(sel)
+                    .in('offer_id', offerIds)
+                    .order('created_at', { ascending: true });
+                if (!r.error) { subscriptions = r.data; subscriptionsError = null; break; }
+                subscriptionsError = r.error;
+            } catch (e) {
+                subscriptionsError = e;
+            }
         }
 
-        const { data: streamSessions, error: streamSessionsError } = await supabase
-            .from('stream_sessions')
-            .select('offer_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds')
-            .in('offer_id', offerIds)
-            .order('session_number', { ascending: true });
-        if (streamSessionsError) logger.warn('تعذر جلب جلسات البث:', streamSessionsError.message);
+        if (subscriptionsError) {
+            logger.warn('تعذر جلب بيانات اشتراكات الحصص:', subscriptionsError.message || String(subscriptionsError));
+        }
+
+        const streamSessionSelects = [
+            'offer_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at, actual_duration_seconds',
+            'offer_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url, completed_at',
+            'offer_id, session_number, title, session_date, duration_minutes, price_per_session, status, stream_url',
+            'offer_id, session_number, status'
+        ];
+        let streamSessions = null;
+        let streamSessionsError = null;
+        for (const sel of streamSessionSelects) {
+            try {
+                const r = await supabase
+                    .from('stream_sessions')
+                    .select(sel)
+                    .in('offer_id', offerIds)
+                    .order('session_number', { ascending: true });
+                if (!r.error) { streamSessions = r.data; streamSessionsError = null; break; }
+                streamSessionsError = r.error;
+            } catch (e) {
+                streamSessionsError = e;
+            }
+        }
+        if (streamSessionsError) logger.warn('تعذر جلب جلسات البث:', streamSessionsError.message || String(streamSessionsError));
 
         const subscriptionByOffer = new Map();
         for (const subscription of subscriptions || []) {

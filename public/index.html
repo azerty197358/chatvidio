@@ -297,7 +297,6 @@
         #supportSection,
         #developersSection,
         #referralSection,
-        #promotionSection,
         #loginSection {
             content-visibility: auto;
             contain-intrinsic-size: 1px 700px;
@@ -4743,9 +4742,6 @@
                 <a onclick="showSupport()" id="supportTabNav" role="tab" aria-selected="false" style="color: #475569; padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 0.9rem; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
                     <i class="fas fa-headset" style="color: #3b82f6;"></i> الدعم الفني
                 </a>
-                <a onclick="showPromotion()" id="promotionTab" role="tab" aria-selected="false" style="color: #047857; background: #ecfdf5; padding: 8px 16px; border-radius: 30px; font-weight: 700; font-size: 0.9rem; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
-                    <i class="fas fa-bullhorn" style="color: #10b981;"></i> الترويج
-                </a>
                 <a onclick="showRegister('student-register')" id="registerTabNav" role="tab" aria-selected="false" style="background: #3b82f6; color: white; padding: 8px 20px; border-radius: 30px; font-weight: 700; font-size: 0.9rem; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);">
                     <i class="fas fa-user-plus"></i> اشتراك
                 </a>
@@ -5086,35 +5082,6 @@
         <!-- ===== PROFILE SECTION ===== -->
         <section id="profileSection" class="profile-section" style="display: none;" aria-label="ملف الأستاذ">
             <div id="profileContent"></div>
-        </section>
-
-        <!-- ===== PROMOTION SECTION ===== -->
-        <section id="promotionSection" class="section-container" style="display: none;" aria-label="برنامج الترويج">
-            <div class="section-header">
-                <span class="section-tag"><i class="fas fa-bullhorn" aria-hidden="true"></i> برنامج الترويج</span>
-                <h2 class="section-title">روّج للمنصة واربح من المشاهدات</h2>
-                <p class="section-subtitle">أنشئ فيديو شاملاً عن ZoomDz مدته 5 دقائق على الأقل</p>
-            </div>
-            <div class="form-container" style="max-width: 850px; margin: 0 auto;">
-                <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:14px;padding:16px;margin-bottom:20px;">
-                    <strong>الحساب التقديري:</strong> 500 دج لكل 1,000 مشاهدة موثقة على YouTube أو Facebook أو Instagram أو TikTok.
-                    <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;"><label for="promoViews" style="margin:0;">المشاهدات المتوقعة</label><input id="promoViews" type="range" min="1000" max="1000000" step="1000" value="1000" oninput="updatePromotionEstimate()" style="flex:1"><output id="promoViewsValue" aria-live="polite">1,000 مشاهدة</output><output id="promoEstimate" aria-live="polite">500 دج</output></div>
-                </div>
-                <form id="promotionForm" onsubmit="submitPromotionApplication(event)">
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
-                        <div><label>الاسم الكامل</label><input name="applicant_name" required maxlength="120"></div>
-                        <div><label>البريد الإلكتروني</label><input name="email" type="email" required></div>
-                        <div><label>المنصة</label><select name="platform" required><option value="youtube">YouTube</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select></div>
-                        <div><label>عدد المشتركين</label><input name="subscriber_count" type="number" min="0" required></div>
-                        <div><label>مدة الفيديو بالدقائق</label><input name="video_duration_minutes" type="number" min="5" step="0.1" required></div>
-                        <div><label>حساب CCP للدفع</label><input name="ccp_account" required maxlength="80"></div>
-                    </div>
-                    <label>رابط القناة</label><input name="channel_url" type="url" required>
-                    <label>رابط فيديو الشرح</label><input name="video_url" type="url" required>
-                    <p style="font-size:.85rem;color:#64748b;line-height:1.7;">يجب أن يشرح الفيديو المنصة وميزاتها وأقسامها بشكل شامل. تتم مراجعة المشاهدات والمحتوى قبل اعتماد أو رفض الطلب، والدفع بعد الموافقة.</p>
-                    <button type="submit" class="btn-primary" style="width:100%;">إرسال طلب الترويج</button>
-                </form>
-            </div>
         </section>
 
         <!-- ===== REFERRAL SECTION ===== -->
@@ -6171,7 +6138,6 @@
             'blogSection',
             'developersSection',
             'profileSection',
-            'promotionSection',
             'referralSection',
             'loginSection'
         ];
@@ -6226,37 +6192,7 @@
             });
         }
 
-        function updatePromotionEstimate() {
-    var views = Number(document.getElementById('promoViews')?.value || 0);
-    var output = document.getElementById('promoEstimate');
-    var viewsOutput = document.getElementById('promoViewsValue');
-  if (viewsOutput) viewsOutput.textContent = views.toLocaleString('ar-DZ') + ' مشاهدة';
-  if (output) output.textContent = Math.round(views / 1000 * 500).toLocaleString('ar-DZ') + ' دج';
-  }
-
-  function showPromotion() {
-    hideAllMainSections();
-    var el = document.getElementById('promotionSection');
-    if (el) el.style.display = 'block';
-    setActiveTab('promotionTab');
-    updatePromotionEstimate();
-    window.scrollTo(0, 0);
-  }
-
-  async function submitPromotionApplication(event) {
-    event.preventDefault();
-    var form = event.target;
-    var payload = Object.fromEntries(new FormData(form).entries());
-    payload.expected_views = Number(document.getElementById('promoViews')?.value || 0);
-    try {
-      var response = await fetch('/api/promotion/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') }, body: JSON.stringify(payload) });
-      var data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'تعذر إرسال الطلب');
-      showNotification('تم إرسال طلب الترويج للمراجعة', 'success'); form.reset(); updatePromotionEstimate();
-    } catch (error) { showNotification(error.message, 'error'); }
-  }
-
-  function showReferral() {
+        function showReferral() {
             hideAllMainSections();
             var el = document.getElementById('referralSection');
             if (el) el.style.display = 'block';
@@ -6468,7 +6404,7 @@
         }
 
         function setActiveTab(tabId) {
-            var tabs = ['homeTab', 'teachersTab', 'blogTab', 'developersTab', 'supportTabNav', 'registerTabNav', 'loginTabNav', 'promotionTab', 'referralTab'];
+            var tabs = ['homeTab', 'teachersTab', 'blogTab', 'developersTab', 'supportTabNav', 'registerTabNav', 'loginTabNav', 'referralTab'];
             tabs.forEach(function(id) {
                 var el = document.getElementById(id);
                 if (el) el.classList.remove('active');
@@ -9102,9 +9038,6 @@
 
         // Export functions to global scope for onclick handlers
   window.showHome = showHome;
-  window.showPromotion = showPromotion;
-  window.updatePromotionEstimate = updatePromotionEstimate;
-  window.submitPromotionApplication = submitPromotionApplication;
   window.showPosts = showPosts;
         window.loadPublicPosts = loadPublicPosts;
         window.setPublicPostFilter = setPublicPostFilter;
@@ -9192,14 +9125,6 @@
                 <div class="item-content">
                     <i class="fas fa-robot" style="color:#7c3aed;"></i>
                     <span>تعلم بالذكاء الاصطناعي</span>
-                </div>
-                <i class="fas fa-chevron-left" style="font-size:0.8rem; opacity:0.5;"></i>
-            </div>
-
-            <div class="mobile-drawer-menu-item" onclick="showPromotion(); closeMobileDrawer();">
-                <div class="item-content">
-                    <i class="fas fa-bullhorn" style="color:#10b981;"></i>
-                    <span>الترويج والربح من المشاهدات</span>
                 </div>
                 <i class="fas fa-chevron-left" style="font-size:0.8rem; opacity:0.5;"></i>
             </div>

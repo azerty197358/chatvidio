@@ -11740,6 +11740,14 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     async function endStreamManual(offerId) {
         if (checkGuestAction()) return;
         if (!confirm('⚠️ تأكد أنك أكملت 90% على الأقل من مدة الحصة المحددة لهذه الحصة لتتلقى العائد الخاص بك.\nإذا انتهت الحصة قبل إكمال 90% من وقتها وتم إنهاء البث فلن تتلقى أي عوائد وسيعاد مبلغ هذه الحصة كاملاً إلى الطالب.\n\nهل أنت متأكد من إنهاء البث؟')) return;
+        // علبة تدور أثناء معالجة الإنهاء (التسوية تستغرق بضع ثوانٍ) حتى
+        // لا يظن الأستاذ أن الموقع تعطّل، ولقفل النقرات المتكررة.
+        const endBtn = document.querySelector('button[onclick^="endStreamManual(' + offerId + ')"]');
+        const endBtnHtml = endBtn ? endBtn.innerHTML : '';
+        if (endBtn) {
+            endBtn.disabled = true;
+            endBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإنهاء...';
+        }
         try {
             const res = await fetchWithAuth(`/api/stream/end/${offerId}`, {
                 method: 'POST'
@@ -11754,6 +11762,11 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         } catch (e) {
             if (e.message !== 'انتهت صلاحية الجلسة') {
                 showToast('❌ خطأ في الاتصال بالخادم', 'error');
+            }
+        } finally {
+            if (endBtn) {
+                endBtn.disabled = false;
+                endBtn.innerHTML = endBtnHtml;
             }
         }
     }
@@ -11799,16 +11812,33 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     async function deleteOffer(offerId) {
         if (checkGuestAction()) return;
         if (confirm('⚠️ هل أنت متأكد من حذف هذا الدرس؟')) {
-            const res = await fetchWithAuth(`/api/offer/delete/${offerId}`, {
-                method: 'DELETE',
-                body: JSON.stringify({ teacher_id: teacherId })
-            });
-            const data = await res.json();
-            if (data.success) {
-                showToast('تم حذف الدرس', 'success');
-                loadOffers();
-            } else {
-                showToast(data.error || 'حدث خطأ أثناء حذف الدرس', 'error');
+            // علبة تدور أثناء الحذف حتى لا يظن الأستاذ أن الموقع تعطّل
+            const delBtn = document.querySelector('button[onclick^="deleteOffer(' + offerId + ')"]');
+            const delBtnHtml = delBtn ? delBtn.innerHTML : '';
+            if (delBtn) {
+                delBtn.disabled = true;
+                delBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            }
+            try {
+                const res = await fetchWithAuth(`/api/offer/delete/${offerId}`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ teacher_id: teacherId })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('تم حذف الدرس', 'success');
+                    loadOffers();
+                } else {
+                    showToast(data.error || 'حدث خطأ أثناء حذف الدرس', 'error');
+                }
+            } catch (e) {
+                if (delBtn) {
+                    delBtn.disabled = false;
+                    delBtn.innerHTML = delBtnHtml;
+                }
+                if (e.message !== 'انتهت صلاحية الجلسة') {
+                    showToast('تعذر الاتصال بالخادم', 'error');
+                }
             }
         }
     }
