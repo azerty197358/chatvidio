@@ -326,7 +326,7 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val accountTask = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(data)
-                val account = accountTask.getResult(com.google.android.gms.api.ApiException::class.java)
+                val account = accountTask.getResult(com.google.android.gms.common.api.ApiException::class.java)
                 val idToken = account?.idToken
                 if (idToken.isNullOrBlank()) {
                     notifyGoogleNativeFailed("لم يتم استلام رمز الحساب، حاول مجدداً")
@@ -376,7 +376,7 @@ class MainActivity : ComponentActivity() {
                     (if (requiresCompletion) "&requires_profile_completion=true" else "") +
                     "&userData=" + userEnc
                 runOnUiThread { persistentWebView?.loadUrl(sessionUrl) }
-            } catch (e: com.google.android.gms.api.ApiException) {
+            } catch (e: com.google.android.gms.common.api.ApiException) {
                 if (e.statusCode == 12501) {
                     // المستخدم أغلق قائمة الاختيار بنفسه — لا شيء نفعل
                     runOnUiThread { Toast.makeText(this, "تم إلغاء اختيار حساب Google", Toast.LENGTH_SHORT).show() }
