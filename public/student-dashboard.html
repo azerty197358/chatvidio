@@ -6596,6 +6596,13 @@ function appendOptimisticMessage(text, reply) {
                 if (response.status >= 500) {
                     // ✅ لا نقوم بإعادة تحميل الصفحة أبداً عند وجود خطأ — نعرض رسالة واضحة فقط
                     // حتى لا يفقد المستخدم بياناته أو عمليات الرفع الجارية.
+                    // ⚠️ errMsg كان غير معرَّف — كل خطأ 5xx كان يُرمي ReferenceError
+                    // ويخفي السبب الحقيقي عن المستخدم والسجل. نقرأ سبب الخادم بأمان.
+                    let errMsg = 'Server Error';
+                    try {
+                        const errBody = await response.clone().json();
+                        if (errBody && (errBody.error || errBody.message)) errMsg = errBody.error || errBody.message;
+                    } catch (parseErr) { /* استجابة غير JSON */ }
                     logAppError('Server Error', errMsg, response.status, url);
                     // الخادم نائم أو مشغول: لا إعادة تحميل أبداً،
                     // ولا إشعار أثناء تبديل التبويب.

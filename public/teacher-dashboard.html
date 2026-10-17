@@ -7659,6 +7659,13 @@ function appendOptimisticMessage(text, reply) {
                 // كان يعيد تحميل الصفحة تلقائياً هنا، فتفقد المستخدم
                 // ما كتبته. الآن: صمت تماماً أثناء التحميل الخلفي،
                 // ورسالة واحدة هادئة عند إجراء صريح فقط.
+                // ⚠️ errMsg كان غير معرَّف — كل خطأ 5xx كان يُرمي
+                // ReferenceError ويخفي السبب الحقيقي عن المستخدم والسجل.
+                let errMsg = 'Server Error';
+                try {
+                    const errBody = await response.clone().json();
+                    if (errBody && (errBody.error || errBody.message)) errMsg = errBody.error || errBody.message;
+                } catch (parseErr) { /* استجابة غير JSON */ }
                 logAppError('Server Error', errMsg, response.status, url);
                 if (!isBackgroundRead && !(window.ZoomyNet && window.ZoomyNet.isOnline() === false)) {
                 }

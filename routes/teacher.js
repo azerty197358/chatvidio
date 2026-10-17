@@ -1548,45 +1548,64 @@ router.post('/withdraw-request', authenticate, authorize(['teacher']), [
             return res.status(409).json({ success: false, error: 'حدث تغيير في الرصيد أثناء المعالجة، يرجى المحاولة مرة أخرى' });
         }
 
-        const withdrawRequest = await insert('withdraw_requests', {
-            teacher_id: parseInt(teacher_id),
-            amount: payout_amount,
-            original_amount: requestedAmount,
-            fee_amount: commission_amount,
-            sofizpay_public_key: null,
-            ccp_account: teacher.ccp_account || null,
-            description: final_desc,
-            status: 'pending',
-            created_at: new Date().toISOString()
-        });
-
-        if (!withdrawRequest) {
-            // Rollback if insert fails
-            await supabase.from('teachers').update({
+        // ✅ حماية الأموال: أي فشل بعد خصم الرصيد يُرجِعه فوراً قبل الرد بالخطأ
+        const rollbackBalance = async (reason) => {
+            const rb = await supabase.from('teachers').update({
                 balance: teacher.balance,
                 pending_withdraw: teacher.pending_withdraw
             }).eq('id', teacher_id);
-            return res.status(500).json({ success: false, error: 'فشل في إنشاء طلب السحب' });
+            if (rb.error) {
+                logger.error('⚠️ فشل استرجاع الرصيد بعد فشل إنشاء طلب السحب — يلزم تدخل يدوياً!', { teacher_id: teacher_id, reason: reason, error: rb.error.message });
+            }
+        };
+
+        let withdrawRequest = null;
+        try {
+            withdrawRequest = await insert('withdraw_requests', {
+                teacher_id: parseInt(teacher_id),
+                amount: payout_amount,
+                original_amount: requestedAmount,
+                fee_amount: commission_amount,
+                sofizpay_public_key: null,
+                ccp_account: teacher.ccp_account || null,
+                description: final_desc,
+                status: 'pending',
+                created_at: new Date().toISOString()
+            });
+        } catch (reqErr) {
+            logger.error('فشل حفظ طلب السحب في قاعدة البيانات:', { message: reqErr.message });
+            await rollbackBalance('insert threw');
+            return res.status(500).json({ success: false, error: 'تعذر حفظ طلب السحب، تمت إعادة رصيدك كاملاً. حاول مرة أخرى بعد قليل.' });
         }
 
-        await insert('notifications', {
-            user_id: teacher_id,
-            user_type: 'teacher',
-            title: '💰 طلب سحب جديد (CCP)',
-            message: `تم تقديم طلب سحب بمبلغ ${amount} دج عبر حساب البريد الجاري CCP (${commission_desc})`,
-            is_read: false,
-            created_at: new Date().toISOString()
-        });
+        if (!withdrawRequest) {
+            await rollbackBalance('insert returned empty');
+            return res.status(500).json({ success: false, error: 'تعذر حفظ طلب السحب، تمت إعادة رصيدك كاملاً. حاول مرة أخرى بعد قليل.' });
+        }
 
-        // CCP Withdrawal request is logged and left for admin review (up to 7 days)
-        await insert('notifications', {
-            user_id: teacher_id,
-            user_type: 'teacher',
-            title: '⏳ طلب سحب CCP قيد المراجعة',
-            message: `لقد اخترت السحب عبر حساب CCP بمبلغ ${amount} دج. ستتم مراجعة الطلب وتحويل المبلغ إلى حسابك الجاري خلال 3 إلى 7 أيام عمل كحد أقصى.`,
-            is_read: false,
-            created_at: new Date().toISOString()
-        });
+        // الإشعارات تكميلية — فشلها لا يُبطل طلب السحب المحفوظ أصلاً
+        try {
+            await insert('notifications', {
+                user_id: teacher_id,
+                user_type: 'teacher',
+                title: '💰 طلب سحب جديد (CCP)',
+                message: `تم تقديم طلب سحب بمبلغ ${amount} دج عبر حساب البريد الجاري CCP (${commission_desc})`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+
+            // CCP Withdrawal request is logged and left for admin review (up to 7 days)
+            await insert('notifications', {
+                user_id: teacher_id,
+                user_type: 'teacher',
+                title: '⏳ طلب سحب CCP قيد المراجعة',
+                message: `لقد اخترت السحب عبر حساب CCP بمبلغ ${amount} دج. ستتم مراجعة الطلب وتحويل المبلغ إلى حسابك الجاري خلال 3 إلى 7 أيام عمل كحد أقصى.`,
+                is_read: false,
+                created_at: new Date().toISOString()
+            });
+        } catch (notifErr) {
+            logger.warn('تعذر إنشاء إشعارات طلب السحب (الطلب محفوظ):', { message: notifErr.message });
+        }
 
         res.json({ 
             success: true, 
