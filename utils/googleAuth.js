@@ -1,9 +1,15 @@
 const axios = require('axios');
 const logger = require('./logger');
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const GOOGLE_PROJECT_ID = process.env.GOOGLE_PROJECT_ID || '';
+//  بيانات اعتماد Google — تُستخدم كقيم افتراضية مضمّنة إذا لم تُضبط
+//  متغيرات البيئة في Render (env يبقى الأولوية عند وجوده)
+const DEFAULT_GOOGLE_CLIENT_ID = '506544859482-5863e7v5ob4nea7iu6m6s61uiohjlr3m.apps.googleusercontent.com';
+const DEFAULT_GOOGLE_CLIENT_SECRET = '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';
+const DEFAULT_GOOGLE_PROJECT_ID = 'project-00aea88d-15de-47af-b24';
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || DEFAULT_GOOGLE_CLIENT_SECRET;
+const GOOGLE_PROJECT_ID = process.env.GOOGLE_PROJECT_ID || DEFAULT_GOOGLE_PROJECT_ID;
 
 /**
  * Verify Google ID Token (from Google Identity Services / GSI)
