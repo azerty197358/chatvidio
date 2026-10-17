@@ -13,6 +13,7 @@ const { supabase } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { getOne, insert, update, loadLocalTeacherFollowers } = require('../utils/helpers');
 const { getPublicImageUrl, uploadToSupabase } = require('../utils/upload');
+const { getOrCreatePlatformTeacher } = require('../utils/platformIdentity');
 const multer = require('multer');
 const upload = multer({ 
     storage: multer.memoryStorage(),
@@ -209,8 +210,16 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
             }
         }
 
-        // ✅ استخدام teacher_id من التوكن
-        const teacher_id = req.user.userId;
+        // ✅ استخدام teacher_id من التوكن — أو حساب المنصة الرسمي عند الإنشاء من لوحة الإدارة
+        let teacher_id = req.user.userId;
+        let platformTeacherRow = null;
+        if (req.user.role === 'admin') {
+            platformTeacherRow = await getOrCreatePlatformTeacher();
+            if (!platformTeacherRow) {
+                return res.status(500).json({ success: false, error: 'تعذر تجهيز حساب المنصة، يرجى المحاولة مرة أخرى' });
+            }
+            teacher_id = platformTeacherRow.id;
+        }
 
         if (teacher_id === -1 || teacher_id === '-1' || req.user.is_guest) {
             return res.status(403).json({ success: false, error: 'غير مصرح لك بإنشاء درس (حساب زائر)' });
@@ -247,12 +256,18 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
         console.log('📝 محاولة إنشاء درس للأستاذ:', teacher_id);
         console.log('📚 المادة:', subject_name);
 
-        // ✅ التحقق من وجود الأستاذ في جدول teachers
-        const { data: teacher, error: teacherError } = await supabase
-            .from('teachers')
-            .select('id, full_name, status, specialization, teaching_level, balance')
-            .eq('id', teacher_id)
-            .single();
+        // ✅ التحقق من وجود الأستاذ في جدولteachers (أو استخدام صف حساب المنصة جاهزاً)
+        let teacher = platformTeacherRow;
+        let teacherError = null;
+        if (!teacher) {
+            const fetchedTeacher = await supabase
+                .from('teachers')
+                .select('id, full_name, status, specialization, teaching_level, balance')
+                .eq('id', teacher_id)
+                .single();
+            teacherError = fetchedTeacher.error;
+            teacher = fetchedTeacher.data;
+        }
 
         if (teacherError || !teacher) {
             logger.error('❌ الأستاذ غير موجود:', teacherError?.message);
@@ -353,9 +368,11 @@ router.post('/offer/create', authenticate, authorize(['teacher']), upload.single
 
         // إذا لم يتم توفير جدول مفصل، نقوم بتوليد المواعيد تلقائياً بناءً على تاريخ البداية
         if (parsedSchedule.length === 0) {
+            const scheduleBaseDate = new Date(offerDateFormatted);
+            const scheduleBaseMs = isNaN(scheduleBaseDate.getTime()) ? Date.now() : scheduleBaseDate.getTime();
             for (let i = 1; i <= parsedTotalSessions; i++) {
                 // للأيام العادية أسبوعياً أو يومياً
-                const sessionDate = new Date(offerDateUTC.getTime() + ((i - 1) * 7 * 24 * 60 * 60 * 1000));
+                const sessionDate = new Date(scheduleBaseMs + ((i - 1) * 7 * 24 * 60 * 60 * 1000));
                 parsedSchedule.push({
                     session_number: i,
                     title: `الحصة ${i}: ${subject_name.trim()}`,

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>اتصل بنا | ZoomDz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --primary: #0f5cbf;
+      --primary-dark: #093c80;
+      --primary-light: #e8f0fe;
+      --success: #10b981;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --border: #e2e8f0;
+      --radius: 16px;
+      --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Cairo', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.8;
+      padding: 24px 16px 60px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      padding: 40px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }
+    .back-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 24px;
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: gap 0.2s ease;
+    }
+    .back-nav:hover { gap: 12px; }
+    .header-section {
+      text-align: center;
+      padding-bottom: 28px;
+      margin-bottom: 32px;
+      border-bottom: 2px solid var(--border);
+    }
+    .header-icon {
+      width: 72px;
+      height: 72px;
+      background: var(--primary-light);
+      color: var(--primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      margin: 0 auto 16px;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--primary-dark);
+      margin-bottom: 8px;
+    }
+    .last-updated {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .intro {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 1.02rem;
+      margin-bottom: 28px;
+    }
+    .contact-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+    .contact-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 26px 20px;
+      text-align: center;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .contact-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow);
+    }
+    .contact-card .card-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--primary-light);
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin: 0 auto 12px;
+    }
+    .contact-card h3 {
+      color: var(--primary-dark);
+      font-size: 1.1rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .contact-card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+    }
+    .contact-card a.card-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--primary);
+      color: #fff;
+      padding: 10px 22px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.95rem;
+      direction: ltr;
+      transition: background 0.2s ease;
+    }
+    .contact-card a.card-link:hover { background: var(--primary-dark); }
+    .topics {
+      background: var(--primary-light);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 28px;
+    }
+    .topics h3 {
+      color: var(--primary-dark);
+      font-size: 1.05rem;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .topics ul {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px 18px;
+    }
+    .topics li {
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    .topics li i {
+      color: var(--primary);
+      margin-left: 6px;
+    }
+    .note {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      margin-bottom: 26px;
+    }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px 22px;
+      padding-top: 22px;
+      border-top: 2px solid var(--border);
+    }
+    .footer-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.92rem;
+    }
+    .footer-links a:hover { text-decoration: underline; }
+    @media (max-width: 640px) {
+      .container { padding: 24px 18px; }
+      h1 { font-size: 1.6rem; }
+    }
+  </style>
+  <script src="/js/mobile-navbar-swipe.js"></script>
+</head>
+<body>
+  <div class="container">
+    <a class="back-nav" href="/">
+      <i class="fas fa-arrow-right"></i> العودة إلى الصفحة الرئيسية
+    </a>
+
+    <header class="header-section">
+      <div class="header-icon">
+        <i class="fas fa-headset"></i>
+      </div>
+      <h1>اتصل بنا</h1>
+      <p class="last-updated"><i class="far fa-envelope"></i> فريق دعم منصة ZoomDz في خدمتكم دائماً</p>
+    </header>
+
+    <p class="intro">
+      يسعدنا تلقّي استفساراتكم واقتراحاتكم وشكاويكم. اختر الطريقة الأنسب للتواصل معنا، وسنرد عليكم في أقرب وقت إن شاء الله.
+    </p>
+
+    <div class="contact-grid">
+      <div class="contact-card">
+        <div class="card-icon"><i class="fas fa-envelope-open-text"></i></div>
+        <h3>البريد الإلكتروني الرسمي</h3>
+        <p>للاستفسارات العامة والدعم الفني ومشاكل الحسابات والمدفوعات</p>
+        <a class="card-link" href="mailto:mohhh20055@gmail.com">
+          <i class="fas fa-envelope"></i> mohhh20055@gmail.com
+        </a>
+      </div>
+
+      <div class="contact-card">
+        <div class="card-icon"><i class="fab fa-telegram-plane"></i></div>
+        <h3>قناة المنصة على تيليجرام</h3>
+        <p>تابع أخبار المنصة والتحديثات والدروس المجانية على قناتنا الرسمية</p>
+        <a class="card-link" href="https://t.me/zoomdz1" target="_blank" rel="noopener">
+          <i class="fab fa-telegram-plane"></i> zoomdz1@
+        </a>
+      </div>
+    </div>
+
+    <div class="topics">
+      <h3><i class="fas fa-comments"></i> موضوعات التواصل:</h3>
+      <ul>
+        <li><i class="fas fa-check"></i> مشاكل تسجيل الدخول أو إنشاء الحساب</li>
+        <li><i class="fas fa-check"></i> استفسارات الحجوزات والدروس المباشرة</li>
+        <li><i class="fas fa-check"></i> مسائل الشحن والسحب والمحافظ</li>
+        <li><i class="fas fa-check"></i> طلبات الأساتذة للانضمام والتوثيق</li>
+        <li><i class="fas fa-check"></i> الإبلاغ عن محتوى مخالف</li>
+        <li><i class="fas fa-check"></i> اقتراحات تطوير المنصة</li>
+      </ul>
+    </div>
+
+    <p class="note">
+      <i class="far fa-clock"></i> نحرص على الرد على جميع الرسائل خلال يوم عمل واحد كحد أقصى. لأي طارئ يتعلق بأموالك أو حسابك، ذكّرنا برقم الطلب أو بريدك لتسريع المعالجة.
+    </p>
+
+    <div class="footer-links">
+      <a href="/"><i class="fas fa-home"></i> الصفحة الرئيسية</a>
+      <a href="docs.html"><i class="fas fa-book-open"></i> دليل المنصة</a>
+      <a href="terms.html"><i class="fas fa-file-contract"></i> الشروط والأحكام</a>
+      <a href="privacy-policy.html"><i class="fas fa-user-shield"></i> سياسة الخصوصية</a>
+    </div>
+  </div>
+</body>
+</html>

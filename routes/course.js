@@ -10,6 +10,7 @@ const { supabase } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { getOne, insert, update, remove } = require('../utils/helpers');
 const { getPublicImageUrl, uploadToSupabase } = require('../utils/upload');
+const { getOrCreatePlatformTeacher } = require('../utils/platformIdentity');
 const { getViewCount } = require('../utils/viewsTracker');
 const multer = require('multer');
 const upload = multer({ 
@@ -33,7 +34,17 @@ router.post('/create', authenticate, authorize(['teacher']), upload.single('thum
         }
 
         const { title, description, price, is_free, education_level, course_url } = req.body;
-        const teacherId = req.user.userId;
+
+        // ✅ الإنشاء من لوحة الإدارة يُنسب إلى حساب المنصة الرسمي (منصة ZoomDz)
+        let teacherId = req.user.userId;
+        const isAdminCreator = req.user.role === 'admin';
+        if (isAdminCreator) {
+            const platformTeacher = await getOrCreatePlatformTeacher();
+            if (!platformTeacher) {
+                return res.status(500).json({ success: false, error: 'تعذر تجهيز حساب المنصة، يرجى المحاولة مرة أخرى' });
+            }
+            teacherId = platformTeacher.id;
+        }
 
         const teacher = await getOne('teachers', 'id', teacherId);
         if (!teacher) {
@@ -42,7 +53,8 @@ router.post('/create', authenticate, authorize(['teacher']), upload.single('thum
 
         const coursePrice = is_free === 'true' || is_free === true ? 0 : parseFloat(price);
         // ✅ مراجعة إلزامية: لا تُنشر أي دورة مباشرة (بما فيها حسابات VIP) — تظهر في لوحة الأدمن للقبول أو الرفض
-        const courseStatus = 'pending';
+        //    (الدورات التي ينشئها الأدمن باسم المنصة تُنشر فوراً لأنه مصدر موثوق)
+        const courseStatus = isAdminCreator ? 'published' : 'pending';
 
         const courseData = {
             teacher_id: teacherId,
@@ -59,7 +71,9 @@ router.post('/create', authenticate, authorize(['teacher']), upload.single('thum
 
         res.json({
             success: true,
-            message: '✅ تم إرسال الدورة إلى الإدارة للمراجعة — تظهر للطلاب فور موافقة الإدارة عليها.',
+            message: isAdminCreator
+                ? '✅ تم نشر الدورة باسم منصة ZoomDz وظهرت للطلاب مباشرة.'
+                : '✅ تم إرسال الدورة إلى الإدارة للمراجعة — تظهر للطلاب فور موافقة الإدارة عليها.',
             course
         });
     } catch (error) {

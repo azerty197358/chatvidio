@@ -10,6 +10,7 @@ const { supabase } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { getOne, insert, update, remove } = require('../utils/helpers');
 const { getPublicImageUrl, uploadToSupabase } = require('../utils/upload');
+const { getOrCreatePlatformTeacher } = require('../utils/platformIdentity');
 const { sendPushNotification } = require('../utils/notification');
 const multer = require('multer');
 
@@ -59,9 +60,20 @@ router.post('/create', authenticate, authorize(['teacher', 'admin']), upload.sin
             return res.status(400).json({ success: false, error: errors.array()[0].msg, errors: errors.array() });
         }
 
-        const teacherId = req.user.userId;
-        const teacher = await getOne('teachers', 'id', teacherId);
-        const teacherName = teacher ? (teacher.full_name || teacher.name || 'أستاذ') : 'أستاذ';
+        // ✅ الإنشاء من لوحة الإدارة يُنسب إلى حساب المنصة الرسمي (منصة ZoomDz)
+        let teacherId = req.user.userId;
+        let teacherName = 'أستاذ';
+        if (req.user.role === 'admin') {
+            const platformTeacher = await getOrCreatePlatformTeacher();
+            if (!platformTeacher) {
+                return res.status(500).json({ success: false, error: 'تعذر تجهيز حساب المنصة، يرجى المحاولة مرة أخرى' });
+            }
+            teacherId = platformTeacher.id;
+            teacherName = platformTeacher.full_name || 'منصة ZoomDz';
+        } else {
+            const teacher = await getOne('teachers', 'id', teacherId);
+            teacherName = teacher ? (teacher.full_name || teacher.name || 'أستاذ') : 'أستاذ';
+        }
 
         const {
             title,

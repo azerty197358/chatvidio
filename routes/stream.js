@@ -805,7 +805,8 @@ router.post('/add-all-students/:offer_id', authenticate, authorize(['teacher']),
 
         const offer_id = parseInt(req.params.offer_id);
         const offer = req.offer;
-        const baseUrl = req.protocol + '://' + req.get('host');
+        // ✅ رابط الإشعار يُبنى على نطاق المنصة الرسمي (لا على نطاق الخادم المؤقت)
+        const baseUrl = process.env.PLATFORM_URL || 'https://zoomdz.com';
 
         // ✅ تحديث حالة البث وتواجد الأستاذ فوراً لمنع أي إشارة توقف خاطئة للطالب
         teacherPingStore.set(offer_id, Date.now());

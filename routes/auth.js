@@ -824,8 +824,8 @@ router.post('/resend-verification', authLimiter, [
             created_at: new Date().toISOString()
         });
 
-        const baseUrl = process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
+        // ✅ روابط البريد تُبنى دائماً على نطاق المنصة الرسمي (لا على نطاق الخادم المؤقت)
+        const baseUrl = process.env.PLATFORM_URL || 'https://zoomdz.com';
         const verificationUrl = `${baseUrl}/api/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}&role=${role}`;
 
         const emailSent = await sendVerificationEmail(email, user.full_name, verificationUrl);
@@ -943,8 +943,8 @@ router.post('/forgot-password', [
 
         await storePasswordReset(email, role, token, expiresAt);
 
-        const baseUrl = process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host');
+        // ✅ روابط البريد تُبنى دائماً على نطاق المنصة الرسمي (لا على نطاق الخادم المؤقت)
+        const baseUrl = process.env.PLATFORM_URL || 'https://zoomdz.com';
         const resetUrl = `${baseUrl}/reset-password.html?token=${token}&email=${encodeURIComponent(email)}&role=${role}`;
 
         const emailSent = await sendResetEmail(email, user.full_name, resetUrl);

@@ -914,6 +914,7 @@
             <button class="nav-tab" onclick="showTab('courses-review')" id="coursesReviewNavBtn" style="background: #fef3c7; color: #92400e;"><i class="fas fa-play-circle" style="color: #d97706;"></i> مراجعة الدورات <span id="pendingCoursesCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('packages-review')" id="packagesReviewNavBtn" style="background: #f0fdf4; color: #166534;"><i class="fas fa-box-open" style="color: #16a34a;"></i> مراجعة الباقات <span id="pendingPackagesCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab" onclick="showTab('packages-admin')" style="background: #ecfdf5; color: #047857; border: 1.5px solid #a7f3d0;"><i class="fas fa-cubes" style="color: #059669;"></i> إدارة الباقات التعليمية <span id="packagesAdminCount" class="badge-count" style="display:none"></span></button>
+            <button class="nav-tab" onclick="showTab('platform-content')" style="background: #eef2ff; color: #3730a3; border: 1.5px solid #c7d2fe;"><i class="fas fa-bolt" style="color: #4f46e5;"></i> محتوى المنصة</button>
             <button class="nav-tab" onclick="showTab('support')"><i class="fas fa-envelope"></i> رسائل الدعم <span id="supportCount" class="badge-count" style="display:none"></span></button>
             <button class="nav-tab notification-tab" onclick="showTab('notifications')" id="notifTab">
                 <i class="fas fa-bell"></i> إرسال إشعارات
@@ -1214,6 +1215,92 @@
         <div id="supportTab" style="display: none;">
             <div id="supportMessagesList"></div>
         </div>
+        <!-- ===== قسم محتوى المنصة (إنشاء دروس/دورات/باقات/منشورات/مجموعات باسم المنصة) ===== -->
+        <div id="platform-contentTab" style="display: none;">
+            <div class="notification-card" style="background: #eef2ff; border-color: #a5b4fc;">
+                <h3 style="color: #3730a3;"><i class="fas fa-bolt"></i> إنشاء محتوى باسم منصة ZoomDz</h3>
+                <p style="color: #312e81; font-size: 0.9rem;">كل ما تنشئه من هنا يظهر باسم <strong>«منصة ZoomDz»</strong> الرسمية (الحساب والبروفايل والمنشورات والمجموعات) — الدورات والباقات تُنشر فوراً بدون مراجعة، والدروس تظهر مباشرة في قائمة الدروس المباشرة.</p>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; margin-top: 20px;">
+
+                <!-- بطاقة: درس/حصة مباشرة -->
+                <div style="background: #ffffff; border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom: 15px; color: #1e3c72;"><i class="fas fa-video" style="color: #0f5cbf;"></i> درس / حصة مباشرة</h4>
+                    <input type="text" id="pfLessonSubject" placeholder="اسم المادة (مثال: الرياضيات)" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo';">
+                    <select id="pfLessonLevel" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo'; background:#fff;"></select>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <input type="date" id="pfLessonDate" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                        <input type="time" id="pfLessonTime" value="18:00" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <select id="pfLessonDuration" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                            <option value="60">60 دقيقة</option><option value="90" selected>90 دقيقة</option>
+                            <option value="120">120 دقيقة</option><option value="150">150 دقيقة</option>
+                            <option value="180">180 دقيقة</option><option value="240">240 دقيقة</option>
+                        </select>
+                        <input type="number" id="pfLessonSessions" min="1" max="10" value="1" title="عدد الحصص" placeholder="عدد الحصص" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <input type="number" id="pfLessonPrice" min="0" value="250" placeholder="السعر (دج)" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                        <input type="number" id="pfLessonMaxStudents" min="1" value="20" placeholder="أقصى عدد طلاب" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                    </div>
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:14px; font-size:0.9rem; color:#374151; cursor:pointer;">
+                        <input type="checkbox" id="pfLessonFree"> درس مجاني (مدة 60 دقيقة أو أقل)
+                    </label>
+                    <button class="btn-save" onclick="createPlatformLesson(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> نشر الدرس باسم المنصة</button>
+                </div>
+
+                <!-- بطاقة: دورة -->
+                <div style="background: #ffffff; border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom: 15px; color: #1e3c72;"><i class="fas fa-graduation-cap" style="color: #059669;"></i> دورة تكوينية</h4>
+                    <input type="text" id="pfCourseTitle" placeholder="عنوان الدورة" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo';">
+                    <textarea id="pfCourseDesc" placeholder="وصف الدورة" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; min-height:70px; margin-bottom:10px; font-family:'Cairo'; resize:vertical;"></textarea>
+                    <select id="pfCourseLevel" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo'; background:#fff;"></select>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <input type="number" id="pfCoursePrice" min="0" value="0" placeholder="السعر (دج)" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.88rem; color:#374151; cursor:pointer; white-space:nowrap;">
+                            <input type="checkbox" id="pfCourseFree"> مجانية
+                        </label>
+                    </div>
+                    <input type="url" id="pfCourseUrl" placeholder="رابط الدورة (مثال: https://zoomdz.com/live-room.html?room=...)" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:14px; font-family:'Cairo'; direction:ltr; text-align:left;">
+                    <button class="btn-save" onclick="createPlatformCourse(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> نشر الدورة باسم المنصة</button>
+                </div>
+
+                <!-- بطاقة: باقة -->
+                <div style="background: #ffffff; border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom: 15px; color: #1e3c72;"><i class="fas fa-cubes" style="color: #059669;"></i> باقة تعليمية</h4>
+                    <input type="text" id="pfPkgTitle" placeholder="عنوان الباقة" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo';">
+                    <textarea id="pfPkgDesc" placeholder="وصف الباقة" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; min-height:60px; margin-bottom:10px; font-family:'Cairo'; resize:vertical;"></textarea>
+                    <select id="pfPkgLevel" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo'; background:#fff;"></select>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <input type="number" id="pfPkgTermPrice" min="0" value="0" placeholder="سعر الفصل (دج)" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                        <input type="number" id="pfPkgAnnualPrice" min="0" value="0" placeholder="سعر السنة (دج)" style="flex:1; padding:11px; border:1px solid #e4e6eb; border-radius:8px; font-family:'Cairo';">
+                    </div>
+                    <textarea id="pfPkgSubjects" placeholder="مواد الباقة (JSON)" style="width:100%; padding:10px; border:1px solid #e4e6eb; border-radius:8px; min-height:90px; margin-bottom:14px; font-family:monospace; font-size:0.78rem; direction:ltr; text-align:left; resize:vertical;"></textarea>
+                    <button class="btn-save" onclick="createPlatformPackage(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> إنشاء الباقة باسم المنصة</button>
+                </div>
+
+                <!-- بطاقة: منشور -->
+                <div style="background: #ffffff; border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom: 15px; color: #1e3c72;"><i class="fas fa-pen-to-square" style="color: #d97706;"></i> منشور رسمي</h4>
+                    <textarea id="pfPostContent" placeholder="محتوى المنشور..." style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; min-height:100px; margin-bottom:10px; font-family:'Cairo'; resize:vertical;"></textarea>
+                    <input type="url" id="pfPostLink" placeholder="رابط اختياري (اختياري)" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo'; direction:ltr; text-align:left;">
+                    <input type="file" id="pfPostFiles" multiple accept="image/*,video/*,.pdf" style="width:100%; margin-bottom:14px; font-family:'Cairo'; font-size:0.85rem;">
+                    <button class="btn-save" onclick="createPlatformPost(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> نشر المنشور باسم المنصة</button>
+                </div>
+
+                <!-- بطاقة: مجموعة -->
+                <div style="background: #ffffff; border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom: 15px; color: #1e3c72;"><i class="fas fa-users" style="color: #7c3aed;"></i> مجموعة رسمية</h4>
+                    <input type="text" id="pfGroupName" placeholder="اسم المجموعة" style="width:100%; padding:11px; border:1px solid #e4e6eb; border-radius:8px; margin-bottom:10px; font-family:'Cairo';">
+                    <input type="file" id="pfGroupImage" accept="image/*" style="width:100%; margin-bottom:14px; font-family:'Cairo'; font-size:0.85rem;">
+                    <button class="btn-save" onclick="createPlatformGroup(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> إنشاء المجموعة باسم المنصة</button>
+                </div>
+
+            </div>
+        </div>
+
         <div id="notificationsTab" style="display: none;">
             <div class="notification-card" style="background: #fef3c7; border-color: #f59e0b;">
                 <h3 style="color: #92400e;"><i class="fas fa-info-circle"></i> إرسال إشعارات</h3>
@@ -3135,6 +3222,197 @@
             else if (tab === 'blogs-admin') loadAdminBlogs();
             else if (tab === 'archived-streams') loadArchivedStreamsAdmin();
             else if (tab === 'live-streams') loadStreamsOverview();
+            if (document.getElementById('platform-contentTab')) document.getElementById('platform-contentTab').style.display = tab === 'platform-content' ? 'block' : 'none';
+        }
+
+        // ============================================================
+        // ✅ إنشاء محتوى المنصة باسم «منصة ZoomDz» (من لوحة الإدارة)
+        // ============================================================
+        (function fillPlatformLevels() {
+            const opts = [
+                ['5eme_pri', 'خامسة ابتدائي'], ['1ere_am', 'أولى متوسط'], ['2eme_am', 'ثانية متوسط'],
+                ['3eme_am', 'ثالثة متوسط'], ['4eme_am', 'رابعة متوسط'], ['5eme_am', 'خامسة متوسط'],
+                ['1ere_as', 'أولى ثانوي'], ['2eme_as', 'ثانية ثانوي'], ['bac', 'بكالوريا'],
+                ['1ere_uni', 'أولى جامعي'], ['2eme_uni', 'ثانية جامعي'], ['3eme_uni', 'ثالثة جامعي'],
+                ['master', 'ماستر'], ['doctorat', 'دكتوراه'], ['vocational_all', 'جميع مستويات التكوين المهني والمعاهد'],
+                ['cap', 'شهادة الكفاءة المهنية (CAP)'], ['cmp', 'شهادة التحكم المهني (CMP)'],
+                ['bt', 'شهادة التقني (BT)'], ['bts', 'شهادة التقن العالي (BTS)'],
+                ['insfp', 'معهد التكوين المهني'], ['insta_uni', 'معهد تكنولوجيا'],
+                ['other', 'مستوى آخر']
+            ];
+            ['pfLessonLevel', 'pfCourseLevel', 'pfPkgLevel'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.innerHTML = '<option value="">— اختر المستوى التعليمي —</option>' +
+                    opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+            });
+            const subj = document.getElementById('pfPkgSubjects');
+            if (subj) subj.value = JSON.stringify([{
+                subject_name: 'اسم المادة',
+                teacher_name: 'منصة ZoomDz',
+                modules: [{
+                    title: 'الوحدة الأولى',
+                    description: '',
+                    lessons: [{ title: 'الدرس الأول', video_url: '', summary_pdf_url: '', exercise_pdf_url: '', solution_video_url: '' }]
+                }]
+            }]);
+        })();
+
+        function pfBusy(btn, busy) {
+            if (!btn) return;
+            if (busy) {
+                btn.dataset.origHtml = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الإرسال...';
+            } else {
+                btn.disabled = false;
+                if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml;
+            }
+        }
+
+        async function pfPost(url, body, isForm, btn) {
+            const token = localStorage.getItem('token');
+            if (!token) { showNotification('يرجى تسجيل الدخول من جديد', 'warning'); return null; }
+            pfBusy(btn, true);
+            try {
+                const opts = { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } };
+                if (isForm) opts.body = body;
+                else { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+                const r = await fetch(url, opts);
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || d.success === false) {
+                    showNotification(d.error || 'تعذر إتمام العملية، حاول مرة أخرى', 'warning');
+                    return null;
+                }
+                showNotification(d.message || '✅ تمت العملية بنجاح باسم منصة ZoomDz', 'success');
+                return d;
+            } catch (e) {
+                console.error('خطأ في إنشاء محتوى المنصة:', e);
+                showNotification('تعذر الاتصال بالخادم، تحقق من اتصالك وحاول مرة أخرى', 'warning');
+                return null;
+            } finally { pfBusy(btn, false); }
+        }
+
+        function pfLocalDT(dateStr, timeStr) {
+            const d = dateStr ? new Date(dateStr + 'T' + (timeStr || '18:00')) : new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        async function createPlatformLesson(btn) {
+            const subject_name = (document.getElementById('pfLessonSubject').value || '').trim();
+            const education_level = document.getElementById('pfLessonLevel').value;
+            const dateV = document.getElementById('pfLessonDate').value;
+            const timeV = document.getElementById('pfLessonTime').value;
+            const durationV = parseInt(document.getElementById('pfLessonDuration').value) || 90;
+            const total_sessions = Math.min(10, Math.max(1, parseInt(document.getElementById('pfLessonSessions').value) || 1));
+            const priceV = parseFloat(document.getElementById('pfLessonPrice').value) || 0;
+            const is_free = document.getElementById('pfLessonFree').checked;
+            const max_students = Math.max(1, parseInt(document.getElementById('pfLessonMaxStudents').value) || 20);
+
+            if (!subject_name) return showNotification('اسم المادة مطلوب', 'warning');
+            if (!education_level) return showNotification('يرجى اختيار المستوى التعليمي', 'warning');
+            if (!dateV) return showNotification('يرجى تحديد تاريخ الدرس', 'warning');
+            if (is_free && durationV > 60) return showNotification('الدروس المجانية مسموح بها حتى 60 دقيقة كحد أقصى', 'warning');
+
+            const offer_date = pfLocalDT(dateV, timeV);
+            // جدول حصص أسبوعياً مثل لوحة الأستاذ (offer.js يولّده تلقائياً إذا أُرسل فارغاً — نرسله صريحاً للوضوح)
+            const sessions_schedule = [];
+            const base = new Date(dateV + 'T' + (timeV || '18:00'));
+            for (let i = 0; i < total_sessions; i++) {
+                const sd = new Date(base.getTime() + i * 7 * 24 * 60 * 60 * 1000);
+                const pad = (n) => String(n).padStart(2, '0');
+                sessions_schedule.push({
+                    session_number: i + 1,
+                    date: `${sd.getFullYear()}-${pad(sd.getMonth() + 1)}-${pad(sd.getDate())}T${pad(sd.getHours())}:${pad(sd.getMinutes())}:${pad(sd.getSeconds())}`,
+                    duration: durationV
+                });
+            }
+
+            await pfPost('/api/offer/create', {
+                subject_name, education_level, offer_date, duration: durationV, price: priceV,
+                is_free, max_students, plan_type: total_sessions > 1 ? '1_month' : '1_day',
+                total_sessions, sessions_schedule: JSON.stringify(sessions_schedule)
+            }, false, btn);
+        }
+
+        async function createPlatformCourse(btn) {
+            const title = (document.getElementById('pfCourseTitle').value || '').trim();
+            const description = (document.getElementById('pfCourseDesc').value || '').trim();
+            const education_level = document.getElementById('pfCourseLevel').value;
+            const price = parseFloat(document.getElementById('pfCoursePrice').value) || 0;
+            const is_free = document.getElementById('pfCourseFree').checked;
+            const course_url = (document.getElementById('pfCourseUrl').value || '').trim();
+
+            if (!title) return showNotification('عنوان الدورة مطلوب', 'warning');
+            if (!education_level) return showNotification('يرجى اختيار المستوى التعليمي', 'warning');
+            if (!course_url) return showNotification('رابط الدورة مطلوب', 'warning');
+
+            await pfPost('/api/course/create', { title, description, price, is_free, education_level, course_url }, false, btn);
+        }
+
+        async function createPlatformPackage(btn) {
+            const title = (document.getElementById('pfPkgTitle').value || '').trim();
+            const description = (document.getElementById('pfPkgDesc').value || '').trim();
+            const education_level = document.getElementById('pfPkgLevel').value;
+            const term_price = parseFloat(document.getElementById('pfPkgTermPrice').value) || 0;
+            const annual_price = parseFloat(document.getElementById('pfPkgAnnualPrice').value) || 0;
+            const subjectsRaw = (document.getElementById('pfPkgSubjects').value || '').trim();
+
+            if (!title) return showNotification('عنوان الباقة مطلوب', 'warning');
+            if (!education_level) return showNotification('يرجى اختيار المستوى التعليمي', 'warning');
+            if (term_price <= 0 && annual_price <= 0) return showNotification('يرجى إدخال سعر الفصل أو سعر السنة', 'warning');
+            let subjects = [];
+            try { subjects = JSON.parse(subjectsRaw || '[]'); } catch (e) {
+                return showNotification('مواد الباقة بصيغة JSON غير صحيحة — راجع النموذج الموجود في الصندوق', 'warning');
+            }
+
+            const fd = new FormData();
+            fd.append('title', title);
+            fd.append('description', description);
+            fd.append('education_level', education_level);
+            fd.append('term_price', String(term_price));
+            fd.append('annual_price', String(annual_price));
+            fd.append('has_term', term_price > 0 ? 'true' : 'false');
+            fd.append('has_annual', annual_price > 0 ? 'true' : 'false');
+            fd.append('subjects', JSON.stringify(subjects));
+            await pfPost('/api/package/create', fd, true, btn);
+        }
+
+        async function createPlatformPost(btn) {
+            const content = (document.getElementById('pfPostContent').value || '').trim();
+            const link_url = (document.getElementById('pfPostLink').value || '').trim();
+            const filesInput = document.getElementById('pfPostFiles');
+
+            if (!content) return showNotification('محتوى المنشور مطلوب', 'warning');
+
+            const fd = new FormData();
+            fd.append('content', content);
+            if (link_url) fd.append('link_url', link_url);
+            if (filesInput && filesInput.files && filesInput.files.length) {
+                Array.from(filesInput.files).forEach(f => fd.append('files', f));
+            }
+            const d = await pfPost('/api/post/create', fd, true, btn);
+            if (d) {
+                document.getElementById('pfPostContent').value = '';
+                document.getElementById('pfPostLink').value = '';
+                if (filesInput) filesInput.value = '';
+            }
+        }
+
+        async function createPlatformGroup(btn) {
+            const name = (document.getElementById('pfGroupName').value || '').trim();
+            const imageInput = document.getElementById('pfGroupImage');
+            if (!name) return showNotification('اسم المجموعة مطلوب', 'warning');
+
+            const fd = new FormData();
+            fd.append('name', name);
+            if (imageInput && imageInput.files && imageInput.files[0]) fd.append('image_file', imageInput.files[0]);
+            const d = await pfPost('/api/groups/', fd, true, btn);
+            if (d) {
+                document.getElementById('pfGroupName').value = '';
+                if (imageInput) imageInput.value = '';
+            }
         }
 
         // ==========================================

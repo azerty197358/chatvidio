@@ -13,6 +13,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { verifyToken } = require('../utils/jwt');
 const { getOne, insert, update, remove, loadLocalTeacherFollowers, saveLocalTeacherFollowers } = require('../utils/helpers');
 const { getPublicImageUrl, processUserProfile, uploadToSupabase } = require('../utils/upload');
+const { getOrCreatePlatformTeacher } = require('../utils/platformIdentity');
 const { recordUniqueView, getViewCount } = require('../utils/viewsTracker');
 const multer = require('multer');
 const upload = multer({ 
@@ -140,24 +141,33 @@ router.post('/create', authenticate, authorize(['student', 'teacher']), upload.a
             updated_at: new Date().toISOString()
         };
 
-        if (userRole === 'teacher') {
-            const teacher = await getOne('teachers', 'id', userId);
-            if (!teacher) {
-                return res.status(404).json({ success: false, error: 'الأستاذ غير موجود' });
-            }
+        if (userRole === 'teacher' || userRole === 'admin') {
+            // ✅ الأدمن ينشر باسم حساب المنصة الرسمي (منصة ZoomDz)
+            let teacher;
+            if (userRole === 'admin') {
+                teacher = await getOrCreatePlatformTeacher();
+                if (!teacher) {
+                    return res.status(500).json({ success: false, error: 'تعذر تجهيز حساب المنصة، يرجى المحاولة مرة أخرى' });
+                }
+            } else {
+                teacher = await getOne('teachers', 'id', userId);
+                if (!teacher) {
+                    return res.status(404).json({ success: false, error: 'الأستاذ غير موجود' });
+                }
 
-            if (teacher.status !== 'approved') {
-                return res.status(403).json({ 
-                    success: false, 
-                    error: 'عذراً، حسابك قيد المراجعة والانتظار. لا يمكنك إضافة منشورات حتى يتم قبول حسابك من قبل الإدارة.' 
-                });
+                if (teacher.status !== 'approved') {
+                    return res.status(403).json({ 
+                        success: false, 
+                        error: 'عذراً، حسابك قيد المراجعة والانتظار. لا يمكنك إضافة منشورات حتى يتم قبول حسابك من قبل الإدارة.' 
+                    });
+                }
             }
 
             const tcName = teacher.full_name || teacher.name || 'أستاذ المنصة';
             const tcSpec = teacher.specialization || 'مدرس';
             const tcImg = teacher.profile_url || (teacher.profile_image ? (teacher.profile_image.startsWith('http') ? teacher.profile_image : getPublicImageUrl('profiles', 'teachers', teacher.profile_image)) : null) || '/images/default-avatar.svg';
 
-            postPayload.teacher_id = userId;
+            postPayload.teacher_id = teacher.id;
             postPayload.author_type = 'teacher';
             postPayload.teacher_name = tcName;
             postPayload.teacher_specialization = tcSpec;

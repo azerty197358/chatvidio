@@ -4,6 +4,7 @@ const { supabase, insert, getOne } = require('../utils/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { verifyToken } = require('../utils/jwt');
 const { uploadToSupabase } = require('../utils/upload');
+const { getOrCreatePlatformTeacher } = require('../utils/platformIdentity');
 const memoryCache = require('../utils/cache');
 const multer = require('multer');
 
@@ -213,15 +214,21 @@ router.get('/search', optionalAuth, async (req, res) => {
     }
 });
 
-// إنشاء مجموعة (أستاذ فقط)
+// إنشاء مجموعة (أستاذ فقط — والإدارة باسم المنصة الرسمي)
 router.post('/', authenticate, authorize(['teacher']), upload.single('image_file'), async (req, res) => {
     const { name } = req.body;
     let image_url = req.body.image_url || null;
-    const teacherId = req.user.userId;
+    let teacherId = req.user.userId;
 
     if (!name) return res.status(400).json({ error: 'اسم المجموعة مطلوب' });
 
     try {
+        // ✅ الأدمن ينشئ المجموعة باسم حساب المنصة الرسمي (منصة ZoomDz)
+        if (req.user.role === 'admin') {
+            const platformTeacher = await getOrCreatePlatformTeacher();
+            if (!platformTeacher) return res.status(500).json({ error: 'تعذر تجهيز حساب المنصة، يرجى المحاولة مرة أخرى' });
+            teacherId = platformTeacher.id;
+        }
         if (req.file) {
             const uploadRes = await uploadToSupabase(req.file, 'thumbnails');
             if (uploadRes && uploadRes.url) {
