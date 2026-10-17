@@ -7986,8 +7986,15 @@ function appendOptimisticMessage(text, reply) {
         var marks = ['http', 'status', 'stack', 'error:', 'exception', 'undefined',
             'failed to fetch', 'network', 'timeout', 'sql', 'postgres', 'supabase',
             'syntaxerror', 'typeerror', 'referenceerror', 'cannot read',
-            'is not a function', '429', '500', '502', '503'];
+            'is not a function'];
         for (var i = 0; i < marks.length; i++) { if (t.indexOf(marks[i]) !== -1) return true; }
+        //  أكواد الأخطاء التقنية (429/500/502/503) تُبتلع ما لم يكن النص
+        //  رسالة مبلغ مالي ("500 دج") — وإلا كان "الحد الأدنى 500 دج"
+        //  وأرصدة مثل 1500 دج تُطبع في صمت ولا يراها أحد.
+        if (t.indexOf('دج') === -1) {
+            var codes = ['429', '500', '502', '503'];
+            for (var j = 0; j < codes.length; j++) { if (t.indexOf(codes[j]) !== -1) return true; }
+        }
         return false;
     }
 function showToast(message, type = 'success') {
@@ -12461,7 +12468,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                     btnSend.innerHTML = '<i class="fas fa-check"></i> تم إرسال الرمز بنجاح';
                 }
             } else {
-                showToast(data.error || 'فشل إرسال رمز التحقق', 'error');
+                showToast(data.error || 'فشل إرسال رمز التحقق', 'warning');
                 if (btnSend) {
                     btnSend.disabled = false;
                     btnSend.innerHTML = '<i class="fas fa-paper-plane"></i> إعادة حال إرسال رمز التحقق';
@@ -12473,7 +12480,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 btnSend.innerHTML = '<i class="fas fa-paper-plane"></i> إرسال رمز التحقق إلى البريد الإلكتروني';
             }
             if (e.message !== 'انتهت صلاحية الجلسة') {
-                showToast('حدث خطأ في إرسال رمز التحقق', 'error');
+                showToast('حدث خطأ في إرسال رمز التحقق', 'warning');
             }
         }
     }
@@ -12489,7 +12496,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
         const otpCode = document.getElementById('withdrawOtpCode') ? document.getElementById('withdrawOtpCode').value.trim() : '';
         if (!otpCode || otpCode.length !== 6) {
-            showToast('يرجى إدخال كود التحقق المكون من 6 أرقام', 'error');
+            showToast('يرجى إدخال كود التحقق المكون من 6 أرقام', 'warning');
             return;
         }
 
@@ -12515,7 +12522,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 closeWithdrawModal();
                 loadBalance();
             } else {
-                showToast(data.error || 'حدث خطأ في تقديم طلب السحب', 'error');
+                showToast(data.error || 'حدث خطأ في تقديم طلب السحب', 'warning');
                 if (btnSubmit) {
                     btnSubmit.disabled = false;
                     btnSubmit.innerHTML = '<i class="fas fa-check-circle"></i> تأكيد عملية السحب';
@@ -12527,7 +12534,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 btnSubmit.innerHTML = '<i class="fas fa-check-circle"></i> تأكيد عملية السحب';
             }
             if (e.message !== 'انتهت صلاحية الجلسة') {
-                showToast('حدث خطأ أثناء معالجة طلب السحب', 'error');
+                showToast('حدث خطأ أثناء معالجة طلب السحب', 'warning');
             }
         }
     }

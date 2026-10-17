@@ -1326,19 +1326,37 @@ router.post('/request-withdraw-otp', authenticate, authorize(['teacher']), [
             });
         }
 
+        // ✅ معدل الحماية: طلب رمز جديد مرة واحدة كل 60 ثانية (يحمي باقة البريد من الاستهلاك السريع)
+        const otpKey = parseInt(teacher_id);
+        const existingOtp = withdrawalOtpStore.get(otpKey);
+        if (existingOtp && existingOtp.sentAt && (Date.now() - existingOtp.sentAt < 60 * 1000)) {
+            return res.status(429).json({
+                success: false,
+                error: 'يرجى الانتظار دقيقة قبل طلب رمز تحقق جديد'
+            });
+        }
+
         // توليد رمز تحقق عشوائي مكون من 6 أرقام
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = Date.now() + 10 * 60 * 1000; // صلاحية 10 دقائق
 
-        // حفظ الرمز في الذاكرة
-        withdrawalOtpStore.set(parseInt(teacher_id), {
+        // ✅ إرسال البريد أولاً والتحقق من نتيجته — لا نبلّغ المستخدم بالنجاح قبل وصول البريد فعلاً
+        const emailSent = await sendWithdrawalOtpEmail(teacher.email, teacher.full_name || 'الأستاذ', otpCode, amount);
+        if (!emailSent) {
+            logger.warn(`فشل إرسال رمز التحقق للسحب إلى البريد: ${teacher.email} — تحقق من BREVO_API_KEY / RESEND_API_KEY وسجلات المزود في سجلات الخادم`);
+            return res.status(502).json({
+                success: false,
+                error: 'تعذر إرسال رمز التحقق إلى بريدك الإلكتروني حالياً. حاول مرة أخرى بعد قليل.'
+            });
+        }
+
+        // حفظ الرمز في الذاكرة (بعد التأكد من نجاح الإرسال)
+        withdrawalOtpStore.set(otpKey, {
             code: otpCode,
             amount: parseFloat(amount),
-            expiresAt
+            expiresAt,
+            sentAt: Date.now()
         });
-
-        // إرسال البريد الإلكتروني
-        await sendWithdrawalOtpEmail(teacher.email, teacher.full_name || 'الأستاذ', otpCode, amount);
 
         // إخفاء البريد جزئياً للخصوصية
         const parts = teacher.email.split('@');
@@ -1411,6 +1429,14 @@ router.post('/withdraw-request', authenticate, authorize(['teacher']), [
             return res.status(400).json({
                 success: false,
                 error: 'رمز التحقق غير صحيح. يرجى التأكد من الرمز المكون من 6 أرقام المرسل إلى بريدك.'
+            });
+        }
+
+        // ✅ ربط الرمز بالمبلغ الذي ورد في البريد — رمز بعدين مبلغ مختلف لا يُقبل
+        if (!isNaN(parseFloat(storedOtp.amount)) && Math.abs(parseFloat(storedOtp.amount) - parseFloat(amount)) > 0.001) {
+            return res.status(400).json({
+                success: false,
+                error: 'المبلغ المطلوب سحبه لا يطابق مبلغ رمز التحقق. يرجى طلب رمز تحقق جديد.'
             });
         }
 

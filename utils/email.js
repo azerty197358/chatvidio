@@ -32,7 +32,9 @@ const brevoApiKey = process.env.BREVO_API_KEY;
 const resendApiKey = process.env.RESEND_API_KEY;
 
 if (!brevoApiKey && !resendApiKey) {
-    logger.warn('⚠️ تحذير: لم يتم العثور على BREVO_API_KEY أو RESEND_API_KEY. يرجى ضبط المفاتيح في متغيرات البيئة.');
+    logger.warn('⚠️ تحذير: لم يتم العثور على BREVO_API_KEY أو RESEND_API_KEY. يرجى ضبط أحدهما في متغيرات البيئة — لن يتم إرسال أي بريد (كود السحب، استعادة كلمة المرور، ...) قبل ذلك.');
+} else {
+    logger.info(`✅ مزودو البريد المفعّلون: ${[brevoApiKey ? 'Brevo' : null, resendApiKey ? 'Resend' : null].filter(Boolean).join(' + ')}`);
 }
 const platformUrl = process.env.PLATFORM_URL || 'https://zoomdz.com';
 
@@ -480,7 +482,8 @@ async function sendWithdrawalOtpEmail(toEmail, toName, otpCode, amount) {
         const sanitizedEmail = sanitizeInput(toEmail);
         const sanitizedName = sanitizeInput(toName);
 
-        console.log(`📧 [Withdrawal OTP] Sending OTP code (${otpCode}) to:`, sanitizedEmail);
+        // ⚠️ لا نطبع الرمز في السجلات (تسريب محتمل لرمز تحقق سري)
+        console.log('📧 [Withdrawal OTP] Sending OTP code to:', sanitizedEmail);
 
         const emailResult = await sendEmail({
             to: sanitizedEmail,
