@@ -5720,7 +5720,7 @@ function appendOptimisticMessage(text, reply) {
             </div>
 
             <button type="button" class="save-btn" onclick="depositWallet()" style="width: 100%; margin-top: 16px; padding: 14px; background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: 'Cairo'; box-shadow: 0 4px 12px rgba(37,99,235,0.3);">
-                <i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay
+                <i class="fas fa-credit-card"></i> متابعة الدفع الآمن
             </button>
         </div>
 
@@ -11169,7 +11169,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 showToast(data.error || 'فشل الاتصال ببوابة الدفع', 'error');
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay';
+                    btn.innerHTML = '<i class="fas fa-credit-card"></i> متابعة الدفع الآمن';
                 }
             }
         } catch(e) {
@@ -11178,7 +11178,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             }
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-credit-card"></i> الانتقال للدفع عبر سوفيز باي SofizPay';
+                btn.innerHTML = '<i class="fas fa-credit-card"></i> متابعة الدفع الآمن';
             }
         }
     }

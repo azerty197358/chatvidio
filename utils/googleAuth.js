@@ -147,11 +147,48 @@ function getGoogleAuthUrl(redirectUri, state = '') {
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
+/**
+ * Verify a Google OAuth Access Token (from GSI token-client flow) via the userinfo endpoint
+ * @param {string} accessToken 
+ * @returns {Promise<{email: string, name: string, picture: string, sub: string, email_verified: boolean}>}
+ */
+async function verifyGoogleAccessToken(accessToken) {
+    if (!accessToken || typeof accessToken !== 'string') {
+        throw new Error('رمز الوصول (Access Token) من جوجل مفقود أو غير صالح');
+    }
+
+    try {
+        const userRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            timeout: 10000
+        });
+
+        const data = userRes.data;
+        if (!data || !data.email) {
+            throw new Error('لم يتم استرجاع بريد إلكتروني صالح من جوجل');
+        }
+
+        return {
+            email: data.email.toLowerCase().trim(),
+            name: data.name || data.given_name || data.email.split('@')[0],
+            given_name: data.given_name || '',
+            family_name: data.family_name || '',
+            picture: data.picture || null,
+            sub: data.sub,
+            email_verified: data.email_verified === true || data.email_verified === 'true'
+        };
+    } catch (error) {
+        logger.error('Error verifying Google access token:', error.response?.data || error.message);
+        throw new Error('فشل التحقق من صحة حساب جوجل');
+    }
+}
+
 module.exports = {
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     GOOGLE_PROJECT_ID,
     verifyGoogleIdToken,
+    verifyGoogleAccessToken,
     exchangeGoogleCode,
     getGoogleAuthUrl
 };

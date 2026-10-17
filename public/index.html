@@ -5256,7 +5256,7 @@
                 </div>
                 <input type="hidden" id="loginRole" value="student">
 
-                <button class="btn-primary" onclick="login()" style="width:100%; justify-content:center;">الدخول الان</button>
+                <button class="btn-primary" id="loginSubmitBtn" onclick="login()" style="width:100%; justify-content:center;">الدخول الان</button>
                 <a href="#" class="forgot-link" onclick="showForgotPassword()" style="display:block; text-align:center; margin-top:12px; color:var(--primary); font-weight:600; text-decoration:none;">
                     <i class="fas fa-key" aria-hidden="true"></i> نسيت كلمة المرور؟
                 </a>
@@ -5616,7 +5616,7 @@
                                 </div>
                             </div>
 
-                            <button class="btn-primary" onclick="registerTeacher()" style="width:100%; justify-content:center;">
+                            <button class="btn-primary" id="teacherSubmitBtn" onclick="registerTeacher()" style="width:100%; justify-content:center;">
                                 <i class="fas fa-user-plus"></i> إرسال طلب الانضمام
                             </button>
                         </div>
@@ -6740,6 +6740,28 @@
         // ============================================================
         // LOGIN
         // ============================================================
+        // ============================================================
+        // حالة تحميل أزرار الدخول/التسجيل — يُمنع الضغط المتكرر ويظهر
+        // بدور أثناء إتمام العملية على الخادم
+        // ============================================================
+        function setAuthBtnLoading(btn, loading, loadingText) {
+            if (!btn) return;
+            try {
+                if (loading) {
+                    if (!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.style.opacity = '0.75';
+                    btn.style.cursor = 'wait';
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (loadingText || 'جاري التنفيذ...');
+                } else {
+                    btn.disabled = false;
+                    btn.style.opacity = '';
+                    btn.style.cursor = '';
+                    if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml;
+                }
+            } catch (e) { /* تجاهل */ }
+        }
+
         async function login() {
             var email = document.getElementById('loginEmail').value;
             var password = document.getElementById('loginPassword').value;
@@ -6750,6 +6772,8 @@
                 return;
             }
 
+            var loginBtn = document.getElementById('loginSubmitBtn');
+            setAuthBtnLoading(loginBtn, true, 'جاري الدخول...');
             try {
                 var res = await fetch('/api/login', {
                     method: 'POST',
@@ -6783,6 +6807,8 @@
             } catch(e) {
                 console.error('❌ خطأ في تسجيل الدخول:', e);
                 showNotification('خطأ في الاتصال بالخادم', 'error');
+            } finally {
+                setAuthBtnLoading(loginBtn, false);
             }
         }
 
@@ -6790,7 +6816,7 @@
         // GOOGLE AUTHENTICATION (STUDENTS & TEACHERS)
         // ============================================================
         var googleClientId = '';
-        fetch('/api/auth/google/config').then(r => r.json()).then(d => { if (d && d.clientId) googleClientId = d.clientId; }).catch(() => {});
+        fetch('/api/auth/google/config').then(r => r.json()).then(d => { if (d && (d.clientId || d.client_id)) googleClientId = (d.clientId || d.client_id); }).catch(() => {});
 
         // Listen for message from Google OAuth popup if opened in popup
         window.addEventListener('message', function(event) {
@@ -6907,8 +6933,9 @@
 
             showNotification('جاري فتح تسجيل الدخول عبر Google...', 'info');
 
-            // If Google Identity Services (GSI) is loaded, try the token client
-            if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+            // If Google Identity Services (GSI) is loaded AND we have a client id,
+            // try the token client — بدون client id نتجاوز GSI مباشرة لمسار الخادم
+            if (window.google && window.google.accounts && window.google.accounts.oauth2 && googleClientId) {
                 try {
                     var client = window.google.accounts.oauth2.initTokenClient({
                         client_id: googleClientId,
@@ -6958,7 +6985,9 @@
                         window.location.href = data.url;
                     }
                 } else {
-                    showNotification('تعذر إنشاء رابط تسجيل الدخول مع Google', 'error');
+                    //  التفصيل للمطوّر فقط — المستخدم يُوجَّه لطريقة الدخول الأخرى بلا رسائل خطأ
+                    console.warn('Google auth URL unavailable:', data && data.error);
+                    showNotification('تسجيل الدخول عبر Google غير متاح حالياً — يمكنك الدخول بالبريد وكلمة المرور', 'warning');
                 }
             } catch (e) {
                 console.error('Error fetching Google auth URL:', e);
@@ -7138,6 +7167,8 @@
 
             var refCode = getEffectiveReferralCode();
 
+            var studentSubmitBtn = document.getElementById('studentSubmitBtn');
+            setAuthBtnLoading(studentSubmitBtn, true, 'جاري إنشاء الحساب...');
             try {
                 var res = await fetch('/api/student/register', {
                     method: 'POST',
@@ -7193,6 +7224,8 @@
                 }
             } catch(e) {
                 showNotification('خطأ في الاتصال بالخادم', 'error');
+            } finally {
+                setAuthBtnLoading(studentSubmitBtn, false);
             }
         }
 
@@ -7432,6 +7465,8 @@
                 payload.ref = refCode;
             }
 
+            var teacherSubmitBtn = document.getElementById('teacherSubmitBtn');
+            setAuthBtnLoading(teacherSubmitBtn, true, 'جاري إنشاء الحساب...');
             try {
                 var res = await fetch('/api/teacher/register', {
                     method: 'POST',
@@ -7466,6 +7501,8 @@
                 }
             } catch(e) {
                 showNotification('❌ خطأ في الاتصال أو الخادم: ' + e.message, 'error');
+            } finally {
+                setAuthBtnLoading(teacherSubmitBtn, false);
             }
         }
 

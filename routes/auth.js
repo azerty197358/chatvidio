@@ -1107,6 +1107,7 @@ router.get('/me', authenticate, async (req, res) => {
 const { 
     GOOGLE_CLIENT_ID, 
     verifyGoogleIdToken, 
+    verifyGoogleAccessToken,
     exchangeGoogleCode, 
     getGoogleAuthUrl 
 } = require('../utils/googleAuth');
@@ -1142,10 +1143,12 @@ router.get(['/auth/google/url', '/google/url'], async (req, res) => {
 
 // 1. إرجاع إعدادات Google OAuth للواجهة الأمامية
 router.get(['/google/config', '/auth/google/config'], (req, res) => {
-    const rawClientId = process.env.GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID || '';
+    const rawClientId = (process.env.GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID || '').trim().replace(/^["']|["']$/g, '');
     res.json({
         success: true,
-        client_id: rawClientId.trim().replace(/^["']|["']$/g, '')
+        //  كلا الاسمين مدعوم للواجهة الأمامية (clientId و client_id)
+        client_id: rawClientId,
+        clientId: rawClientId
     });
 });
 
@@ -1174,9 +1177,9 @@ router.get(['/google/url', '/auth/google/url'], (req, res) => {
 // 3. تسجيل الدخول أو إنشاء حساب جديد عبر Google
 router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, res) => {
     try {
-        const { credential, code, role = 'student', ref, redirect_uri } = req.body;
+        const { credential, code, accessToken, role = 'student', ref, redirect_uri } = req.body;
 
-        if (!credential && !code) {
+        if (!credential && !code && !accessToken) {
             return res.status(400).json({
                 success: false,
                 error: 'رمز التحقق من جوجل مفقود (credential أو code)'
@@ -1186,6 +1189,10 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
         let googleUser = null;
         if (credential) {
             googleUser = await verifyGoogleIdToken(credential);
+        } else if (accessToken) {
+            //  تدفّق GSI token-client في المتصفح يرسل رمز وصول (access token)
+            //  — نتحقّق منه عبر userinfo مباشرة
+            googleUser = await verifyGoogleAccessToken(accessToken);
         } else if (code) {
             const protocol = req.headers['x-forwarded-proto'] || req.protocol;
             const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
