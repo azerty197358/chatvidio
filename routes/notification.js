@@ -11,6 +11,9 @@ const { supabase } = require('../config/database');
 const { authenticate, checkBanned } = require('../middleware/auth');
 const { update } = require('../utils/helpers');
 
+// ✅ علامة آخر تنظيف للإشعارات القديمة (مرة كل ساعة كحد أقصى)
+let lastNotificationsCleanupAt = 0;
+
 // ✅ تعريف authorize محلياً (ليس مستخدم هنا لكن للتوحيد)
 function authorize(roles = []) {
     return (req, res, next) => {
@@ -43,16 +46,22 @@ router.get('/:user_id/:user_type', authenticate, [
             return res.status(403).json({ success: false, error: 'غير مصرح لك بدرس هذه الإشعارات' });
         }
 
-        // تاريخ قبل 7 أيام - إزالة واستبعاد الإشعارات الأقدم من 7 أيام تلقائياً
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        // ✅ تنظيف الإشعارات الأقدم من7 أيام — مرة كل ساعة كحد أقصى
+        //    (سابقاً كان يُنفَّذ مع كل استطلاع = استعلام DELETE إضافي لكل طلب)
+        const nowCleanup = Date.now();
+        if (!lastNotificationsCleanupAt || nowCleanup - lastNotificationsCleanupAt > 60 * 60 * 1000) {
+            lastNotificationsCleanupAt = nowCleanup;
+            const sevenDaysAgoCleanup = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            supabase
+                .from('notifications')
+                .delete()
+                .lt('created_at', sevenDaysAgoCleanup)
+                .then(() => {})
+                .catch(e => logger.warn('⚠️ خطأ تنظيف الإشعارات القديمة:', e.message));
+        }
 
-        // تنظيف الإشعارات القديمة في قاعدة البيانات تلقائياً في الخلفية
-        supabase
-            .from('notifications')
-            .delete()
-            .lt('created_at', sevenDaysAgo)
-            .then(() => {})
-            .catch(e => logger.warn('⚠️ خطأ تنظيف الإشعارات القديمة:', e.message));
+        // تاريخ قبل 7 أيام - استبعاد الإشعارات الأقدم من 7 أيام
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
         const { data } = await supabase
             .from('notifications')

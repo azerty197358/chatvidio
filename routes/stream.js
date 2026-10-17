@@ -1295,9 +1295,9 @@ router.get('/teacher-stream/:offer_id/:teacher_id', async (req, res) => {
                         document.getElementById('timerDisplay').textContent = serverDate.toLocaleTimeString('ar-EG', { hour12: false });
                     }
 
-                    // تشغيل الدورات
-                    setInterval(heartbeat, 10000);
-                    setInterval(fetchMessages, 3000);
+                    // تشغيل الدورات (30 ثانية للنبض،5 ثوانٍ للرسائل — تقليل استعلامات القاعدة)
+                    setInterval(heartbeat, 30000);
+                    setInterval(fetchMessages, 5000);
                     heartbeat();
                     fetchMessages();
                 </script>
@@ -1650,7 +1650,7 @@ router.get('/join-stream/:offer_id/:student_id', async (req, res) => {
 
                     async function checkStatus() {
                         try {
-                            const res = await fetch('/api/student-status/' + offerId + '/' + studentId, {
+                            const res = await fetch('/api/stream/student-status/' + offerId + '/' + studentId, {
                                 headers: { 'Authorization': 'Bearer ' + authToken }
                             });
                             const data = await res.json();
@@ -1766,8 +1766,8 @@ router.get('/join-stream/:offer_id/:student_id', async (req, res) => {
                         }
                     }
 
-                    setInterval(fetchMessages, 3000);
-                    setInterval(checkStatus, 15000);
+                    setInterval(fetchMessages, 5000);
+                    setInterval(checkStatus, 30000);
                     fetchMessages();
                     checkStatus();
                 </script>
@@ -2436,45 +2436,26 @@ async function handleGetChatMessages(req, res) {
         const isMuted = role === 'student' && (mutedSet.has(userId) || mutedSet.has(parseInt(userId)));
         const mutedStudentsList = Array.from(mutedSet);
 
-        // ✅ حساب الطلاب المتواجدين الحقيقيين في الوقت الفعلي (استثناء الأستاذ، وآخر ping خلال 10 ثوانٍ)
+        // ✅ حساب الطلاب المتواجدين الحقيقيين في الوقت الفعلي (استثناء الأستاذ، وآخر ping خلال90 ثانية
+        //    — نافذة متوافقة مع نبضات15 ثانية حتى لا تتذبذب حالة التواجد)
         let activeCount = 0;
         try {
-            const tenSecondsAgo = new Date(Date.now() - 10 * 1000).toISOString();
+            const recentPing = new Date(Date.now() - 90 * 1000).toISOString();
             const { count } = await supabase
                 .from('active_stream')
                 .select('*', { count: 'exact', head: true })
                 .eq('offer_id', offerId)
                 .not('student_id', 'is', null)
-                .gte('last_ping', tenSecondsAgo);
+                .gte('last_ping', recentPing);
             activeCount = count || 0;
         } catch (e) {}
 
         // ✅ جلب بيانات الوقت المتبقي وحالة البث وإجمالي المدة
+        //    — الحاسبة أولاً (تجلب العرض نفسه)، والاستعلام الاحتياطي عند فشلها فقط
         let offerRemainingSeconds = null;
         let offerTotalSeconds = 3600;
         let offerStatus = null;
         let offerIsEnded = false;
-        try {
-            const { data: offerData, error: offerErr } = await supabase
-                .from('offers')
-                .select('id, status, remaining_seconds, total_seconds, duration')
-                .eq('id', offerId)
-                .single();
-            if (offerData) {
-                offerStatus = offerData.status;
-                if (['completed', 'ended', 'deleted'].includes(offerStatus)) {
-                    offerIsEnded = true;
-                }
-                if (offerData.remaining_seconds != null && !isNaN(Number(offerData.remaining_seconds))) {
-                    offerRemainingSeconds = Number(offerData.remaining_seconds);
-                }
-                const durationMins = offerData.duration || 60;
-                offerTotalSeconds = Number(offerData.total_seconds || (durationMins * 60)) || 3600;
-            } else if (offerErr && offerErr.code === 'PGRST116') {
-                // الدرس تم حذفه من قاعدة البيانات بعد إنهاء البث من الأستاذ
-                offerIsEnded = true;
-            }
-        } catch(e) {}
 
         // ✅ العدّاد يُحسب على الخادم حصراً: المدة المختارة عند الإنشاء − الزمن الفعلي المنقضي (محمي من التلاعب)
         try {
@@ -2483,9 +2464,33 @@ async function handleGetChatMessages(req, res) {
                 offerRemainingSeconds = timerInfo.remaining_seconds;
                 offerTotalSeconds = timerInfo.total_seconds;
                 offerStatus = timerInfo.offer.status || offerStatus;
-                if (['completed', 'ended', 'deleted'].includes(offerStatus)) offerIsEnded = true;
             }
         } catch(e) {}
+
+        if (offerStatus == null) {
+            try {
+                const { data: offerData, error: offerErr } = await supabase
+                    .from('offers')
+                    .select('id, status, remaining_seconds, total_seconds, duration')
+                    .eq('id', offerId)
+                    .single();
+                if (offerData) {
+                    offerStatus = offerData.status;
+                    if (offerData.remaining_seconds != null && !isNaN(Number(offerData.remaining_seconds))) {
+                        offerRemainingSeconds = Number(offerData.remaining_seconds);
+                    }
+                    const durationMins = offerData.duration || 60;
+                    offerTotalSeconds = Number(offerData.total_seconds || (durationMins * 60)) || 3600;
+                } else if (offerErr && offerErr.code === 'PGRST116') {
+                    // الدرس تم حذفه من قاعدة البيانات بعد إنهاء البث من الأستاذ
+                    offerIsEnded = true;
+                }
+            } catch(e) {}
+        }
+
+        if (['completed', 'ended', 'deleted'].includes(offerStatus)) {
+            offerIsEnded = true;
+        }
 
         // إذا تم إنهاء البث فعلياً من قبل الأستاذ ينبغي إغلاق شاشة البث لدى الطالب
         if (offerIsEnded) {
@@ -2850,6 +2855,10 @@ async function saveOfferRemainingTime(offerId, remainingSeconds, isPaused = fals
     return true;
 }
 
+// ✅ حالة المزامنة لكل درس — الحفظ والإصدار مرة كل60 ثانية بدل كل15
+//    (القيم الحيّة تُحسب دائماً من computeOfferTimer وتُ Returned للواجهة فوراً)
+const syncPersistState = new Map(); // offerId -> { at, offer }
+
 // ✅ مسار مزامنة وحفظ الوقت المتبقي للبث
 router.post('/sync-timer/:offer_id', async (req, res) => {
     try {
@@ -2871,23 +2880,40 @@ router.post('/sync-timer/:offer_id', async (req, res) => {
         if (parseInt(timerInfo.offer.teacher_id) !== decoded.userId) {
             return res.status(403).json({ success: false, error: 'غير مصرح' });
         }
-        await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused === true);
 
-        // ✅ تحرير مستحقات الأستاذ على أجزاء وفق الزمن المنقضي الفعلي مع كل نبضة مزامنة
-        try { await releaseEarnedSoFar(offerId); } catch (e) { console.warn('releaseEarnedSoFar tick:', e.message); }
+        // ✅ الحفظ والإصدار: مرة كل60 ثانية (أو فور الإيقاف) — يمنع سلسلة
+        //    كتابات (5–10 استعلامات) مع كل نبضة15 ثانية من كل أستاذ نشط
+        const nowMs = Date.now();
+        const persistState = syncPersistState.get(offerId);
+        const shouldPersist = is_paused === true || !persistState || (nowMs - persistState.at >= 60 * 1000);
 
-        // جلب أحدث قيمة من قاعدة البيانات للتحقق
-        const { data: offer } = await supabase
-            .from('offers')
-            .select('remaining_seconds, status')
-            .eq('id', offerId)
-            .maybeSingle();
+        if (shouldPersist) {
+            if (syncPersistState.size > 500) {
+                for (const [k, v] of syncPersistState) {
+                    if (nowMs - v.at > 10 * 60 * 1000) syncPersistState.delete(k);
+                }
+            }
+            await saveOfferRemainingTime(offerId, timerInfo.remaining_seconds, is_paused === true);
+
+            // ✅ تحرير مستحقات الأستاذ على أجزاء وفق الزمن المنقضي الفعلي
+            try { await releaseEarnedSoFar(offerId); } catch (e) { console.warn('releaseEarnedSoFar tick:', e.message); }
+
+            // جلب أحدث قيمة من قاعدة البيانات للتحقق
+            const { data: freshOffer } = await supabase
+                .from('offers')
+                .select('remaining_seconds, status')
+                .eq('id', offerId)
+                .maybeSingle();
+            syncPersistState.set(offerId, { at: nowMs, offer: freshOffer || null });
+        }
+
+        const offer = syncPersistState.get(offerId)?.offer || null;
 
         res.json({ 
             success: true, 
             remaining_seconds: timerInfo ? timerInfo.remaining_seconds : null,
             total_seconds: timerInfo ? timerInfo.total_seconds : null,
-            db_remaining_seconds: offer?.remaining_seconds != null ? Number(offer.remaining_seconds) : null,
+            db_remaining_seconds: offer?.remaining_seconds != null ? Number(offer.remaining_seconds) : (timerInfo ? timerInfo.remaining_seconds : null),
             status: offer?.status
         });
     } catch (e) {

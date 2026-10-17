@@ -428,7 +428,7 @@
                 if (!window.studentChatIsLoadingOlder) {
                     loadStudentChatMessages(false);
                 }
-            }, 3500);
+            }, 7000);
 
             if (!isGuestUser) {
                 setTimeout(() => {

@@ -7,6 +7,7 @@ const { encrypt } = require('../utils/encryption');
 const { supabase } = require('../config/database');
 const logger = require('../utils/logger');
 const { autoBookFreeSession } = require('../utils/helpers');
+const memoryCache = require('../utils/cache');
 
 // ============================================================
 // ✅ المصادقة - التحقق من التوكن
@@ -68,25 +69,34 @@ async function authenticate(req, res, next) {
     }
 
     // ✅ التحقق من أن المستخدم لا يزال موجوداً في قاعدة البيانات
+    //    — كاش مؤقت30 ثانية يلغي استعلاماً من قاعدة البيانات مع كل طلب
+    //      مصادقة (الحظر الجديد يسري خلال30 ثانية كحد أقصى)
     const tableName = decoded.role === 'student' ? 'students' : 'teachers';
     // students ليس لديه status، teachers لديه status
     const selectFields = decoded.role === 'student' ? 'id, is_banned' : 'id, is_banned, status';
-    const { data: user, error } = await supabase
-        .from(tableName)
-        .select(selectFields)
-        .eq('id', decoded.userId)
-        .single();
+    const authCacheKey = `auth:${tableName}:${decoded.userId}`;
+    let user = memoryCache.get(authCacheKey);
 
-    if (error || !user) {
-        logger.error('المستخدم غير موجود في قاعدة البيانات', {
-            userId: decoded.userId,
-            role: decoded.role,
-            error: error?.message
-        });
-        return res.status(401).json({ 
-            success: false, 
-            error: '❌ المستخدم غير موجود، يرجى تسجيل الدخول مرة أخرى' 
-        });
+    if (!user) {
+        const { data, error } = await supabase
+            .from(tableName)
+            .select(selectFields)
+            .eq('id', decoded.userId)
+            .single();
+
+        if (error || !data) {
+            logger.error('المستخدم غير موجود في قاعدة البيانات', {
+                userId: decoded.userId,
+                role: decoded.role,
+                error: error?.message
+            });
+            return res.status(401).json({ 
+                success: false, 
+                error: '❌ المستخدم غير موجود، يرجى تسجيل الدخول مرة أخرى' 
+            });
+        }
+        user = data;
+        memoryCache.set(authCacheKey, user, 30);
     }
 
     // ✅ التحقق من الحظر

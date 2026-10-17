@@ -512,6 +512,13 @@ router.get('/public/teacher/:teacherId', [
             };
         }
 
+        // ✅ جلب معرفات الدروس مرة واحدة — كان يُكرَّر مرتين داخل الطلب نفسه
+        let sharedOfferIds = [];
+        try {
+            const { data: offersIds } = await supabase.from('offers').select('id').eq('teacher_id', teacherId);
+            sharedOfferIds = (offersIds || []).map(o => o.id);
+        } catch (e) {}
+
         // ============================================================
         // استخدام Promise.all لتنفيذ الطلبات بشكل متزامن
         // ============================================================
@@ -520,20 +527,16 @@ router.get('/public/teacher/:teacherId', [
             supabase.from('offers').select('*', { count: 'exact', head: true }).eq('teacher_id', teacherId).then(r => r).catch(e => ({ count: 0, error: e })),
             (async () => {
                 try {
-                    const { data: offersIds } = await supabase.from('offers').select('id').eq('teacher_id', teacherId);
-                    if (offersIds && offersIds.length > 0) {
-                        const offerIds = offersIds.map(o => o.id);
-                        return await supabase.from('sessions').select('*', { count: 'exact', head: true }).in('offer_id', offerIds).in('payment_status', ['paid', 'pending_stream']);
+                    if (sharedOfferIds.length > 0) {
+                        return await supabase.from('sessions').select('*', { count: 'exact', head: true }).in('offer_id', sharedOfferIds).in('payment_status', ['paid', 'pending_stream']);
                     }
                 } catch (e) {}
                 return { data: null, count: 0, error: null };
             })(),
             (async () => {
                 try {
-                    const { data: offersIds } = await supabase.from('offers').select('id').eq('teacher_id', teacherId);
-                    if (offersIds && offersIds.length > 0) {
-                        const offerIds = offersIds.map(o => o.id);
-                        return await supabase.from('sessions').select('payment_amount').in('offer_id', offerIds).eq('payment_status', 'pending_stream');
+                    if (sharedOfferIds.length > 0) {
+                        return await supabase.from('sessions').select('payment_amount').in('offer_id', sharedOfferIds).eq('payment_status', 'pending_stream');
                     }
                 } catch (e) {}
                 return { data: [], error: null };
@@ -1070,7 +1073,7 @@ router.get(['/search/users', '/public/search/users'], async (req, res) => {
     try {
         const query = (req.query.q || req.query.query || '').trim();
         const role = (req.query.role || 'all').toLowerCase().trim(); // 'all' | 'teacher' | 'student'
-        const limit = parseInt(req.query.limit) || 1000; // للسماح بجلب عدد كبير من النتائج
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100); // محدود50/100 كحد أقصى لحماية قاعدة البيانات
 
         let teachers = [];
         let students = [];

@@ -181,7 +181,7 @@
         if (mobileList) mobileList.innerHTML = loading;
 
         try {
-            const url = '/api/search/users?q=' + encodeURIComponent(trimmed)
+            const url = '/api/public/search/users?q=' + encodeURIComponent(trimmed)
                 + '&role=' + encodeURIComponent(currentNavSearchFilter);
             const headers = token() ? { Authorization: 'Bearer ' + token() } : {};
             const res = await fetch(url, { headers: headers });

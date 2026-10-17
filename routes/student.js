@@ -710,7 +710,8 @@ router.get('/sessions/:student_id', authenticate, authorize(['student']), [
                 )
             `)
             .eq('student_id', student_id)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(50); // ✅ آخر50 حجزاً فقط — يمنع جلب سجل كامل مع كل استطلاع (كان كل5 ثوانٍ)
 
         if (error) {
             logger.error('خطأ في جلب الحجوزات:', error.message);

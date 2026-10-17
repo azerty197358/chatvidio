@@ -831,7 +831,8 @@ router.get('/offers', async (req, res) => {
             .from('offers')
             .select('*')
             .neq('status', 'cancelled')
-            .order('offer_date', { ascending: true });
+            .order('offer_date', { ascending: true })
+            .limit(100); // ✅ حد أقصى100 درس — يمنع جلب جدول كامل مع كل استطلاع
 
         // ✅ فلتر حسب المستوى التعليمي مع دعم المجموعات العامة مثل جميع مستويات المتوسط
         if (req.query.education_level) {
@@ -1712,7 +1713,7 @@ router.get('/education-levels', async (req, res) => {
 
         const levelMap = {
             'primary_all': 'التعليم الابتدائي',
-            'primary_1': 'السنة الأولى ابتدا��ي',
+            'primary_1': 'السنة الأولى ابتدائي',
             'primary_2': 'السنة الثانية ابتدائي',
             'primary_3': 'السنة الثالثة ابتدائي',
             'primary_4': 'السنة الرابعة ابتدائي',
@@ -1729,7 +1730,7 @@ router.get('/education-levels', async (req, res) => {
             '2eme_as': 'ثانية ثانوي',
             '3eme_as': 'ثالثة ثانوي (BAC)',
             'bac': 'ثالثة ثانوي (BAC)',
-            'university': 'تع��ي�� جامعي / عالي',
+            'university': 'تعليم جامعي / عالي',
             '1ere_uni': 'أولى جامعي (L1)',
             '2eme_uni': 'ثانية جامعي (L2)',
             '2ere_uni': 'ثانية جامعي (L2)',

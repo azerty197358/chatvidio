@@ -10,6 +10,7 @@ const { body, param, validationResult } = require('express-validator');
 const { supabase } = require('../config/database');
 const { authenticate, checkBanned } = require('../middleware/auth');
 const { getOne, insert } = require('../utils/helpers');
+const memoryCache = require('../utils/cache');
 
 // ذاكرة مؤقتة للحظر كاحتياط في حال عدم وجود جدول في قاعدة البيانات
 const memoryBlocks = new Set(); // يخزن "teacherId-studentId"
@@ -427,7 +428,8 @@ router.get('/conversations/:user_id/:user_type', authenticate, [
             .from('messages')
             .select('*')
             .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(500); // ✅ آخر500 رسالة فقط — يمنع جلب سجل المحادثات كاملاً مع كل استطلاع (كل15 ثانية)
 
         const conversations = {};
         for (const msg of data || []) {
@@ -438,15 +440,21 @@ router.get('/conversations/:user_id/:user_type', authenticate, [
             if (!conversations[key] || msg.created_at > conversations[key].last_message_date) {
                 let otherName = 'مستخدم';
                 let otherImage = null;
-                if (otherType === 'teacher') {
-                    const teacher = await getOne('teachers', 'id', otherId);
-                    otherName = teacher?.full_name || 'أستاذ';
-                    otherImage = teacher?.profile_image || teacher?.image_url || teacher?.avatar || null;
-                } else {
-                    const student = await getOne('students', 'id', otherId);
-                    otherName = student?.full_name || 'طالب';
-                    otherImage = student?.profile_image || student?.image_url || student?.avatar || null;
+                // ✅ كاش5 دقائق لملف الطرف الآخر — يلغي استعلاماً لكل محادثة في كل دورة
+                const peerCacheKey = `peer-profile:${otherType}:${otherId}`;
+                let cachedPeer = memoryCache.get(peerCacheKey);
+                if (!cachedPeer) {
+                    if (otherType === 'teacher') {
+                        const teacher = await getOne('teachers', 'id', otherId);
+                        cachedPeer = { name: teacher?.full_name || 'أستاذ', image: teacher?.profile_image || teacher?.image_url || teacher?.avatar || null };
+                    } else {
+                        const student = await getOne('students', 'id', otherId);
+                        cachedPeer = { name: student?.full_name || 'طالب', image: student?.profile_image || student?.image_url || student?.avatar || null };
+                    }
+                    memoryCache.set(peerCacheKey, cachedPeer, 300);
                 }
+                otherName = cachedPeer.name;
+                otherImage = cachedPeer.image;
 
                 let normalizedMsgDate = msg.created_at;
                 if (normalizedMsgDate && typeof normalizedMsgDate === 'string') {
@@ -535,11 +543,16 @@ router.get('/:user_id/:user_type/:other_id/:other_type', authenticate, [
             messagesList.reverse();
         }
 
-        await supabase
-            .from('messages')
-            .update({ is_read: true })
-            .eq('receiver_id', userId)
-            .eq('sender_id', otherId);
+        // ✅ تحديث القراءة فقط إذا فعلاً توجد رسائل غير مقروءة في النافذة المجلوبة
+        //    (سابقاً كان تحديث UPDATE يُنفَّذ مع كل استطلاع حتى لو لا شيء جديد)
+        const hasUnreadIncoming = messagesList.some(m => m.receiver_id == userId && !m.is_read);
+        if (hasUnreadIncoming) {
+            await supabase
+                .from('messages')
+                .update({ is_read: true })
+                .eq('receiver_id', userId)
+                .eq('sender_id', otherId);
+        }
 
         // messagesList initialized above
 
@@ -870,26 +883,8 @@ router.post('/typing', authenticate, [
         const key = typingKey(userType, userId, peerType, peerId);
         const at = Date.now();
 
-        // 1) قاعدة البيانات
-        try {
-            const row = {
-                conversation_key: key,
-                user_id: userId,
-                user_type: userType,
-                is_typing: isTyping,
-                updated_at: new Date(at).toISOString()
-            };
-            const { error } = await supabase
-                .from('message_typing')
-                .upsert(row, { onConflict: 'conversation_key,user_id,user_type' });
-            if (error && !error.message?.includes('does not exist')) {
-                throw new Error(error.message);
-            }
-        } catch (e) {
-            console.warn('⚠️ جدول message_typing غير متاح، يتم الحفظ في الذاكرة:', e.message);
-        }
-
-        // 2) الذاكرة (يعمل دائماً)
+        // ✅ الذاكرة فقط — جدول message_typing غير موجود في الإنتاج (الهجرة معلّقة)
+        //    وكان كل نبض كتابة (كل ثانيتين) يُرسل upsert فاشلاً = ضغط على سجلات القاعدة
         const slot = typingSlot(key, userType, userId);
         if (isTyping) {
             memoryTyping.set(slot, { typing: true, at: at, userId: userId, userType: userType });
@@ -920,34 +915,14 @@ router.get('/typing/:user_id/:user_type/:other_id/:other_type', authenticate, as
         const now = Date.now();
         let isTyping = false;
 
-        // 1) قاعدة البيانات
-        try {
-            const { data, error } = await supabase
-                .from('message_typing')
-                .select('is_typing, updated_at')
-                .eq('conversation_key', key)
-                .eq('user_id', peerId)
-                .eq('user_type', peerType)
-                .maybeSingle();
-
-            if (!error && data && data.is_typing) {
-                const seen = new Date(data.updated_at).getTime();
-                if (!isNaN(seen) && (now - seen) < TYPING_TTL_MS) isTyping = true;
-            }
-        } catch (e) {
-            console.warn('⚠️ تعذّرت قراءة حالة الكتابة من القاعدة:', e.message);
-        }
-
-        // 2) الذاكرة
-        if (!isTyping) {
-            pruneTyping();
-            const mem = memoryTyping.get(typingSlot(key, peerType, peerId));
-            if (mem && mem.typing
-                && String(mem.userId) === String(peerId)
-                && String(mem.userType) === String(peerType)
-                && (now - mem.at) < TYPING_TTL_MS) {
-                isTyping = true;
-            }
+        // ✅ الذاكرة فقط — جدول message_typing غير موجود في الإنتاج
+        pruneTyping();
+        const mem = memoryTyping.get(typingSlot(key, peerType, peerId));
+        if (mem && mem.typing
+            && String(mem.userId) === String(peerId)
+            && String(mem.userType) === String(peerType)
+            && (now - mem.at) < TYPING_TTL_MS) {
+            isTyping = true;
         }
 
         res.json({

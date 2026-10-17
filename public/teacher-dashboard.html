@@ -10804,7 +10804,7 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         if (!container) return;
         container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
         try {
-            const res = await fetchWithAuth('/api/teachers');
+            const res = await fetchWithAuth('/api/public/teachers');
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
             const teachers = await res.json();
             if (!teachers || teachers.length === 0) {
@@ -17184,7 +17184,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 if (!window.teacherChatIsLoadingOlder) {
                     loadChatMessages(false);
                 }
-            }, 3500);
+            }, 7000);
 
             setTimeout(() => {
                 const input = document.getElementById('chatInputMessage');
@@ -18162,7 +18162,7 @@ ${activeChatGroupIsOwner ? `
             try {
                 const token = localStorage.getItem('token') || sessionStorage.getItem('token');
                 const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
-                const url = `/api/search/users?q=${encodeURIComponent(trimmed)}&role=${encodeURIComponent(currentNavSearchFilter)}`;
+                const url = `/api/public/search/users?q=${encodeURIComponent(trimmed)}&role=${encodeURIComponent(currentNavSearchFilter)}`;
                 const res = await fetch(url, { headers });
                 const data = await res.json();
 

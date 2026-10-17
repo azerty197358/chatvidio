@@ -8345,10 +8345,11 @@ toast.className = `toast ${kind}`;
         try {
             let rawData;
             try {
-                rawData = await fetchPublicData('/api/teachers');
+                //  المسار العام المُكاشّة30 ثانية (يقلّص استعلامات قاعدة البيانات)
+                rawData = await fetchPublicData('/api/public/teachers');
             } catch (err) {
-                console.warn('fetchPublicData /api/teachers failed, using fallback endpoint:', err);
-                const res = await fetch(`${API_BASE_URL}/api/public/teachers`);
+                console.warn('fetchPublicData /api/public/teachers failed, using fallback endpoint:', err);
+                const res = await fetch(`${API_BASE_URL}/api/teachers`);
                 rawData = await res.json();
             }
             allTeachersData = Array.isArray(rawData) ? rawData : (rawData.teachers || rawData.data || []);
@@ -11819,6 +11820,8 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
     let autoRefreshInterval = null;
     let fastNotifInterval = null;
 
+    // ✅ التحديثات الدورية:30 ثانية بدل4/5 (تقليل كبير لطلبات قاعدة
+    //    البيانات)، وتتوقف مؤقتاً إذا كان تبويب المتصفح مخفياً
     function startAutoRefresh() {
         if (userData && (userData.is_guest || userData.id === -1)) return;
         checkUnreadMessagesCount();
@@ -11826,15 +11829,15 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
 
         if (fastNotifInterval) clearInterval(fastNotifInterval);
         fastNotifInterval = setInterval(async () => {
-            if (!studentId) return;
+            if (!studentId || document.hidden) return;
             try {
                 await loadNotifications();
             } catch(e) {}
-        }, 4000);
+        }, 60000);
 
         if (autoRefreshInterval) clearInterval(autoRefreshInterval);
         autoRefreshInterval = setInterval(async () => {
-            if (!studentId) return;
+            if (!studentId || document.hidden) return;
             try {
                 await loadWallet();
                 await checkUnreadMessagesCount();
@@ -11860,8 +11863,18 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
             } catch (e) {
                 // silent background polling
             }
-        }, 5000);
+        }, 30000);
     }
+
+    // ✅ عند العودة إلى التبويب: تحديث فوري واحد بدل انتظار الدورة القادمة
+    document.addEventListener('visibilitychange', async function() {
+        if (document.visibilityState !== 'visible' || !studentId) return;
+        try {
+            await loadNotifications();
+            await loadWallet();
+            await checkUnreadMessagesCount();
+        } catch (e) {}
+    });
 
     // ============================================================
     // PRELOADER CONTROLLER

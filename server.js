@@ -3172,11 +3172,13 @@ app.get('/api/teacher/balance/:teacherId', authenticate, authorize(['teacher']),
             return res.status(500).json({ success: false, error: 'حدث خطأ في الخادم' });
         }
 
-        // جلب جميع دروس هذا الأستاذ
+        // جلب دروس هذا الأستاذ (آخر200 — يمنع جلب تاريخ كامل مع كل استطلاع60 ثانية)
         const { data: offers } = await supabase
             .from('offers')
             .select('id, subject_name, price, offer_date')
-            .eq('teacher_id', teacherId);
+            .eq('teacher_id', teacherId)
+            .order('offer_date', { ascending: false })
+            .limit(200);
 
         const offerIds = (offers || []).map(o => o.id);
         const offersMap = new Map();
@@ -3202,7 +3204,8 @@ app.get('/api/teacher/balance/:teacherId', authenticate, authorize(['teacher']),
                 `)
                 .in('offer_id', offerIds)
                 .in('payment_status', ['paid', 'pending_stream', 'pending', 'completed'])
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .limit(200); // ✅ آخر200 جلسة — المبلغ المحاسبي يبقى من pending_withdraw في جدول الأساتذة
 
             if (sessionsError) {
                 console.error('❌ خطأ في جلب جلات الأستاذ:', sessionsError);
@@ -3929,6 +3932,8 @@ let inMemoryNewsTicker = {
     target: 'all',
     speed: 60
 };
+// ✅ مهلة قراءة الشريط الإخباري من قاعدة البيانات (5 دقائق)
+let lastNewsTickerDbSyncAt = 0;
 let inMemoryRevenueSettings = {
     // 1. اشتراكات الذكاء الاصطناعي
     ai_subscription_student_price: 500,
@@ -4034,13 +4039,24 @@ app.get('/api/platform-version', async (req, res) => {
 app.get('/api/settings/news_ticker', async (req, res) => {
     try {
         const role = req.query.role || req.query.target;
-        const { data, error } = await supabase
-            .from('platform_settings')
-            .select('value')
-            .eq('key', 'news_ticker')
-            .single();
-            
-        const fullSettings = normalizeNewsTickerSettings(data?.value || inMemoryNewsTicker);
+        let settingsValue = inMemoryNewsTicker;
+
+        // ✅ قراءة قاعدة البيانات مرة كل5 دقائق — تُستدعى مع كل فتح صفحة/لوحة
+        if (!lastNewsTickerDbSyncAt || Date.now() - lastNewsTickerDbSyncAt >= 5 * 60 * 1000) {
+            lastNewsTickerDbSyncAt = Date.now();
+            try {
+                const { data, error } = await supabase
+                    .from('platform_settings')
+                    .select('value')
+                    .eq('key', 'news_ticker')
+                    .single();
+                if (!error && data && data.value) {
+                    settingsValue = data.value;
+                }
+            } catch (dbErr) {}
+        }
+
+        const fullSettings = normalizeNewsTickerSettings(settingsValue || inMemoryNewsTicker);
 
         if (role === 'student' || role === 'students') {
             return res.json({
@@ -4145,6 +4161,7 @@ app.post('/api/admin/settings/news_ticker', authenticate, authorize(['admin']), 
         current.target = target || 'all';
 
         inMemoryNewsTicker = current;
+        lastNewsTickerDbSyncAt = Date.now(); // الذاكرة محدثة للتو — لا إعادة قراءة فورية للقاعدة
         
         await supabase
             .from('platform_settings')
@@ -4429,6 +4446,9 @@ const defaultSiteImages = {
 
 const siteImagesDataPath = path.join(__dirname, 'data', 'site_images.json');
 let inMemorySiteImages = { ...defaultSiteImages };
+// ✅ مهلة قراءة قاعدة البيانات — كل5 دقائق كحد أقصى (تُفتح الصفحة عشرات المرات يومياً)
+let lastSiteImagesDbSyncAt = 0;
+let lastSiteImagesFileJson = null;
 
 // Load initial site images from local file if present
 try {
@@ -4445,6 +4465,10 @@ try {
 
 // Function to get active site images with multi-source fallback
 async function getEffectiveSiteImages() {
+    // ✅ استخدام الذاكرة لخمس دقائق بين كل قراءتين من قاعدة البيانات
+    if (lastSiteImagesDbSyncAt && Date.now() - lastSiteImagesDbSyncAt < 5 * 60 * 1000) {
+        return inMemorySiteImages;
+    }
     try {
         const { data, error } = await supabase
             .from('platform_settings')
@@ -4453,19 +4477,26 @@ async function getEffectiveSiteImages() {
             .single();
             
         if (!error && data && data.value) {
+            lastSiteImagesDbSyncAt = Date.now();
             inMemorySiteImages = { ...defaultSiteImages, ...inMemorySiteImages, ...data.value };
             inMemorySiteImages = Object.fromEntries(Object.entries(inMemorySiteImages).map(([key, value]) => [key, toAppImageUrl(value)]));
-            // Keep local file synced
+            // Keep local file synced — الكتابة فقط عند تغيّر المحتوى فعلاً
             try {
-                if (!fs.existsSync(path.join(__dirname, 'data'))) {
-                    fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
+                const newJson = JSON.stringify(inMemorySiteImages, null, 2);
+                if (newJson !== lastSiteImagesFileJson) {
+                    if (!fs.existsSync(path.join(__dirname, 'data'))) {
+                        fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
+                    }
+                    fs.writeFileSync(siteImagesDataPath, newJson);
+                    lastSiteImagesFileJson = newJson;
                 }
-                fs.writeFileSync(siteImagesDataPath, JSON.stringify(inMemorySiteImages, null, 2));
             } catch(writeErr) {}
             return inMemorySiteImages;
         }
     } catch (e) {}
 
+    // فشلت القراءة: نجرب مجدداً بعد30 ثانية بدل انتظار5 دقائق
+    lastSiteImagesDbSyncAt = Date.now() - (5 * 60 * 1000) + (30 * 1000);
     return inMemorySiteImages;
 }
 
@@ -4525,6 +4556,7 @@ app.post('/api/admin/settings/site_images', authenticate, authorize(['admin']), 
         };
 
         inMemorySiteImages = updatedImages;
+        lastSiteImagesDbSyncAt = Date.now(); // الذاكرة محدثة للتو — لا حاجة لإعادة قراءة القاعدة مجدداً
 
         // Persist to local disk
         try {
@@ -4643,14 +4675,14 @@ function startOfferCron() {
     checkAndExpireOverdueOffers().catch(err =>
         console.error('Cron checkAndExpireOverdueOffers error:', err.message)
     );
-    // ثم كل 60 ثانية
+    // ثم كل5 دقائق (كان كل60 ثانية — تقليل كبير لاستعلامات قاعدة البيانات)
     setInterval(() => {
         checkAndExpireOverdueOffers().catch(err =>
             console.error('Cron checkAndExpireOverdueOffers error:', err.message)
         );
-    }, 60 * 1000);
+    }, 5 * 60 * 1000);
 
-    console.log('⏰ Cron: مراقبة الدروس المنتهية والبث غير المغلق - يعمل كل دقيقة');
+    console.log('⏰ Cron: مراقبة الدروس المنتهية والبث غير المغلق - يعمل كل5 دقائق');
 }
 
 // ============================================================
@@ -4772,10 +4804,10 @@ function startVipExpiryCron() {
     // تشغيل فوري عند بدء الخادم
     checkAndExpireOverdueVipSubscriptions();
 
-    // ثم فحص دوري كل دقيقة للتأكد من إزالة الترقية لحظة انتهائها
-    setInterval(checkAndExpireOverdueVipSubscriptions, 60 * 1000);
+    // ثم فحص دوري كل5 دقائق (كان كل60 ثانية)
+    setInterval(checkAndExpireOverdueVipSubscriptions, 5 * 60 * 1000);
 
-    console.log('👑 Cron: فحص وإلغاء ترقية VIP المنتهية للأساتذة - يعمل كل دقيقة');
+    console.log('👑 Cron: فحص وإلغاء ترقية VIP المنتهية للأساتذة - يعمل كل5 دقائق');
 }
 
 // ✅ التحقق من وجود حاوية التخزين profiles وتكوينها كحاوية عامة (Public) تلقائياً
