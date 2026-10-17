@@ -270,6 +270,11 @@ router.post('/teacher/register', checkBanned, [
             .update({ referral_code: referralCode, status: 'approved', profile_completion: true, is_certified: false })
             .eq('id', newTeacher.id);
 
+        // ✅ تسجيل الموافقة النظامية إن أرسلها النموذج (مؤشر رقمي فقط — بلا نسخة من المستندات)
+        if (req.body.identity_consent === true || req.body.identity_consent === 'true') {
+            await recordIdentityConsent('teachers', newTeacher.id);
+        }
+
         // ✅ 9. معالجة الإحالة إذا وجدت
         const effectiveRef = ref || req.cookies?.referral_code || req.cookies?.pendingReferral;
         if (effectiveRef && String(effectiveRef).trim().length > 3) {
@@ -427,6 +432,11 @@ router.post('/student/register', checkBanned, [
             .from('students')
             .update({ referral_code: referralCode })
             .eq('id', newStudent.id);
+
+        // ✅ تسجيل الموافقة النظامية إن أرسلها النموذج (مؤشر رقمي فقط — بلا نسخة من المستندات)
+        if (req.body.identity_consent === true || req.body.identity_consent === 'true') {
+            await recordIdentityConsent('students', newStudent.id);
+        }
 
         // ✅ 8. معالجة الإحالة إذا وجدت
         const effectiveRef = ref || req.cookies?.referral_code || req.cookies?.pendingReferral;
@@ -1112,6 +1122,21 @@ const {
     getGoogleAuthUrl 
 } = require('../utils/googleAuth');
 
+// ✅ مؤشر رقمي فقط: وقت الموافقة الصريحة على معالجة/حذف معطيات التحقق من الهوية
+//    (القانون 18-07 المعدّل بموجب 25-11) — لا تُخزَّن أي نسخة من المستندات.
+//    يفشل بصمت إذا لم تُنشأ الأعمدة بعد — نفّذ schema_identity_consent.sql في Supabase.
+async function recordIdentityConsent(table, userId) {
+    try {
+        const { error } = await supabase
+            .from(table)
+            .update({ identity_consent_at: new Date().toISOString() })
+            .eq('id', userId);
+        if (error) console.warn('[consent] record skipped:', table, '-', error.message);
+    } catch (e) {
+        console.warn('[consent] record failed:', e.message);
+    }
+}
+
 // 5. رابط عام لطلب تسجيل الدخول عبر Google (/api/auth/google/url)
 router.get(['/auth/google/url', '/google/url'], async (req, res) => {
     try {
@@ -1127,7 +1152,9 @@ router.get(['/auth/google/url', '/google/url'], async (req, res) => {
             });
         }
         
-        const stateObj = { role, type: 'login', app: req.query.app ? 1 : 0 };
+        // ✅ الموافقة النظامية تنتقل عبر state لتصل إلى مسار إعادة التوجيه (OAuth)
+        const consentGiven = (req.query.consent === '1' || req.query.consent === 'true') ? 1 : 0;
+        const stateObj = { role, type: 'login', app: req.query.app ? 1 : 0, consent: consentGiven };
         const authUrl = getGoogleAuthUrl(redirectUri, JSON.stringify(stateObj));
         
         res.json({
@@ -1155,11 +1182,11 @@ router.get(['/google/config', '/auth/google/config'], (req, res) => {
 // 2. توليد رابط تفويض Google OAuth للمصادقة
 router.get(['/google/url', '/auth/google/url'], (req, res) => {
     try {
-        const { role = 'student', ref = '', app = '' } = req.query;
+        const { role = 'student', ref = '', app = '', consent = '' } = req.query;
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
         const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
-        const stateObj = { role, ref, redirectUri, app: app ? 1 : 0 };
+        const stateObj = { role, ref, redirectUri, app: app ? 1 : 0, consent: (consent === '1' || consent === 'true') ? 1 : 0 };
         const state = encodeURIComponent(JSON.stringify(stateObj));
         const authUrl = getGoogleAuthUrl(redirectUri, state);
 
@@ -1211,6 +1238,10 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
         const fullName = (googleUser.name || email.split('@')[0]).trim();
         const profileImage = googleUser.picture || null;
         const targetRole = (role === 'teacher' || role === 'admin') ? 'teacher' : 'student';
+
+        // ✅ الموافقة الصريحة على معالجة وحذف معطيات التحقق — تصل من نموذج التسجيل فقط
+        //    (زر جوجل في صفحة تسجيل الدخول لا يرسلها — لا نمنع إنشاء الحساب هناك)
+        const identityConsent = req.body.identity_consent === true || req.body.identity_consent === 'true';
 
         logger.info(`🔑 محاولة دخول / تسجيل عبر Google: ${email} كـ ${targetRole}`);
 
@@ -1359,6 +1390,7 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
                     .update({ referral_code: referralCode })
                     .eq('id', newTeacher.id);
             } catch (e) {}
+            if (identityConsent) await recordIdentityConsent('teachers', newTeacher.id);
 
             const effectiveRef = ref || req.cookies?.referral_code || req.cookies?.pendingReferral;
             if (effectiveRef && String(effectiveRef).trim().length > 3) {
@@ -1413,6 +1445,7 @@ router.post(['/google', '/auth/google'], checkBanned, authLimiter, async (req, r
                     .update({ referral_code: referralCode })
                     .eq('id', newStudent.id);
             } catch (e) {}
+            if (identityConsent) await recordIdentityConsent('students', newStudent.id);
 
             const effectiveRef = ref || req.cookies?.referral_code || req.cookies?.pendingReferral;
             if (effectiveRef && String(effectiveRef).trim().length > 3) {
@@ -1488,6 +1521,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
         let role = 'student';
         let ref = '';
         let redirectUri = '';
+        let consentGiven = 0;
 
         if (state) {
             let parsed = null;
@@ -1502,6 +1536,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                 role = parsed.role || 'student';
                 ref = parsed.ref || '';
                 redirectUri = parsed.redirectUri || '';
+                consentGiven = parsed.consent ? 1 : 0;
             } else if (state === 'teacher' || state === 'student') {
                 role = state;
             }
@@ -1607,6 +1642,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                 try {
                     await supabase.from('teachers').update({ referral_code: referralCode }).eq('id', finalUser.id);
                 } catch (e) {}
+                if (consentGiven) await recordIdentityConsent('teachers', finalUser.id);
                 if (ref) await processReferralOnRegister(ref, finalUser.id, 'teacher');
                 token = generateToken(finalUser.id, 'teacher', email);
                 requiresCompletion = true; // إكمال الملف مطلوب فقط للجدد أول مرة
@@ -1632,6 +1668,7 @@ router.get(['/google/oauth-callback', '/auth/google/oauth-callback', '/auth/goog
                 try {
                     await supabase.from('students').update({ referral_code: referralCode }).eq('id', finalUser.id);
                 } catch (e) {}
+                if (consentGiven) await recordIdentityConsent('students', finalUser.id);
                 if (ref) await processReferralOnRegister(ref, finalUser.id, 'student');
                 token = generateToken(finalUser.id, 'student', email);
                 requiresCompletion = true; // إكمال الملف مطلوب فقط للجدد أول مرة

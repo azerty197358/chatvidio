@@ -5420,6 +5420,31 @@
                                 </optgroup>
                             </select>
                         </div>
+
+                        <!-- ✅ بطاقة الموافقة القانونية الصريحة على معالجة وحذف معطيات التحقق من الهوية -->
+                        <div id="studentLegalConsentBox" style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 14px; margin: 16px 0; text-align: right; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #0f172a; font-weight: 800; font-size: 0.88rem;">
+                                <i class="fas fa-shield-halved" style="color: var(--primary); font-size: 1.1rem;"></i>
+                                <span>موافقة صريحة على معالجة وحذف معطيات التحقق من الهوية:</span>
+                            </div>
+                            <div style="font-size: 0.8rem; color: #334155; line-height: 1.6; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; max-height: 160px; overflow-y: auto; margin-bottom: 10px;">
+                                <p style="margin-bottom: 8px; font-weight: 600;">بناءً على مقتضيات التشريع الجزائري لحماية المعطيات ذات الطابع الشخصي، أوافق صراحة وبمحض إرادتي على الرفع المؤقت لنسخة من (بطاقة الهوية / الدبلوم) الخاصة بي عبر المنصة لغرض وحيد وهو: التحقق من أهلية الحساب وتفعيل العضوية.</p>
+                                <p style="font-weight: 800; color: #0f172a; margin-bottom: 4px;">تلتزم المنصة بالآتي:</p>
+                                <ul style="padding-right: 18px; margin-bottom: 8px; list-style-type: disc;">
+                                    <li style="margin-bottom: 4px;"><strong>الحذف الفوري والنهائي:</strong> تدمير وحذف صور ومستندات الهوية والشهادات المرفوعة من خوادم المعالجة السحابية فوراً وبشكل تلقائي بمجرد قبول طلب التفعيل أو رفضه، ودون الاحتفاظ بأي أرشيف أو نسخة منها.</li>
+                                    <li style="margin-bottom: 4px;"><strong>سرية المعالجة:</strong> عدم مشاركة أو بيع أو إظهار هذه الوثائق لأي جهة خارجية خلال فترة المعالجة فقط.</li>
+                                    <li style="margin-bottom: 4px;"><strong>الحد الأدنى من البيانات:</strong> الاكتفاء بحفظ مؤشر رقمي داخل قاعدة البيانات يفيد بأن الحساب (مُفعّل) دون ترك أي أثر للمستند الأصلي.</li>
+                                </ul>
+                                <p style="font-size: 0.76rem; color: #64748b; margin-bottom: 0; line-height: 1.5;">بالنقر على هذا المربع، فإنني أمنح المنصة تفعيلاً للموافقة المسبقة والصريحة لمعالجة هذه البيانات وفق الشروط المذكورة أعلاه وفقاً لأحكام القانون رقم 18-07 المعدّل والمتمّم بموجب القانون رقم 25-11 المتعلق بحماية الأشخاص الطبيعيين في مجال معالجة المعطيات ذات الطابع الشخصي.</p>
+                            </div>
+                            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 0.85rem; font-weight: 700; color: #1e293b; line-height: 1.4; user-select: none;">
+                                <input type="checkbox" id="studentConsentCheckbox" style="width: 18px; height: 18px; accent-color: var(--primary); margin-top: 2px; flex-shrink: 0; cursor: pointer;" onchange="document.getElementById('studentConsentError').style.display = 'none'; document.getElementById('studentLegalConsentBox').style.borderColor = '#cbd5e1';">
+                                <span>أوافق صراحة وبمحض إرادتي على معالجة وحذف معطيات التحقق وسياسة الخصوصية وشروط الاستخدام.</span>
+                            </label>
+                            <div id="studentConsentError" class="name-error" style="margin-top: 6px; font-size: 0.8rem; color: #dc2626; display: none;">
+                                <i class="fas fa-exclamation-circle"></i> يجب تفعيل الموافقة على شروط معالجة وحذف معطيات التحقق لإتمام التسجيل.
+                            </div>
+                        </div>
                     </div>
 
                     <!-- أزرار التحكم بالخطوات للطالب -->
@@ -5602,7 +5627,7 @@
                                     <p style="font-weight: 800; color: #0f172a; margin-bottom: 4px;">تلتزم المنصة بالآتي:</p>
                                     <ul style="padding-right: 18px; margin-bottom: 8px; list-style-type: disc;">
                                         <li style="margin-bottom: 4px;"><strong>الحذف الفوري والنهائي:</strong> تدمير وحذف صور ومستندات الهوية والشهادات المرفوعة من خوادم المعالجة السحابية فوراً وبشكل تلقائي بمجرد قبول طلب التفعيل أو رفضه، ودون الاحتفاظ بأي أرشيف أو نسخة منها.</li>
-                                        <li style="margin-bottom: 4px;"><strong>سرية المعالجة:</strong> عدم مشاركة أو بيع أو إظهار هذه الوثائق لأي جهة خارجية خلال فترة المعالجة المسريةقتة.</li>
+                                        <li style="margin-bottom: 4px;"><strong>سرية المعالجة:</strong> عدم مشاركة أو بيع أو إظهار هذه الوثائق لأي جهة خارجية خلال فترة المعالجة فقط.</li>
                                         <li style="margin-bottom: 4px;"><strong>الحد الأدنى من البيانات:</strong> الاكتفاء بحفظ مؤشر رقمي داخل قاعدة البيانات يفيد بأن الحساب (مُفعّل) دون ترك أي أثر للمستند الأصلي.</li>
                                     </ul>
                                     <p style="font-size: 0.76rem; color: #64748b; margin-bottom: 0; line-height: 1.5;">بالنقر على هذا المربع، فإنني أمنح المنصة تفعيلاً للموافقة المسبقة والصريحة لمعالجة هذه البيانات وفق الشروط المذكورة أعلاه وفقاً لأحكام القانون رقم 18-07 المعدّل والمتمّم بموجب القانون رقم 25-11 المتعلق بحماية الأشخاص الطبيعيين في مجال معالجة المعطيات ذات الطابع الشخصي.</p>
@@ -6873,10 +6898,10 @@
         }
 
         // مسار متصفح النظام لجوجل (المسار الأساسي داخل التطبيق مع خط احتياطي)
-        async function startGoogleBrowserFlow(roleArg, refArg) {
+        async function startGoogleBrowserFlow(roleArg, refArg, consentArg) {
             showNotification('جاري فتح متصفح النظام لاختيار حساب Google...', 'info');
             try {
-                var bRes = await fetch('/api/auth/google/url?role=' + encodeURIComponent(roleArg) + '&app=1' + (refArg ? '&ref=' + encodeURIComponent(refArg) : ''));
+                var bRes = await fetch('/api/auth/google/url?role=' + encodeURIComponent(roleArg) + '&app=1' + (refArg ? '&ref=' + encodeURIComponent(refArg) : '') + (consentArg ? '&consent=1' : ''));
                 var bData = await bRes.json();
                 if (bData && bData.url) {
                     // shouldOverrideUrlLoading في التطبيق يحوّل هذا الرابط إلى متصفح النظام
@@ -6893,6 +6918,17 @@
             var role = requestedRole;
             if (role === 'login') {
                 role = document.getElementById('loginRole') ? document.getElementById('loginRole').value : 'student';
+            }
+
+            // ✅ الموافقة النظامية: تُطلب مرة واحدة قبل إنشاء حساب جديد عبر Google فقط
+            //    (زر جوجل في نافذة تسجيل الدخول لا يُطلب فيه الموافقة إطلاقاً)
+            var consentFlag = false;
+            if (requestedRole === 'student' || requestedRole === 'teacher') {
+                try { consentFlag = sessionStorage.getItem('googleConsent_' + requestedRole) === '1'; } catch (e) { consentFlag = false; }
+                if (!consentFlag) {
+                    showGoogleConsentModal(requestedRole);
+                    return;
+                }
             }
 
             var refCode = '';
@@ -6912,7 +6948,9 @@
             try {
                 isNativeAppAuth = !!(window.ZoomDzNative && window.ZoomDzNative.isNativeApp && window.ZoomDzNative.isNativeApp());
             } catch (e) {}
-            if (isNativeAppAuth) {
+            //  عند التسجيل (بموافقته) نمرّ بمسار المتصفح الذي يحمل الموافقة في الرابط،
+            //    أمّا اختيار حساب الجهاز الأصلي فيُستخدم لتسجيل الدخول فقط
+            if (isNativeAppAuth && !consentFlag) {
                 window.__zoomdzGoogleNativeFailed = function() {
                     startGoogleBrowserFlow(role, refCode);
                 };
@@ -6949,7 +6987,8 @@
                                         body: JSON.stringify({
                                             accessToken: tokenResponse.access_token,
                                             role: role,
-                                            ref: refCode
+                                            ref: refCode,
+                                            identity_consent: consentFlag
                                         })
                                     });
                                     var authData = await res.json();
@@ -6974,7 +7013,7 @@
 
             // Fallback to OAuth popup or direct redirect flow
             try {
-                var res = await fetch('/api/auth/google/url?role=' + encodeURIComponent(role) + (refCode ? '&ref=' + encodeURIComponent(refCode) : ''));
+                var res = await fetch('/api/auth/google/url?role=' + encodeURIComponent(role) + (refCode ? '&ref=' + encodeURIComponent(refCode) : '') + (consentFlag ? '&consent=1' : ''));
                 var data = await res.json();
                 if (data.url) {
                     var width = 500, height = 620;
@@ -6993,6 +7032,75 @@
                 console.error('Error fetching Google auth URL:', e);
                 showNotification('خطأ في الاتصال بالخادم', 'error');
             }
+        }
+
+        // ============================================================
+        // ✅ نافذة الموافقة النظامية على معالجة وحذف معطيات التحقق
+        //    (تظهر قبل إنشاء حساب جديد عبر Google فقط — لا عند تسجيل الدخول)
+        // ============================================================
+        function showGoogleConsentModal(role) {
+            var overlay = document.getElementById('googleConsentModal');
+            if (!overlay) {
+                document.body.insertAdjacentHTML('beforeend', `
+                    <div id="googleConsentModal" style="display:none; position:fixed; inset:0; background: rgba(15,23,42,0.65); z-index:10000; align-items:center; justify-content:center; padding:20px; backdrop-filter: blur(4px);">
+                        <div style="background: white; border-radius: 16px; max-width: 560px; width: 100%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 50px rgba(0,0,0,0.3); direction: rtl; text-align: right;">
+                            <div style="padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; gap: 10px; color: #0f172a; font-weight: 800; font-size: 0.95rem;">
+                                <i class="fas fa-shield-halved" style="color: var(--primary);"></i>
+                                <span>موافقة صريحة على معالجة وحذف معطيات التحقق من الهوية</span>
+                            </div>
+                            <div style="padding: 16px 20px; overflow-y: auto; font-size: 0.85rem; color: #334155; line-height: 1.7;">
+                                <p style="margin-bottom: 10px; font-weight: 600;">بناءً على مقتضيات التشريع الجزائري لحماية المعطيات ذات الطابع الشخصي، أوافق صراحة وبمحض إرادتي على الرفع المؤقت لنسخة من (بطاقة الهوية / الدبلوم) الخاصة بي عبر المنصة لغرض وحيد وهو: التحقق من أهلية الحساب وتفعيل العضوية.</p>
+                                <p style="font-weight: 800; color: #0f172a; margin-bottom: 6px;">تلتزم المنصة بالآتي:</p>
+                                <ul style="padding-right: 18px; margin-bottom: 10px; list-style-type: disc;">
+                                    <li style="margin-bottom: 5px;"><strong>الحذف الفوري والنهائي:</strong> تدمير وحذف صور ومستندات الهوية والشهادات المرفوعة من خوادم المعالجة السحابية فوراً وبشكل تلقائي بمجرد قبول طلب التفعيل أو رفضه، ودون الاحتفاظ بأي أرشيف أو نسخة منها.</li>
+                                    <li style="margin-bottom: 5px;"><strong>سرية المعالجة:</strong> عدم مشاركة أو بيع أو إظهار هذه الوثائق لأي جهة خارجية خلال فترة المعالجة فقط.</li>
+                                    <li style="margin-bottom: 5px;"><strong>الحد الأدنى من البيانات:</strong> الاكتفاء بحفظ مؤشر رقمي داخل قاعدة البيانات يفيد بأن الحساب (مُفعّل) دون ترك أي أثر للمستند الأصلي.</li>
+                                </ul>
+                                <p style="font-size: 0.78rem; color: #64748b; margin-bottom: 12px; line-height: 1.6;">بالنقر على هذا المربع، فإنني أمنح المنصة تفعيلاً للموافقة المسبقة والصريحة لمعالجة هذه البيانات وفق الشروط المذكورة أعلاه وفقاً لأحكام القانون رقم 18-07 المعدّل والمتمّم بموجب القانون رقم 25-11 المتعلق بحماية الأشخاص الطبيعيين في مجال معالجة المعطيات ذات الطابع الشخصي.</p>
+                                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-weight: 700; color: #1e293b; user-select: none;">
+                                    <input type="checkbox" id="googleConsentCheckbox" style="width: 18px; height: 18px; accent-color: var(--primary); margin-top: 2px; flex-shrink: 0;" onchange="document.getElementById('googleConsentError').style.display = 'none';">
+                                    <span>أوافق صراحة وبمحض إرادتي على معالجة وحذف معطيات التحقق وسياسة الخصوصية وشروط الاستخدام.</span>
+                                </label>
+                                <div id="googleConsentError" style="margin-top: 6px; font-size: 0.8rem; color: #dc2626; display: none;">
+                                    <i class="fas fa-exclamation-circle"></i> يجب تفعيل الموافقة لمتابعة إنشاء الحساب عبر Google.
+                                </div>
+                            </div>
+                            <div style="padding: 14px 20px; border-top: 1px solid #e2e8f0; display: flex; gap: 10px;">
+                                <button type="button" onclick="confirmGoogleConsent()" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--primary); color: white; border: none; padding: 11px 16px; border-radius: 9999px; cursor: pointer; font-weight: 800;">
+                                    <i class="fas fa-check"></i> أوافق ومتابعة
+                                </button>
+                                <button type="button" onclick="closeGoogleConsentModal()" style="flex: 0 0 auto; background: white; border: 1.5px solid #cbd5e1; color: #475569; padding: 11px 18px; border-radius: 9999px; cursor: pointer; font-weight: 700;">
+                                    إلغاء
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `);
+                overlay = document.getElementById('googleConsentModal');
+            }
+            overlay.style.display = 'flex';
+            overlay.setAttribute('data-role', role);
+        }
+
+        function closeGoogleConsentModal() {
+            var overlay = document.getElementById('googleConsentModal');
+            if (overlay) overlay.style.display = 'none';
+        }
+
+        function confirmGoogleConsent() {
+            var overlay = document.getElementById('googleConsentModal');
+            var cb = document.getElementById('googleConsentCheckbox');
+            if (!cb || !cb.checked) {
+                var err = document.getElementById('googleConsentError');
+                if (err) err.style.display = 'block';
+                return;
+            }
+            var consentRole = overlay ? overlay.getAttribute('data-role') : '';
+            if (consentRole === 'student' || consentRole === 'teacher') {
+                try { sessionStorage.setItem('googleConsent_' + consentRole, '1'); } catch (e) {}
+            }
+            closeGoogleConsentModal();
+            if (consentRole) initiateGoogleAuth(consentRole);
         }
 
         // ============================================================
@@ -7165,6 +7273,20 @@
                 return;
             }
 
+            // ✅ الموافقة النظامية الصريحة مطلوبة لإتمام إنشاء الحساب
+            var studentConsentCheckbox = document.getElementById('studentConsentCheckbox');
+            if (!studentConsentCheckbox || !studentConsentCheckbox.checked) {
+                showNotification('⚠️ يجب الموافقة على معالجة وحذف معطيات التحقق من الهوية لإتمام التسجيل', 'error');
+                var studentConsentErr = document.getElementById('studentConsentError');
+                if (studentConsentErr) studentConsentErr.style.display = 'block';
+                var studentConsentBox = document.getElementById('studentLegalConsentBox');
+                if (studentConsentBox) {
+                    studentConsentBox.style.borderColor = '#dc2626';
+                    studentConsentBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
+            }
+
             var refCode = getEffectiveReferralCode();
 
             var studentSubmitBtn = document.getElementById('studentSubmitBtn');
@@ -7180,6 +7302,7 @@
                         phone: phone,
                         education_level: educationLevel,
                         ref: refCode,
+                        identity_consent: true,
                         recaptcha_token: 'disabled_token'
                     })
                 });
@@ -7432,7 +7555,7 @@
             }
 
             var consentCheckbox = document.getElementById('teacherConsentCheckbox');
-            if (consentCheckbox && !consentCheckbox.checked) {
+            if (!consentCheckbox || !consentCheckbox.checked) {
                 showNotification('⚠️ يجب الموافقة على شروط معالجة وحذف معطيات التحقق وسياسة الخصوصية لإتمام التسجيل', 'error');
                 var consentErr = document.getElementById('teacherConsentError');
                 if (consentErr) consentErr.style.display = 'block';
@@ -7459,6 +7582,7 @@
                 bio: bio,
                 experience: experience,
                 teaching_level: teachingLevel,
+                identity_consent: true,
                 recaptcha_token: 'disabled_token'
             };
             if (refCode) {
