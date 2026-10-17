@@ -1686,6 +1686,8 @@ const csrfExcludedPaths = [
     '/api/resend-verification',
     '/api/csrf-token',
     '/api/get-csrf-token',
+    //  تأكيد جوجل يتحقّق من الرمز مع جوجل مباشرة (لا يعتمد على كوكيز الجلسة)
+    '/api/auth/google',
     '/api/public',
     '/api/live-offers',
     '/api/offers',

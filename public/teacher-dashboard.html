@@ -5244,7 +5244,7 @@ function appendOptimisticMessage(text, reply) {
 
         <div class="modal-footer">
                     <button class="cancel-btn" onclick="hideAddPostModal()">إلغاء</button>
-                    <button class="save-btn" onclick="submitNewPost()"><i class="fas fa-paper-plane"></i> نشر</button>
+                    <button class="save-btn" id="postSubmitBtn" onclick="submitNewPost()"><i class="fas fa-paper-plane"></i> نشر</button>
                 </div>
             </div>
 
@@ -14561,6 +14561,14 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             formData.append('pdf_file', pdfFile);
         }
 
+        // ✅ زر النشر: بدور يمنع الضغط المتكرر والنشر المزدوج أثناء الرفع
+        const postSubmitBtn = document.getElementById('postSubmitBtn');
+        if (postSubmitBtn) {
+            postSubmitBtn.disabled = true;
+            postSubmitBtn.style.opacity = '0.7';
+            postSubmitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري النشر...';
+        }
+
         try {
             const res = await fetchWithAuth('/api/post/create', {
                 method: 'POST',
@@ -14587,6 +14595,12 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         } catch (e) {
             console.error('Error submitting post:', e);
             showToast('❌ حدث خطأ أثناء النشر', 'error');
+        } finally {
+            if (postSubmitBtn) {
+                postSubmitBtn.disabled = false;
+                postSubmitBtn.style.opacity = '';
+                postSubmitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> نشر';
+            }
         }
     }
 
