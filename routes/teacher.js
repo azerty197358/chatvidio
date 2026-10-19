@@ -23,15 +23,17 @@ const memoryCache = require('../utils/cache');
 // تخزين مؤقت لرموز التحقق لسحب الأرباح (In-Memory OTP Store)
 const withdrawalOtpStore = new Map();
 
-// تنظيف الرموز المنتهية تلقائياً كل 5 دقائق
-setInterval(() => {
-    const now = Date.now();
-    for (const [key, value] of withdrawalOtpStore.entries()) {
-        if (now > value.expiresAt) {
-            withdrawalOtpStore.delete(key);
+// تنظيف الرموز المنتهية تلقائياً كل 5 دقائق (على Render فقط — على Vercel تُدار الرموز عبر التمرير إلى Render)
+if (!process.env.VERCEL) {
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, value] of withdrawalOtpStore.entries()) {
+            if (now > value.expiresAt) {
+                withdrawalOtpStore.delete(key);
+            }
         }
-    }
-}, 5 * 60 * 1000);
+    }, 5 * 60 * 1000);
+}
 
 const ALLOWED_MIME_TYPES = [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf',

@@ -3063,6 +3063,9 @@ async function autoPauseStaleStreams() {
         staleSweepBusy = false;
     }
 }
-setInterval(autoPauseStaleStreams, 60000);
+// على Render فقط: على Vercel لا توجد ذاكرة نبضات الأستاذ، وتشغيله هنا قد يوقف البث النشط خطأً
+if (!process.env.VERCEL) {
+    setInterval(autoPauseStaleStreams, 60000);
+}
 
 module.exports = router;

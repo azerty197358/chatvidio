@@ -27,4 +27,38 @@
     // نص فارغ = "نفس الأصل" (سلوك webrtc.js الافتراضي دون أي تغيير).
     // على Vercel نحدّد Render صراحةً حتى تعمل الغرف والبث مباشرة.
     window.SIGNALING_SERVER_URL = onPlatformHost ? '' : RENDER_ORIGIN;
+
+    // ============================================================
+    // ✅ رفع الملفات (FormData) يذهب مباشرة إلى Render
+    //    لأن Vercel يحدّ حجم طلب الدالة بـ 4.5MB كحد أقصى،
+    //    بينما منصتنا تسمح برفع حتى 50MB (منشورات/باقات/مستندات).
+    //    كل طلبات النصوص (JSON) تبقى عبر دالة Vercel لتوفير عرض النطاق على Render.
+    // ============================================================
+    (function () {
+        try {
+            if (onPlatformHost || typeof window.fetch !== 'function' || typeof FormData === 'undefined') return;
+            var origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                try {
+                    var url = typeof input === 'string' ? input : (input && input.url) || '';
+                    var body = init && init.body;
+                    var isForm = body instanceof FormData;
+                    if (!isForm && body) {
+                        try { isForm = Object.prototype.toString.call(body) === '[object FormData]'; } catch (e) {}
+                    }
+                    if (isForm && url.indexOf('/api/') === 0) {
+                        var newUrl = RENDER_ORIGIN + url;
+                        if (typeof input === 'string') {
+                            input = newUrl;
+                        } else {
+                            input = new Request(newUrl, input);
+                        }
+                        init = init || {};
+                        init.credentials = 'include'; // إرسال الكوكيز (جلسة/CSRF) عبر المصدر
+                    }
+                } catch (e) {}
+                return origFetch(input, init);
+            };
+        } catch (e) {}
+    })();
 })();

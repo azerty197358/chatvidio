@@ -57,15 +57,17 @@ function sanitizePostText(input) {
 
 const postIpViewsMap = new Map();
 
-setInterval(() => {
-    const now = Date.now();
-    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-    for (const [key, timestamp] of postIpViewsMap.entries()) {
-        if (now - timestamp > TWENTY_FOUR_HOURS) {
-            postIpViewsMap.delete(key);
+if (!process.env.VERCEL) {
+    setInterval(() => {
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+        for (const [key, timestamp] of postIpViewsMap.entries()) {
+            if (now - timestamp > TWENTY_FOUR_HOURS) {
+                postIpViewsMap.delete(key);
+            }
         }
-    }
-}, 3600000); // تنظيف الذاكرة كل ساعة
+    }, 3600000); // تنظيف الذاكرة كل ساعة
+}
 
 async function registerPostViewByIp(postId, reqIp, userRole, userId) {
     if (!postId) return null;

@@ -3,8 +3,10 @@
   "framework": null,
   "outputDirectory": "public",
   "cleanUrls": false,
+  "functions": {
+    "api/[...path].js": { "maxDuration": 120 }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://chatvidio.onrender.com/api/:path*" },
     { "source": "/:path*", "destination": "https://chatvidio.onrender.com/:path*" }
   ]
 }
