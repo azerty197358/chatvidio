@@ -1,10 +1,10 @@
 // ============================================================
 // ZoomDz — دالة Vercel الوحيدة (المنصة تعمل كلياً على Vercel + Pusher للحظية)
 // ------------------------------------------------------------
-// جميع المسارات (API + SSR) تصل إلى هنا عبر إعادة الكتابة في vercel.json:
+// جميع المسارات (API + SSR) تصل إلى هذه الدالة عبر إعادة الكتابة في vercel.json:
 //     /:path*   →   /api/index?p=:path
-// المسار الأصلي يمرّر في معامل p، وسلسلة الاستعلام تبقى كما هي.
-// ثم يُعاد توجيه الطلب إلى تطبيق Express الكامل (server.js).
+// Vercel يستدعي الدالة بمسار الطلب الأصلي كما هو (وأي طريقة HTTP وأي جسم)،
+// ويضيف معاملي p وpath من إعادة الكتابة — نزيّلهما ويبقى الطلب Express كما هو.
 //
 //  ⚠️ لم يعد هناك أي اعتماد على Render — الإشارة اللحظية عبر Pusher.com.
 //  اسم الدالة index.js (لا أقواس) لضمان اكتشافها في كل خطط Vercel.
@@ -25,32 +25,20 @@ function getApp() {
     return app;
 }
 
-// استخراج المسار الأصلي من ?p=... مع بقاء سلسلة الاستعلام مدمجة كما هي
-function targetFromQuery(url) {
-    const u = String(url || '');
-    const qIndex = u.indexOf('?');
-    const pathPart = qIndex === -1 ? u : u.slice(0, qIndex);
-    const queryPart = qIndex === -1 ? '' : u.slice(qIndex + 1);
-    if (pathPart !== '/api/index' && pathPart !== '/api/index/') return null;
-
-    const params = new URLSearchParams(queryPart);
-    let p = params.get('p') || '/';
-    params.delete('p');
-    if (p.charAt(0) !== '/') p = '/' + p;
-    const rest = params.toString();
-    return p + (rest ? '?' + rest : '');
-}
-
 module.exports = (req, res) => {
+    //  تنظيف معاملي إعادة الكتابة (p وpath) المحقونة من vercel.json —
+    //  يبقى المسار الأصلي وبقية معاملات الاستعلام كما أرسلها المتصفح
     try {
-        const target = targetFromQuery(req.url);
-        if (target) {
-            req.url = target;
-            //  ليبني الوسيطات (CSRF والسجلات ورسائل 404) على المسار الحقيقي لا على /api/index
-            req.originalUrl = target;
-        } else if (typeof req.url === 'string' && req.url.indexOf('/api') !== 0) {
-            //  استدعاء مباشر للدالة من مسار غير /api → نضيف البادئة كما تتوقع Express
-            req.url = '/api' + req.url;
+        if (typeof req.url === 'string') {
+            const qIndex = req.url.indexOf('?');
+            if (qIndex !== -1) {
+                const params = new URLSearchParams(req.url.slice(qIndex + 1));
+                params.delete('p');
+                params.delete('path');
+                const rest = params.toString();
+                req.url = req.url.slice(0, qIndex) + (rest ? '?' + rest : '');
+                req.originalUrl = req.url; // ليبني الوسيطات (CSRF والسجلات) على الطلب الحقيقي
+            }
         }
     } catch (e) {}
 
