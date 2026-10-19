@@ -66,8 +66,8 @@ const PLACEMENT_LABELS = {
 
 /**
  * يحسب سعر الإعلان الكامل مع تفصيل المعادلة
- * @param {object} p { education_level, ad_type, placement, start_date, end_date }
- * @returns {object} { days, levelWeight, typeMultiplier, placementMultiplier, base, total, labels }
+ * @param {object} p { education_level, ad_type, placement, start_date, end_date, seasonalMultiplier }
+ * @returns {object} { days, levelWeight, typeMultiplier, placementMultiplier, seasonalMultiplier, base, total, labels }
  */
 function calculateAdPrice(p = {}) {
     const start = new Date(p.start_date);
@@ -79,13 +79,17 @@ function calculateAdPrice(p = {}) {
     const levelWeight = HIGH_WEIGHT_LEVELS.includes(p.education_level) ? HIGH_WEIGHT : NORMAL_WEIGHT;
     const typeMultiplier = TYPE_MULTIPLIERS[p.ad_type] || 1.0;
     const placementMultiplier = PLACEMENT_MULTIPLIERS[p.placement] || 1.0;
-    const total = Math.round(BASE_PRICE_PER_DAY * days * levelWeight * typeMultiplier * placementMultiplier);
+    // معامل المواسم (يضبطه الأدمن: 1.25 لموسم الامتحانات، 0.5 للصيف، 1 للإيقاف)
+    const seasonalMultiplier = (typeof p.seasonalMultiplier === 'number' && p.seasonalMultiplier > 0)
+        ? p.seasonalMultiplier : 1.0;
+    const total = Math.round(BASE_PRICE_PER_DAY * days * levelWeight * typeMultiplier * placementMultiplier * seasonalMultiplier);
 
     return {
         days,
         levelWeight,
         typeMultiplier,
         placementMultiplier,
+        seasonalMultiplier,
         base: BASE_PRICE_PER_DAY,
         total,
         labels: {

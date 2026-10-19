@@ -10,6 +10,8 @@ window.ZoomDzAds = (function () {
     var HIGH_WEIGHT_LEVELS = ['bac', '3eme_as', '4eme_am', 'bem'];
     var TYPE_MULTIPLIERS = { notification: 1.6, banner: 1.35, static: 1.0 };
     var PLACEMENT_MULTIPLIERS = { lessons_header: 1.6, packages: 1.35, courses: 1.3, between_posts: 1.2, comments: 1.0 };
+    // معامل المواسم من الأدمن (1.25 لموسم الامتحانات، 0.5 للصيف، 1 للإيقاف)
+    var seasonalMultiplier = 1;
 
     var PLACEMENT_LABELS = {
         between_posts: 'بين المنشورات',
@@ -157,8 +159,20 @@ window.ZoomDzAds = (function () {
         var levelWeight = HIGH_WEIGHT_LEVELS.indexOf(input.education_level) !== -1 ? 2.5 : 1.0;
         var typeMultiplier = TYPE_MULTIPLIERS[input.ad_type] || 1.0;
         var placementMultiplier = PLACEMENT_MULTIPLIERS[input.placement] || 1.0;
-        var total = Math.round(BASE_PRICE_PER_DAY * days * levelWeight * typeMultiplier * placementMultiplier);
-        return { days: days, levelWeight: levelWeight, typeMultiplier: typeMultiplier, placementMultiplier: placementMultiplier, total: total };
+        var total = Math.round(BASE_PRICE_PER_DAY * days * levelWeight * typeMultiplier * placementMultiplier * seasonalMultiplier);
+        return { days: days, levelWeight: levelWeight, typeMultiplier: typeMultiplier, placementMultiplier: placementMultiplier, seasonalMultiplier: seasonalMultiplier, total: total };
+    }
+
+    // جلب معامل التسعير الموسمي الحالي من الخادم
+    async function loadSeasonal() {
+        try {
+            var res = await fetch('/api/ads/seasonal');
+            var d = await res.json();
+            if (d && d.success && d.seasonal && typeof d.seasonal.multiplier === 'number' && d.seasonal.multiplier > 0) {
+                seasonalMultiplier = d.seasonal.multiplier;
+            }
+        } catch (e) {}
+        return seasonalMultiplier;
     }
 
     return {
@@ -168,6 +182,8 @@ window.ZoomDzAds = (function () {
         notify: notify,
         trackClick: trackClick,
         pricePreview: pricePreview,
+        loadSeasonal: loadSeasonal,
+        getSeasonalMultiplier: function () { return seasonalMultiplier; },
         PLACEMENT_LABELS: PLACEMENT_LABELS,
         TYPE_LABELS: TYPE_LABELS
     };

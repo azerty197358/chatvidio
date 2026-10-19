@@ -18591,7 +18591,8 @@ window.clearProfileAiChat = clearProfileAiChat;
                 });
                 var el = document.getElementById('adPricePreview');
                 if (el) el.innerHTML = 'السعر التقديري: <span style="color:#f59e0b;font-size:1.2rem;">' + p.total + '</span> دج '
-                    + '<span style="font-size:0.78rem;color:#94a3b8;">(' + p.days + ' يوم × وزن ' + p.levelWeight + ' × نوع ' + p.typeMultiplier + ' × موضع ' + p.placementMultiplier + ')</span>';
+                    + '<span style="font-size:0.78rem;color:#94a3b8;">(' + p.days + ' يوم × وزن ' + p.levelWeight + ' × نوع ' + p.typeMultiplier + ' × موضع ' + p.placementMultiplier
+                    + (p.seasonalMultiplier && p.seasonalMultiplier !== 1 ? ' × موسم ' + p.seasonalMultiplier : '') + ')</span>';
             } catch (e) {}
         }
 
@@ -18670,6 +18671,7 @@ window.clearProfileAiChat = clearProfileAiChat;
         window.showSection = async function (section) {
             await _origShowSectionAds(section);
             if (section === 'ads') {
+                if (window.ZoomDzAds && window.ZoomDzAds.loadSeasonal) await window.ZoomDzAds.loadSeasonal();
                 updateAdPricePreview();
                 loadTeacherAds();
             }

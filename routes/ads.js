@@ -16,6 +16,32 @@ const VALID_LEVELS = ['all', 'bac', '3eme_as', '4eme_am', 'bem', '2eme_as', '1er
     '1ere_am', '2eme_am', '3eme_am', '5eme_am', '1ere_uni', '2eme_uni', '3eme_uni',
     'master', 'doctorat', 'vocational_all', 'other'];
 
+const SEASONAL_SETTINGS_KEY = 'ad_seasonal_pricing';
+
+// قراءة إعدادات التسعير الموسمي من platform_settings
+async function getSeasonalSettings() {
+    try {
+        const { data } = await supabase
+            .from('platform_settings')
+            .select('value')
+            .eq('key', SEASONAL_SETTINGS_KEY)
+            .maybeSingle();
+        const v = data && data.value;
+        const multiplier = (v && typeof v.multiplier === 'number' && v.multiplier > 0) ? v.multiplier : 1.0;
+        return { multiplier, note: (v && v.note) || '' };
+    } catch (e) {
+        return { multiplier: 1.0, note: '' };
+    }
+}
+
+// حفظ إعدادات التسعير الموسمي (إدارة)
+async function setSeasonalSettings(multiplier, note) {
+    await supabase.from('platform_settings').upsert({
+        key: SEASONAL_SETTINGS_KEY,
+        value: { multiplier, note: note || '', updated_at: new Date().toISOString() }
+    });
+}
+
 // تنظيف نص آمن للعرض
 function cleanText(v, max = 500) {
     return String(v == null ? '' : v).trim().substring(0, max);
@@ -37,18 +63,55 @@ function optionalStudent(req) {
 // ------------------------------------------------------------
 // 1) معاينة السعر (عامة) — يستخدمها حاسبة المعلن
 // ------------------------------------------------------------
-router.get('/price-preview', (req, res) => {
+router.get('/price-preview', async (req, res) => {
     try {
+        const seasonal = await getSeasonalSettings();
         const price = calculateAdPrice({
             education_level: req.query.education_level || 'all',
             ad_type: req.query.ad_type || 'static',
             placement: req.query.placement || 'between_posts',
             start_date: req.query.start_date,
-            end_date: req.query.end_date
+            end_date: req.query.end_date,
+            seasonalMultiplier: seasonal.multiplier
         });
-        res.json({ success: true, price });
+        res.json({ success: true, price, seasonal: seasonal });
     } catch (e) {
         res.json({ success: true, price: calculateAdPrice({}) });
+    }
+});
+
+// ------------------------------------------------------------
+// 1b) قراءة معامل التسعير الموسمي الحالي (عامة — تعرضه حاسبة المعلن)
+// ------------------------------------------------------------
+router.get('/seasonal', async (req, res) => {
+    const seasonal = await getSeasonalSettings();
+    res.json({ success: true, seasonal });
+});
+
+// ------------------------------------------------------------
+// 1c) ضبط معامل التسعير الموسمي (إدارة)
+// ------------------------------------------------------------
+router.post('/admin/seasonal', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        // يقبل multiplier مباشرة (1.25) أو percent (25 تعني +25%)
+        let multiplier = parseFloat(req.body.multiplier);
+        if (isNaN(multiplier) && req.body.percent !== undefined) {
+            const percent = parseFloat(req.body.percent);
+            if (!isNaN(percent)) multiplier = 1 + percent / 100;
+        }
+        if (isNaN(multiplier) || multiplier <= 0 || multiplier > 5) {
+            return res.status(400).json({ success: false, error: 'قيمة غير صالحة' });
+        }
+        multiplier = Math.round(multiplier * 100) / 100;
+        await setSeasonalSettings(multiplier, String(req.body.note || '').substring(0, 200));
+        res.json({
+            success: true,
+            message: '✅ تم تحديث نسبة تغيير الأسعار الموسمية',
+            seasonal: { multiplier, note: req.body.note || '' }
+        });
+    } catch (e) {
+        logger.warn('ads seasonal save error: ' + e.message);
+        res.json({ success: false, error: 'تعذر حفظ الإعدادات' });
     }
 });
 
@@ -187,12 +250,14 @@ router.post('/teacher/book', authenticate, authorize(['teacher']), async (req, r
             return res.status(400).json({ success: false, error: 'فترة الإعلان غير صالحة' });
         }
 
+        const seasonal = await getSeasonalSettings();
         const price = calculateAdPrice({
             education_level: level,
             ad_type: adType,
             placement,
             start_date: startDate,
-            end_date: endDate
+            end_date: endDate,
+            seasonalMultiplier: seasonal.multiplier
         });
 
         const { data: created, error } = await supabase
