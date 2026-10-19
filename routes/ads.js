@@ -9,6 +9,13 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { verifyToken } = require('../utils/jwt');
 const { calculateAdPrice, TYPE_LABELS, PLACEMENT_LABELS, LEVEL_LABELS } = require('../utils/adPricing');
 const logger = require('../utils/logger');
+const multer = require('multer');
+const { uploadToSupabase } = require('../utils/upload');
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 } // 8MB — تُضغط تلقائياً في المتصفح ثم خادمياً
+});
 
 const VALID_TYPES = ['banner', 'static', 'notification'];
 const VALID_PLACEMENTS = ['between_posts', 'comments', 'packages', 'courses', 'lessons_header'];
@@ -180,7 +187,7 @@ router.get('/match', async (req, res) => {
         // تسجيل الظهور (مرة واحدة لكل طالب كل 24 ساعة) — تكميلي لا يُبطل العرض
         if (student && student.userId) {
             try {
-                await supabase.from('ad_impressions').insert({ ad_id: ad.id, student_id: student.userId });
+                await supabase.from('ad_impressions').insert({ ad_id: ad.id, student_id: student.userId, student_level: studentLevel });
             } catch (e) {}
         }
         try {
@@ -215,9 +222,23 @@ router.post('/:id/click', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         if (!id) return res.status(400).json({ success: false });
+        const student = optionalStudent(req);
+        let level = null;
+        if (student && student.userId) {
+            try {
+                const { data: st } = await supabase.from('students').select('education_level').eq('id', student.userId).maybeSingle();
+                if (st && st.education_level) level = st.education_level;
+            } catch (e) {}
+        }
         const { data: ad } = await supabase.from('ads').select('clicks_count').eq('id', id).maybeSingle();
         if (ad) {
             await supabase.from('ads').update({ clicks_count: (ad.clicks_count || 0) + 1 }).eq('id', id);
+        }
+        // تسجيل النقرة مفصّلة (لحساب إحصائيات المستوى)
+        if (student && student.userId) {
+            try {
+                await supabase.from('ad_clicks').insert({ ad_id: id, student_id: student.userId, student_level: level });
+            } catch (e) {}
         }
         res.json({ success: true });
     } catch (e) {
@@ -300,6 +321,25 @@ router.post('/teacher/book', authenticate, authorize(['teacher']), async (req, r
 });
 
 // ------------------------------------------------------------
+// 4b) رفع صورة الإعلان (أستاذ) — تُضغط ثم تُخزَّن في التخزين
+// ------------------------------------------------------------
+router.post('/teacher/upload-image', authenticate, authorize(['teacher']), upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'لم يتم إرفاق صورة' });
+        }
+        const uploaded = await uploadToSupabase(req.file, 'ad_images');
+        if (!uploaded || !uploaded.url) {
+            return res.status(500).json({ success: false, error: 'تعذر رفع الصورة، حاول مرة أخرى' });
+        }
+        res.json({ success: true, url: uploaded.url });
+    } catch (e) {
+        logger.warn('ads image upload error: ' + e.message);
+        res.status(500).json({ success: false, error: 'تعذر رفع الصورة، حاول مرة أخرى' });
+    }
+});
+
+// ------------------------------------------------------------
 // 5) إعلانات المعلن الحالي
 // ------------------------------------------------------------
 router.get('/teacher/mine', authenticate, authorize(['teacher']), async (req, res) => {
@@ -316,6 +356,58 @@ router.get('/teacher/mine', authenticate, authorize(['teacher']), async (req, re
         res.json({ success: true, ads: ads || [] });
     } catch (e) {
         res.json({ success: true, ads: [] });
+    }
+});
+
+// ------------------------------------------------------------
+// 5b) إحصائيات إعلان معلن معيّن (مشاهدات/نقرات + التوزيع حسب المستوى)
+// ------------------------------------------------------------
+router.get('/teacher/:id/stats', authenticate, authorize(['teacher']), async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (!id) return res.status(400).json({ success: false, error: 'معرف غير صالح' });
+
+        // التأكد أن الإعلان ملك هذا المعلن
+        const { data: ad } = await supabase.from('ads').select('*').eq('id', id).maybeSingle();
+        if (!ad || ad.advertiser_id !== req.user.userId) {
+            return res.status(404).json({ success: false, error: 'الإعلان غير موجود' });
+        }
+
+        // التوزيع حسب المستوى للمشاهدات
+        const { data: impressions } = await supabase
+            .from('ad_impressions')
+            .select('student_level')
+            .eq('ad_id', id);
+        // التوزيع حسب المستوى للنقرات
+        const { data: clicks } = await supabase
+            .from('ad_clicks')
+            .select('student_level')
+            .eq('ad_id', id);
+
+        function groupByLevel(rows) {
+            const map = {};
+            (rows || []).forEach(r => {
+                const k = r.student_level || 'غير محدد';
+                map[k] = (map[k] || 0) + 1;
+            });
+            return map;
+        }
+
+        res.json({
+            success: true,
+            stats: {
+                id: ad.id,
+                title: ad.title,
+                status: ad.status,
+                impressions_count: ad.impressions_count || 0,
+                clicks_count: ad.clicks_count || 0,
+                impressions_by_level: groupByLevel(impressions),
+                clicks_by_level: groupByLevel(clicks)
+            }
+        });
+    } catch (e) {
+        logger.warn('ads stats error: ' + e.message);
+        res.status(500).json({ success: false, error: 'تعذر جلب الإحصائيات' });
     }
 });
 
@@ -356,6 +448,30 @@ router.post('/admin/:id/status', authenticate, authorize(['admin']), async (req,
             return res.json({ success: false, error: 'تعذر تحديث الحالة' });
         }
         res.json({ success: true, message: status === 'active' ? '✅ تم تفعيل الإعلان' : 'تم تحديث الحالة' });
+    } catch (e) {
+        res.json({ success: false, error: 'حدث خطأ' });
+    }
+});
+
+// ------------------------------------------------------------
+// 7b) رفض إعلان مع سبب (إدارة)
+// ------------------------------------------------------------
+router.post('/admin/:id/reject', authenticate, authorize(['admin']), async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (!id) return res.status(400).json({ success: false, error: 'معرف غير صالح' });
+        const reason = String(req.body.reason || '').trim().substring(0, 300);
+        if (!reason) {
+            return res.status(400).json({ success: false, error: 'يرجى كتابة سبب الرفض' });
+        }
+        const { error } = await supabase
+            .from('ads')
+            .update({ status: 'rejected', rejection_reason: reason, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            return res.json({ success: false, error: 'تعذر رفض الإعلان' });
+        }
+        res.json({ success: true, message: 'تم رفض الإعلان وتسجيل السبب' });
     } catch (e) {
         res.json({ success: false, error: 'حدث خطأ' });
     }

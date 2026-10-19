@@ -255,6 +255,8 @@
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap">
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     <noscript><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet"></noscript>
+    <!-- تحسين LCP: تحميل مسبق لصورة البطل -->
+    <link rel="preload" as="image" href="/images/student_hero1.jpg" fetchpriority="high">
 
     <!-- ===== CONFIG + Instant Captcha Security ===== -->
     <script>
@@ -4811,7 +4813,7 @@
                 <!-- Left Visual Hero -->
                 <div class="hero-responsive-visual" style="flex: 1; min-width: 280px; display: flex; align-items: center; justify-content: center; position: relative;">
                     <div style="position: relative; width: 400px; height: 400px; max-width: 100%; border-radius: 30px; overflow: hidden; box-shadow: 0 25px 60px rgba(15, 23, 42, 0.12); border: 4px solid white;">
-                        <img id="heroMainImage" src="/images/student_hero1.jpg" alt="الطلاب" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_hero1.jpg" style="width: 100%; height: 100%; object-fit: cover;" />
+                        <img id="heroMainImage" src="/images/student_hero1.jpg" alt="الطلاب" fetchpriority="high" decoding="async" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_hero1.jpg" style="width: 100%; height: 100%; object-fit: cover;" />
                     </div>
                 </div>
             </div>
@@ -5240,12 +5242,12 @@
                 <div class="role-grid">
                     <div class="role-card active" data-role="student" onclick="selectRole('student')">
                         <div class="check-icon"><i class="fas fa-check"></i></div>
-                        <img src="/images/student_character1.jpg" alt="طالب" class="char-img char-img-student" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_character1.jpg">
+                        <img loading="lazy" decoding="async" src="/images/student_character1.jpg" alt="طالب" class="char-img char-img-student" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_character1.jpg">
                         <span class="role-name">طالب</span>
                     </div>
                     <div class="role-card" data-role="teacher" onclick="selectRole('teacher')">
                         <div class="check-icon"><i class="fas fa-check"></i></div>
-                        <img src="/images/teacher_character1.jpg" alt="أستاذ" class="char-img char-img-teacher" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/teacher_character1.jpg">
+                        <img loading="lazy" decoding="async" src="/images/teacher_character1.jpg" alt="أستاذ" class="char-img char-img-teacher" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/teacher_character1.jpg">
                         <span class="role-name">أستاذ</span>
                     </div>
                     <div class="role-card" data-role="admin" onclick="selectRole('admin')">
@@ -5273,12 +5275,12 @@
                 <div class="role-grid two-cols">
                     <div class="role-card reset-role-card active" data-role="student" onclick="selectResetRole('student')">
                         <div class="check-icon"><i class="fas fa-check"></i></div>
-                        <img src="/images/student_character1.jpg" alt="طالب" class="char-img char-img-student" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_character1.jpg">
+                        <img loading="lazy" decoding="async" src="/images/student_character1.jpg" alt="طالب" class="char-img char-img-student" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/student_character1.jpg">
                         <span class="role-name">طالب</span>
                     </div>
                     <div class="role-card reset-role-card" data-role="teacher" onclick="selectResetRole('teacher')">
                         <div class="check-icon"><i class="fas fa-check"></i></div>
-                        <img src="/images/teacher_character1.jpg" alt="أستاذ" class="char-img char-img-teacher" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/teacher_character1.jpg">
+                        <img loading="lazy" decoding="async" src="/images/teacher_character1.jpg" alt="أستاذ" class="char-img char-img-teacher" referrerpolicy="no-referrer" onerror="handleImageFallback(this)" data-original-url="/images/teacher_character1.jpg">
                         <span class="role-name">أستاذ</span>
                     </div>
                 </div>

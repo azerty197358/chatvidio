@@ -58,6 +58,24 @@ window.ZoomDzAds = (function () {
         } catch (e) {}
     }
 
+    // أبعاد ثابتة لكل نوع إعلان لتتلاءم مع مواضعها (لابتوب + جوال) وتقليل اهتزاز التخطيط (CLS)
+    var TYPE_DIMS = {
+        banner: 'aspect-ratio:4 / 1; max-height:170px;',
+        static: 'aspect-ratio:3 / 2; max-height:230px;',
+        notification: null
+    };
+    var TYPE_IMG_ATTRS = {
+        banner: 'width="1200" height="300"',
+        static: 'width="600" height="400"'
+    };
+    var LEVEL_LABELS = {
+        all: 'جميع المستويات', bac: 'بكالوريا', '3eme_as': 'بكالوريا', '4eme_am': 'رابعة متوسط (BEM)', bem: 'رابعة متوسط (BEM)',
+        '2eme_as': 'ثانية ثانوي', '1ere_as': 'أولى ثانوي', '5eme_pri': 'خامسة ابتدائي',
+        '1ere_am': 'أولى متوسط', '2eme_am': 'ثانية متوسط', '3eme_am': 'ثالثة متوسط', '5eme_am': 'خامسة متوسط',
+        '1ere_uni': 'أولى جامعي', '2eme_uni': 'ثانية جامعي', '3eme_uni': 'ثالثة جامعي',
+        master: 'ماستر', doctorat: 'دكتوراه', vocational_all: 'التكوين المهني', other: 'مستوى آخر'
+    };
+
     // بطاقة إعلان (بانر أو لافتة) — كلها نصوص مهربة
     function cardHtml(ad) {
         if (!ad) return '';
@@ -65,9 +83,11 @@ window.ZoomDzAds = (function () {
         var link = ad.link_url ? String(ad.link_url) : '';
         var inner = '';
 
-        if (ad.image_url) {
-            inner += '<img src="' + esc(ad.image_url) + '" alt="' + esc(ad.title) + '" loading="lazy" '
-                + 'style="width:100%;max-height:150px;object-fit:cover;border-radius:12px;margin-bottom:10px;" '
+        var dimStyle = TYPE_DIMS[ad.ad_type] || TYPE_DIMS.static;
+        var imgAttrs = TYPE_IMG_ATTRS[ad.ad_type] || TYPE_IMG_ATTRS.static;
+        if (ad.image_url && dimStyle) {
+            inner += '<img src="' + esc(ad.image_url) + '" alt="' + esc(ad.title) + '" loading="lazy" decoding="async" ' + imgAttrs + ' '
+                + 'style="width:100%;object-fit:cover;border-radius:12px;margin-bottom:10px;' + dimStyle + '" '
                 + 'onerror="this.style.display=\'none\';">';
         }
         inner += '<div style="font-weight:800;color:#0f172a;font-size:0.98rem;margin-bottom:4px;">'
@@ -80,9 +100,10 @@ window.ZoomDzAds = (function () {
             + 'padding:6px 14px;border-radius:20px;font-weight:800;font-size:0.8rem;border:1px solid #bfdbfe;">'
             + '<i class="fas fa-external-link-alt"></i> اعرف المزيد</span></div>';
 
+        // حجز مساحة أدنى لمنع اهتزاز التخطيط عند تحميل الصورة (CLS)
         var cardStyle = isBanner
-            ? 'background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fde68a;border-radius:16px;padding:18px;margin:18px 0;box-shadow:0 4px 14px rgba(245,158,11,0.08);'
-            : 'background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:18px;margin:18px 0;box-shadow:0 4px 14px rgba(0,0,0,0.05);';
+            ? 'background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fde68a;border-radius:16px;padding:18px;margin:18px 0;box-shadow:0 4px 14px rgba(245,158,11,0.08);min-height:120px;'
+            : 'background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:18px;margin:18px 0;box-shadow:0 4px 14px rgba(0,0,0,0.05);min-height:150px;';
 
         var adTag = '<div style="text-align:left;margin-bottom:6px;">'
             + '<span style="font-size:0.65rem;color:#94a3b8;font-weight:700;">إعلان مموّل</span></div>';
@@ -184,6 +205,7 @@ window.ZoomDzAds = (function () {
         pricePreview: pricePreview,
         loadSeasonal: loadSeasonal,
         getSeasonalMultiplier: function () { return seasonalMultiplier; },
+        LEVEL_LABELS: LEVEL_LABELS,
         PLACEMENT_LABELS: PLACEMENT_LABELS,
         TYPE_LABELS: TYPE_LABELS
     };

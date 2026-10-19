@@ -619,13 +619,13 @@ function appendOptimisticMessage(text, reply) {
             } catch (e) {}
         })();
     </script>
-    <script src="/js/connection.js?v=2"></script>
-<script src="/js/image-compressor.js?v=1"></script>
-<script src="/js/anti-rapid-click.js"></script>
-    <script src="/js/site-branding.js"></script>
-    <script src="/js/mobile-navbar-swipe.js"></script>
-    <script src="/js/zoomy-assistant-widget.js"></script>
-    <script src="/js/chat-audio.js?v=4.3.0"></script>
+    <script src="/js/connection.js?v=2" defer></script>
+<script src="/js/image-compressor.js?v=1" defer></script>
+<script src="/js/anti-rapid-click.js" defer></script>
+    <script src="/js/site-branding.js" defer></script>
+    <script src="/js/mobile-navbar-swipe.js" defer></script>
+    <script src="/js/zoomy-assistant-widget.js" defer></script>
+    <script src="/js/chat-audio.js?v=4.3.0" defer></script>
     <script src="/js/community-modal.js" defer></script>
     
     <meta charset="UTF-8">
@@ -5022,8 +5022,12 @@ function appendOptimisticMessage(text, reply) {
                         <input type="url" id="adLinkInput" placeholder="https://..." style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:10px;font-family:inherit;direction:ltr;text-align:left;">
                     </div>
                     <div>
-                        <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">رابط الصورة (اختياري)</label>
-                        <input type="url" id="adImageInput" placeholder="https://..." style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:10px;font-family:inherit;direction:ltr;text-align:left;">
+                        <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">صورة الإعلان (اختياري — تُضغط تلقائياً)</label>
+                        <input type="file" id="adImageInput" accept="image/*" onchange="onAdImageSelected(this)" style="width:100%;padding:9px 12px;border:1.5px solid #cbd5e1;border-radius:10px;font-family:inherit;background:#fff;">
+                        <div id="adImagePreview" style="margin-top:8px;display:none;">
+                            <img id="adImagePreviewImg" src="" alt="معاينة" style="max-width:100%;max-height:150px;border-radius:10px;border:1px solid #e2e8f0;">
+                            <div id="adImageUploadState" style="font-size:0.75rem;color:#94a3b8;margin-top:4px;"></div>
+                        </div>
                     </div>
                     <div>
                         <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">نوع الإعلان</label>
@@ -5081,6 +5085,14 @@ function appendOptimisticMessage(text, reply) {
             <h4 style="margin:0 0 12px 0;color:#0f172a;font-weight:800;"><i class="fas fa-list" style="color:#64748b;margin-left:6px;"></i> إعلاناتي</h4>
             <div id="teacherAdsList" style="display:grid;gap:12px;">
                 <div style="text-align:center;padding:24px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>
+            </div>
+        </div>
+
+        <!-- نافذة إحصائيات الإعلان -->
+        <div id="adStatsModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);z-index:99999;align-items:center;justify-content:center;padding:16px;" onclick="if(event.target===this)this.style.display='none'">
+            <div style="background:#fff;border-radius:18px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:22px;position:relative;">
+                <button onclick="document.getElementById('adStatsModal').style.display='none'" style="position:absolute;top:12px;left:12px;background:#f1f5f9;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+                <div id="adStatsBody"></div>
             </div>
         </div>
 
@@ -18597,6 +18609,36 @@ window.clearProfileAiChat = clearProfileAiChat;
     <script src="/js/ads.js?v=1"></script>
     <script>
         // ============ إعلانات الأستاذ ============
+        var adUploadedImageUrl = '';
+
+        // رفع صورة الإعلان من الجهاز مع ضغطها (تتم عبر fetchWithAuth → الضغط التلقائي)
+        async function onAdImageSelected(input) {
+            var file = input.files && input.files[0];
+            var preview = document.getElementById('adImagePreview');
+            var img = document.getElementById('adImagePreviewImg');
+            var state = document.getElementById('adImageUploadState');
+            adUploadedImageUrl = '';
+            if (!file) { if (preview) preview.style.display = 'none'; return; }
+            try { if (img) img.src = URL.createObjectURL(file); } catch (e) {}
+            if (preview) preview.style.display = 'block';
+            if (state) state.textContent = 'جاري رفع الصورة وضغطها...';
+            try {
+                var fd = new FormData();
+                fd.append('image', file);
+                var res = await fetchWithAuth('/api/ads/teacher/upload-image', { method: 'POST', body: fd });
+                var d = await res.json();
+                if (d && d.success && d.url) {
+                    adUploadedImageUrl = d.url;
+                    if (state) state.textContent = '✅ تم رفع الصورة وضغطها بنجاح';
+                    if (img) img.src = d.url;
+                } else {
+                    if (state) state.textContent = '⚠️ تعذر رفع الصورة — يمكنك المتابعة بدونها';
+                }
+            } catch (e) {
+                if (state) state.textContent = '⚠️ تعذر رفع الصورة — يمكنك المتابعة بدونها';
+            }
+        }
+
         function updateAdPricePreview() {
             try {
                 var p = window.ZoomDzAds.pricePreview({
@@ -18613,6 +18655,45 @@ window.clearProfileAiChat = clearProfileAiChat;
             } catch (e) {}
         }
 
+        // عرض إحصائيات إعلان معلن (مشاهدات/نقرات + التوزيع حسب المستوى)
+        async function showAdStats(id) {
+            var box = document.getElementById('adStatsModal');
+            var body = document.getElementById('adStatsBody');
+            if (!box || !body) return;
+            box.style.display = 'flex';
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+            try {
+                var res = await fetchWithAuth('/api/ads/teacher/' + id + '/stats');
+                var d = await res.json();
+                if (d && d.success && d.stats) {
+                    var s = d.stats;
+                    var LL = (window.ZoomDzAds && window.ZoomDzAds.LEVEL_LABELS) || {};
+                    function levelRows(map) {
+                        var keys = Object.keys(map || {});
+                        if (keys.length === 0) return '<div style="color:#94a3b8;font-size:0.85rem;">لا توجد بيانات بعد</div>';
+                        return keys.map(function (k) {
+                            return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #e2e8f0;font-size:0.85rem;">'
+                                + '<span style="font-weight:700;color:#334155;">' + escapeHtml(LL[k] || (k === 'غير محدد' ? 'غير محدد' : k)) + '</span>'
+                                + '<span style="font-weight:800;color:#0f5cbf;">' + map[k] + '</span></div>';
+                        }).join('');
+                    }
+                    body.innerHTML = '<h4 style="margin:0 0 12px 0;color:#0f172a;">' + escapeHtml(s.title || 'إعلان') + '</h4>'
+                        + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;">'
+                        + '<div style="background:#eff6ff;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#1e40af;">' + (s.impressions_count || 0) + '</div><div style="font-size:0.78rem;color:#64748b;font-weight:700;">مشاهدة</div></div>'
+                        + '<div style="background:#ecfdf5;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#059669;">' + (s.clicks_count || 0) + '</div><div style="font-size:0.78rem;color:#64748b;font-weight:700;">نقرة</div></div>'
+                        + '</div>'
+                        + '<div style="font-weight:800;color:#334155;margin-bottom:6px;">👁 المشاهدات حسب المستوى:</div>'
+                        + '<div style="background:#f8fafc;border-radius:10px;padding:10px 12px;margin-bottom:14px;">' + levelRows(s.impressions_by_level) + '</div>'
+                        + '<div style="font-weight:800;color:#334155;margin-bottom:6px;">🖱 النقرات حسب المستوى:</div>'
+                        + '<div style="background:#f8fafc;border-radius:10px;padding:10px 12px;">' + levelRows(s.clicks_by_level) + '</div>';
+                } else {
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">تعذر جلب الإحصائيات</div>';
+                }
+            } catch (e) {
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">تعذر الاتصال بالخادم</div>';
+            }
+        }
+
         async function loadTeacherAds() {
             var list = document.getElementById('teacherAdsList');
             if (!list) return;
@@ -18625,16 +18706,31 @@ window.clearProfileAiChat = clearProfileAiChat;
                     return;
                 }
                 list.innerHTML = ads.map(function (ad) {
-                    var statusMap = { pending: ['قيد المراجعة', '#f59e0b', '#fffbeb'], active: ['نشط', '#10b981', '#ecfdf5'], paused: ['متوقف', '#64748b', '#f1f5f9'] };
+                    var statusMap = {
+                        pending: ['قيد المراجعة', '#f59e0b', '#fffbeb'],
+                        active: ['نشط', '#10b981', '#ecfdf5'],
+                        paused: ['متوقف', '#64748b', '#f1f5f9'],
+                        rejected: ['مرفوض', '#dc2626', '#fef2f2']
+                    };
                     var st = statusMap[ad.status] || ['غير معروف', '#64748b', '#f1f5f9'];
                     var typeLabel = (window.ZoomDzAds.TYPE_LABELS || {})[ad.ad_type] || ad.ad_type;
                     var placeLabel = (window.ZoomDzAds.PLACEMENT_LABELS || {})[ad.placement] || ad.placement;
+                    var reasonHtml = (ad.status === 'rejected' && ad.rejection_reason)
+                        ? '<div style="font-size:0.8rem;color:#dc2626;margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;">سبب الرفض: ' + escapeHtml(ad.rejection_reason) + '</div>'
+                        : '';
+                    var statsBtn = (ad.status === 'active')
+                        ? '<button onclick="showAdStats(' + ad.id + ')" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;font-weight:800;font-size:0.78rem;padding:6px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;">📊 الإحصائيات</button>'
+                        : '';
                     return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
                         + '<div style="flex:1;min-width:220px;">'
                         + '<div style="font-weight:800;color:#0f172a;">' + (ad.title || 'بدون عنوان') + '</div>'
                         + '<div style="font-size:0.8rem;color:#64748b;margin-top:4px;">' + typeLabel + ' · ' + placeLabel + ' · ' + (ad.impressions_count || 0) + ' ظهور · ' + (ad.clicks_count || 0) + ' نقرة · ' + (ad.price_paid || 0) + ' دج</div>'
+                        + reasonHtml
                         + '</div>'
-                        + '<span style="background:' + st[2] + ';color:' + st[1] + ';font-weight:800;font-size:0.78rem;padding:5px 12px;border-radius:20px;">' + st[0] + '</span>'
+                        + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+                        + statsBtn
+                        + '<span style="background:' + st[2] + ';color:' + st[1] + ';font-weight:800;font-size:0.78rem;padding:5px 12px;border-radius:20px;white-space:nowrap;">' + st[0] + '</span>'
+                        + '</div>'
                         + '</div>';
                 }).join('');
             } catch (e) {
@@ -18646,7 +18742,7 @@ window.clearProfileAiChat = clearProfileAiChat;
             var title = (document.getElementById('adTitleInput') || {}).value || '';
             var content = (document.getElementById('adContentInput') || {}).value || '';
             var link = (document.getElementById('adLinkInput') || {}).value || '';
-            var image = (document.getElementById('adImageInput') || {}).value || '';
+            var image = adUploadedImageUrl || '';
             var type = (document.getElementById('adTypeInput') || {}).value || 'static';
             var placement = (document.getElementById('adPlacementInput') || {}).value || 'between_posts';
             var level = (document.getElementById('adLevelInput') || {}).value || 'all';
