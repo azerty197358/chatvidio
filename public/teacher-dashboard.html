@@ -4834,6 +4834,10 @@ function appendOptimisticMessage(text, reply) {
                 <i class="fas fa-play-circle"></i>
                 <span class="tab-label">دوراتي</span>
             </button>
+            <button class="sidebar-nav-item nav-tab" data-section="ads" onclick="showSection('ads')">
+                <i class="fas fa-ad" style="color:#f59e0b;"></i>
+                <span class="tab-label">إعلاناتي</span>
+            </button>
         </div>
 
         <div class="sidebar-group-title">المالية والمجتمع</div>
@@ -16146,6 +16150,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     <button class="mobile-bottom-item" data-section="messages" onclick="showSection('messages')">
         <i class="fab fa-facebook-messenger" style="color: #0084ff;"></i>
         <span>الرسائل</span>
+        <span id="mobileMessagesBadge" style="display: none; position: absolute; top: 4px; right: 18px; background: #ef4444; color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 0.65rem; font-weight: 800; align-items: center; justify-content: center;">0</span>
     </button>
     <button class="mobile-bottom-item" data-section="exercises" onclick="showSection('exercises')">
         <i class="fas fa-book-open"></i>
@@ -16179,6 +16184,10 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     <button class="mobile-bottom-item" data-section="referral" onclick="showSection('referral')">
         <i class="fas fa-link"></i>
         <span>الإحالة</span>
+    </button>
+    <button class="mobile-bottom-item" data-section="ads" onclick="showSection('ads')">
+        <i class="fas fa-ad" style="color:#f59e0b;"></i>
+        <span>إعلاناتي</span>
     </button>
     <button class="mobile-bottom-item" data-section="teachers" onclick="showSection('teachers')">
         <i class="fas fa-users"></i>
@@ -16291,6 +16300,14 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 <span>دوراتي التعليمية</span>
             </div>
             <i class="fas fa-chevron-left" style="font-size:0.8rem; opacity:0.5;"></i>
+        </div>
+
+        <div class="mobile-drawer-menu-item" onclick="showSection('ads'); closeMobileDrawer();" style="background: #fffbeb; border: 1px solid #fde68a;">
+            <div class="item-content">
+                <i class="fas fa-ad" style="color:#f59e0b;"></i>
+                <span style="font-weight:700; color:#b45309;">إعلاناتي — استهدف طلابك 📣</span>
+            </div>
+            <i class="fas fa-chevron-left" style="font-size:0.8rem; opacity:0.5; color:#f59e0b;"></i>
         </div>
 
         <div class="mobile-drawer-menu-item" onclick="showSection('transactions'); closeMobileDrawer();">
