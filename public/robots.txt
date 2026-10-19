@@ -16,12 +16,14 @@ Disallow: /admin.html
 Disallow: /api/
 Disallow: /reset-password.html
 Disallow: /logs.html
+Disallow: /live-room.html
 Disallow: /student-dashboard.html
 Disallow: /teacher-dashboard.html
 Disallow: /teacher-profile.html
 Disallow: /course-seo.html
 Disallow: /offer-seo.html
 Disallow: /post-seo.html
+Disallow: /app/
 
 # Sitemap Location
 Sitemap: https://zoomdz.com/sitemap.xml

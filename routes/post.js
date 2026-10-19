@@ -40,6 +40,21 @@ function formatEduLevel(level) {
     return level;
 }
 
+// ✅ تنظيف محتوى المستخدم عند الحفظ: إزالة الوسوم الخطرة والمُعالِجات والروابط البرمجية
+//    (خطوة دفاعية إضافية — العرض يتم أيضاً بهروب كامل في مسارات SEO)
+function sanitizePostText(input) {
+    let s = String(input == null ? '' : input);
+    // كتل الوسوم الخطرة كاملة (حتى متعددة الأسطر)
+    s = s.replace(/<\s*(script|style|iframe|object|embed|link|meta|form|svg|math|frame|frameset|applet)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ');
+    // وسوم مفردة خطرة
+    s = s.replace(/<\s*(script|style|iframe|object|embed|link|meta|form|svg|math|frame|frameset|applet|base|portal)\b[^>]*\/?>/gi, ' ');
+    // معالجات الأحداث (onclick, onerror, ...)
+    s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    // روابط javascript: في أي حقل href/src/action
+    s = s.replace(/(href|src|action)\s*=\s*(["'])?\s*javascript:[^"'>\s]*/gi, '$1="#"');
+    return s;
+}
+
 const postIpViewsMap = new Map();
 
 setInterval(() => {
@@ -110,7 +125,11 @@ router.post('/create', authenticate, authorize(['student', 'teacher']), upload.a
 
         const userId = req.user.userId;
         const userRole = req.user.role;
-        const { content, link_url, title } = req.body;
+        // ✅ تعقيم المحتوى عند الحفظ + السماح بروابط http/https فقط
+        const content = sanitizePostText(req.body.content);
+        const title = sanitizePostText(req.body.title);
+        let link_url = String(req.body.link_url || '').trim();
+        if (link_url && !/^https?:\/\//i.test(link_url)) link_url = '';
         const files = req.files || [];
         
         // التحقق من إجمالي حجم الملفات (50 ميجابايت)
@@ -1139,7 +1158,7 @@ router.post('/comment', authenticate, authorize(['student', 'teacher']), [
         }
 
         const postId = parseInt(req.body.post_id);
-        const commentText = req.body.comment.trim();
+        const commentText = sanitizePostText(req.body.comment.trim());
         const parentId = (req.body.parent_id && !isNaN(parseInt(req.body.parent_id))) ? parseInt(req.body.parent_id) : null;
         const userId = req.user.userId;
         const userType = req.user.role;

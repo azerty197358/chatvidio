@@ -313,6 +313,77 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+// ============================================================
+// ✅ ترويسات أمان وأرشفة: منع فهرسة API والصفحات الحساسة
+//    (X-Robots-Tag احتياط حتى لو غاب meta noindex من صفحة ما)
+// ============================================================
+const NOINDEX_PATHS = [
+    '/admin.html', '/reset-password.html', '/logs.html', '/live-room.html',
+    '/student-dashboard.html', '/teacher-dashboard.html', '/admin', '/logs'
+];
+app.use((req, res, next) => {
+    try {
+        const p = req.path || '';
+        if (p.indexOf('/api/') === 0 || NOINDEX_PATHS.indexOf(p) !== -1) {
+            res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
+        res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()');
+    } catch (e) { /* لا نوقف الطلب بسبب ترويسة */ }
+    next();
+});
+
+// ============================================================
+// ✅ خريطة الموقع (Sitemap) الديناميكية — مسجّلة قبل الملفات الثابتة
+//    حتى لا يقدّم الملف الثابت روابط الصفحات الخاصة
+//    (admin / reset-password / logs / dashboards) لمحركات البحث
+// ============================================================
+app.get(['/sitemap.xml', '/public/sitemap.xml'], async (req, res) => {
+    const lastmod = new Date().toISOString().split('T')[0];
+    const pageUrl = (loc, changefreq, priority) =>
+        `\n  <url><loc>${loc}</loc><lastmod>${lastmod}</lastmod><changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`;
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
+        pageUrl('https://zoomdz.com/', 'daily', '1.0') +
+        pageUrl('https://zoomdz.com/docs.html', 'weekly', '0.9') +
+        pageUrl('https://zoomdz.com/blog', 'daily', '0.8') +
+        pageUrl('https://zoomdz.com/packages.html', 'weekly', '0.8') +
+        pageUrl('https://zoomdz.com/app.html', 'monthly', '0.7') +
+        pageUrl('https://zoomdz.com/ai-tutor.html', 'weekly', '0.7') +
+        pageUrl('https://zoomdz.com/contact.html', 'monthly', '0.6') +
+        pageUrl('https://zoomdz.com/privacy-policy.html', 'monthly', '0.3') +
+        pageUrl('https://zoomdz.com/terms.html', 'monthly', '0.3');
+
+    // كل استعلام على حدة: فشل أحدها لا يُسقط بقية الروابط
+    const safeRows = async (q) => {
+        try {
+            const { data, error } = await q;
+            return (error || !data) ? [] : data;
+        } catch (e) { return []; }
+    };
+
+    try {
+        const [teachersRows, coursesRows, offersRows, postsRows, blogsRows] = await Promise.all([
+            safeRows(supabase.from('teachers').select('id').eq('status', 'approved').eq('is_banned', false).limit(1000)),
+            safeRows(supabase.from('courses').select('id').eq('status', 'published').limit(1000)),
+            safeRows(supabase.from('offers').select('id').or('status.neq.cancelled,status.is.null').limit(1000)),
+            safeRows(supabase.from('posts').select('id').order('id', { ascending: false }).limit(500)),
+            safeRows(supabase.from('blogs').select('slug'))
+        ]);
+        teachersRows.forEach(t => { xml += pageUrl(`https://zoomdz.com/teacher/${t.id}`, 'weekly', '0.8'); });
+        coursesRows.forEach(c => { xml += pageUrl(`https://zoomdz.com/course/${c.id}`, 'weekly', '0.7'); });
+        offersRows.forEach(o => { xml += pageUrl(`https://zoomdz.com/offer/${o.id}`, 'daily', '0.8'); });
+        postsRows.forEach(p => { xml += pageUrl(`https://zoomdz.com/post/${p.id}`, 'weekly', '0.6'); });
+        blogsRows.forEach(b => { if (b.slug) xml += pageUrl(`https://zoomdz.com/blog/${encodeURIComponent(b.slug)}`, 'weekly', '0.7'); });
+    } catch (e) {
+        console.error('Sitemap dynamic part failed (serving static pages only):', e.message);
+    }
+
+    xml += '\n</urlset>';
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.send(xml);
+});
+
 // ملفات ثابتة للموقع (يجب أن تكون قبل JSON/Sanitization)
 const staticOptions = {
     etag: true,
@@ -987,17 +1058,17 @@ app.get(['/teacher/:id', '/teacher-profile.html'], async (req, res, next) => {
         const spec = teacher.specialization || 'دروس خصوصية';
         const title = `${name} - أستاذ ${spec} على منصة ZoomDz`;
         const bioClean = cleanMetaText(teacher.bio || `تصفح الملف الشخصي للأستاذ ${name}، أستاذ متخصص في ${spec} على منصة ZoomDz للتعليم عن بعد في الجزائر. سجل لمتابعة الدروس والبث المباشر.`);
-        const keywords = `${name}, أستاذ ${spec}, دروس خصوصية, بكالوريا الجزائر, متوسط, ZoomDz, بث مباشر`;
+        const keywords = cleanMetaText(`${name}, أستاذ ${spec}, دروس خصوصية, بكالوريا الجزائر, متوسط, ZoomDz, بث مباشر`);
         const url = `https://zoomdz.com/teacher/${teacherId}`;
         const imageUrl = teacher.profile_url || `https://zoomdz.com/images/zoomdz.png`;
 
         html = html.replace(/<meta\s+name=["']robots["'][^>]*>/gi, '<meta name="robots" content="index, follow, max-image-preview:large">');
-        html = html.replace(/<title>.*?<\/title>/gi, `<title>\${title}</title>`);
+        html = html.replace(/<title>.*?<\/title>/gi, () => `<title>${escapeHtml(title)}</title>`);
         html = html.replace(/<meta\s+name="description"\s+content=".*?">/gi, `<meta name="description" content="${bioClean}">`);
         html = html.replace(/<meta\s+name="keywords"\s+content=".*?">/gi, `<meta name="keywords" content="${keywords}">`);
         
-        // Use split/join to be super safe with links and image URLs
-        html = safeReplaceAll(html, 'https://zoomdz.com/images/zoomdz.jpg', imageUrl);
+        // Use split/join to be super safe with links and image URLs (مع تهريب قيم المستخدم)
+        html = safeReplaceAll(html, 'https://zoomdz.com/images/zoomdz.jpg', escapeHtml(imageUrl));
         html = safeReplaceAll(html, 'https://zoomdz.com/', url);
 
         // Inject FORCE_TEACHER_ID
@@ -1082,19 +1153,19 @@ app.get('/course/:id', async (req, res) => {
         const dateText = course.created_at ? new Date(course.created_at).toLocaleDateString('ar-DZ') : 'حديثاً';
 
         html = html.replace(/<meta\s+name=["']robots["'][^>]*>/gi, '<meta name="robots" content="index, follow, max-image-preview:large">');
-        html = safeReplaceAll(html, '{{COURSE_TITLE}}', courseTitle);
+        html = safeReplaceAll(html, '{{COURSE_TITLE}}', escapeHtml(courseTitle));
         html = safeReplaceAll(html, '{{COURSE_DESCRIPTION}}', courseDescRaw);
         html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_RAW}}', courseDescRaw);
-        html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_HTML}}', courseDesc.replace(/\n/g, '<br>'));
+        html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_HTML}}', escapeHtml(courseDesc).replace(/\n/g, '<br>'));
         html = safeReplaceAll(html, '{{COURSE_URL}}', courseUrl);
-        html = safeReplaceAll(html, '{{TEACHER_NAME}}', teacherName);
-        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', teacherSpec);
-        html = safeReplaceAll(html, '{{COURSE_IMAGE}}', courseImage);
-        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', teacherImage);
-        html = safeReplaceAll(html, '{{TEACHER_BIO}}', course.teachers?.bio || 'أستاذ معتمد ومتميز على منصة ZoomDz للتعليم عن بعد.');
-        html = safeReplaceAll(html, '{{COURSE_LEVEL}}', levelText);
+        html = safeReplaceAll(html, '{{TEACHER_NAME}}', escapeHtml(teacherName));
+        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', escapeHtml(teacherSpec));
+        html = safeReplaceAll(html, '{{COURSE_IMAGE}}', escapeHtml(courseImage));
+        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', escapeHtml(teacherImage));
+        html = safeReplaceAll(html, '{{TEACHER_BIO}}', escapeHtml(String(course.teachers?.bio || 'أستاذ معتمد ومتميز على منصة ZoomDz للتعليم عن بعد.').substring(0, 400)));
+        html = safeReplaceAll(html, '{{COURSE_LEVEL}}', escapeHtml(levelText));
         html = safeReplaceAll(html, '{{COURSE_PRICE}}', course.price || '0');
-        html = safeReplaceAll(html, '{{COURSE_PRICE_TEXT}}', priceText);
+        html = safeReplaceAll(html, '{{COURSE_PRICE_TEXT}}', escapeHtml(priceText));
         html = safeReplaceAll(html, '{{PRICE_CLASS}}', priceClass);
         html = safeReplaceAll(html, '{{COURSE_DATE}}', dateText);
 
@@ -1213,21 +1284,21 @@ app.get(['/offer/:id', '/offers/:id', '/lesson/:id', '/lessons/:id'], async (req
         const exactTimeText = offer.offer_date ? new Date(offer.offer_date).toLocaleString('ar-DZ', { dateStyle: 'full', timeStyle: 'short' }) : 'قريباً';
         const viewsCount = viewResult ? viewResult.views : (offer.views_count || offer.views || 0);
 
-        html = safeReplaceAll(html, '{{COURSE_TITLE}}', lessonTitle);
-        html = safeReplaceAll(html, '{{LESSON_TITLE}}', lessonTitle);
+        html = safeReplaceAll(html, '{{COURSE_TITLE}}', escapeHtml(lessonTitle));
+        html = safeReplaceAll(html, '{{LESSON_TITLE}}', escapeHtml(lessonTitle));
         html = safeReplaceAll(html, '{{COURSE_DESCRIPTION}}', lessonDescRaw);
         html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_RAW}}', lessonDescRaw);
-        html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_HTML}}', lessonDesc);
+        html = safeReplaceAll(html, '{{COURSE_DESCRIPTION_HTML}}', escapeHtml(lessonDesc));
         html = safeReplaceAll(html, '{{COURSE_URL}}', lessonUrl);
-        html = safeReplaceAll(html, '{{TEACHER_NAME}}', teacherName);
-        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', teacherSpec);
-        html = safeReplaceAll(html, '{{COURSE_IMAGE}}', lessonImage);
-        html = safeReplaceAll(html, '{{LESSON_IMAGE}}', lessonImage);
-        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', teacherImage);
-        html = safeReplaceAll(html, '{{TEACHER_BIO}}', offer.teachers?.bio || 'أستاذ معتمد ومتميز على منصة ZoomDz للتعليم عن بعد.');
-        html = safeReplaceAll(html, '{{COURSE_LEVEL}}', levelText);
+        html = safeReplaceAll(html, '{{TEACHER_NAME}}', escapeHtml(teacherName));
+        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', escapeHtml(teacherSpec));
+        html = safeReplaceAll(html, '{{COURSE_IMAGE}}', escapeHtml(lessonImage));
+        html = safeReplaceAll(html, '{{LESSON_IMAGE}}', escapeHtml(lessonImage));
+        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', escapeHtml(teacherImage));
+        html = safeReplaceAll(html, '{{TEACHER_BIO}}', escapeHtml(String(offer.teachers?.bio || 'أستاذ معتمد ومتميز على منصة ZoomDz للتعليم عن بعد.').substring(0, 400)));
+        html = safeReplaceAll(html, '{{COURSE_LEVEL}}', escapeHtml(levelText));
         html = safeReplaceAll(html, '{{COURSE_PRICE}}', offer.price || '0');
-        html = safeReplaceAll(html, '{{COURSE_PRICE_TEXT}}', priceText);
+        html = safeReplaceAll(html, '{{COURSE_PRICE_TEXT}}', escapeHtml(priceText));
         html = safeReplaceAll(html, '{{PRICE_CLASS}}', priceClass);
         html = safeReplaceAll(html, '{{COURSE_DATE}}', dateText);
         html = safeReplaceAll(html, '{{LESSON_EXACT_TIME}}', exactTimeText);
@@ -1314,7 +1385,7 @@ app.get('/post/:id', async (req, res) => {
             attachmentsHtml = `
                 <div style="margin: 20px 0; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;">
                     <h3 style="font-size: 1rem; color: #1e293b; margin-bottom: 10px;"><i class="fas fa-paperclip" style="color: #1e40af;"></i> الملفات المرفقة:</h3>
-                    <a href="${fileUrl}" target="_blank" download class="attachment-link" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; padding: 8px 16px; background: #eff6ff; color: #1e40af; border-radius: 8px; font-weight: 700; border: 1px solid #bfdbfe;">
+                    <a href="${escapeHtml(fileUrl)}" target="_blank" rel="nofollow ugc" download class="attachment-link" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; padding: 8px 16px; background: #eff6ff; color: #1e40af; border-radius: 8px; font-weight: 700; border: 1px solid #bfdbfe;">
                         <i class="fas fa-download"></i> ${escapeHtml(fileName)}
                     </a>
                 </div>
@@ -1322,15 +1393,16 @@ app.get('/post/:id', async (req, res) => {
         }
 
         html = html.replace(/<meta\s+name=["']robots["'][^>]*>/gi, '<meta name="robots" content="index, follow, max-image-preview:large">');
-        html = safeReplaceAll(html, '{{POST_TITLE}}', postTitle);
+        html = safeReplaceAll(html, '{{POST_TITLE}}', escapeHtml(postTitle));
         html = safeReplaceAll(html, '{{POST_DESCRIPTION}}', postDescRaw);
         html = safeReplaceAll(html, '{{POST_DESCRIPTION_RAW}}', postDescRaw);
-        html = safeReplaceAll(html, '{{POST_CONTENT_HTML}}', postContent.replace(/\n/g, '<br>'));
+        // ✅ محتوى المستخدم يُهرَّب بالكامل (نص مقروء فقط) — يمنع حقن أي وسم أو رابط مبرمج من حسابات مخترقة/سبام
+        html = safeReplaceAll(html, '{{POST_CONTENT_HTML}}', escapeHtml(postContent).replace(/\n/g, '<br>'));
         html = safeReplaceAll(html, '{{POST_ATTACHMENTS_HTML}}', attachmentsHtml);
         html = safeReplaceAll(html, '{{POST_URL}}', postUrl);
-        html = safeReplaceAll(html, '{{TEACHER_NAME}}', teacherName);
-        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', teacherSpec);
-        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', rawTeacherImg);
+        html = safeReplaceAll(html, '{{TEACHER_NAME}}', escapeHtml(teacherName));
+        html = safeReplaceAll(html, '{{TEACHER_SPECIALIZATION}}', escapeHtml(teacherSpec));
+        html = safeReplaceAll(html, '{{TEACHER_IMAGE}}', escapeHtml(rawTeacherImg));
         html = safeReplaceAll(html, '{{POST_DATE}}', dateText);
         html = safeReplaceAll(html, '{{POST_DATE_ISO}}', dateIso);
         html = safeReplaceAll(html, '{{POST_VIEWS}}', viewsCount);
