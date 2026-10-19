@@ -534,6 +534,16 @@ function appendOptimisticMessage(text, reply) {
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <script src="/js/platform-config.js"></script>
+    <script src="/js/ads.js?v=1"></script>
+    <script>
+        // ✅ تهيئة الإعلانات: إشعار علوي ذكي + مساحة الباقات (مرة واحدة لكل طالب كل 24 ساعة)
+        window.addEventListener('DOMContentLoaded', function () {
+            if (window.ZoomDzAds) {
+                try { ZoomDzAds.notify(); } catch (e) {}
+                try { ZoomDzAds.renderInto(document.getElementById('studentPackagesAdSlot'), 'packages'); } catch (e) {}
+            }
+        });
+    </script>
     <title>ZoomDz | لوحة الطالب</title>
         <!-- ===== FAVICON & BRANDING - GOOGLE SEARCH OPTIMIZED ===== -->
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
@@ -5054,6 +5064,9 @@ function appendOptimisticMessage(text, reply) {
                     </select>
                 </div>
             </div>
+
+            <!-- ✅ مساحة إعلان الباقات (تُملأ بواسطة ads.js) -->
+            <div id="studentPackagesAdSlot"></div>
 
             <!-- شبكة الباقات -->
             <div id="studentPackagesList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px;">
@@ -12134,13 +12147,22 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
                 }
             }).join('');
 
+            // ✅ إعلان مدمج بين المنشورات (مطابق للمستوى + مرة واحدة كل 24 ساعة)
+            let finalCardsHtml = cardsHtml;
+            try {
+                if (window.ZoomDzAds && posts.length >= 3) {
+                    const ad = await window.ZoomDzAds.match('between_posts');
+                    if (ad) finalCardsHtml += window.ZoomDzAds.cardHtml(ad);
+                }
+            } catch (adErr) {}
+
             const oldSentinel = document.getElementById('studentPostsSentinel');
             if (oldSentinel) oldSentinel.remove();
 
             if (reset) {
-                feed.innerHTML = cardsHtml;
+                feed.innerHTML = finalCardsHtml;
             } else {
-                feed.insertAdjacentHTML('beforeend', cardsHtml);
+                feed.insertAdjacentHTML('beforeend', finalCardsHtml);
             }
 
             studentPostsOffset += posts.length;
@@ -12908,8 +12930,17 @@ let studentPostFilesArray = [];
                 return renderSingleComment(c, postId, commentReplies);
             }).join('');
 
+            // ✅ إعلان مدمج داخل قسم التعليقات (مطابق للمستوى)
+            let finalHtml = html;
+            try {
+                if (window.ZoomDzAds) {
+                    const ad = await window.ZoomDzAds.match('comments');
+                    if (ad) finalHtml += window.ZoomDzAds.cardHtml(ad);
+                }
+            } catch (adErr) {}
+
             commentsLists.forEach(cl => {
-                cl.innerHTML = html;
+                cl.innerHTML = finalHtml;
             });
         } catch (e) {
             console.error('Error fetching comments:', e);

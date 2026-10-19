@@ -2163,6 +2163,7 @@ const messageRoutes = require('./routes/message');
 const supportRoutes = require('./routes/support');
 const referralRoutes = require('./routes/referral');
 const walletRoutes = require('./routes/wallet');
+const adsRoutes = require('./routes/ads');
 const notificationRoutes = require('./routes/notification');
 const courseRoutes = require('./routes/course');
 const groupRoutes = require('./routes/group');
@@ -2205,6 +2206,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/referral', referralRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/ads', adsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api', blogRoutes);
 

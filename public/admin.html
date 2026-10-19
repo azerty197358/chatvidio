@@ -940,6 +940,9 @@
             <button class="nav-tab" onclick="showTab('blogs-admin')">
                 <i class="fas fa-blog" style="color: #3b82f6;"></i> إدارة المدونة SEO
             </button>
+            <button class="nav-tab" onclick="showTab('ads')" style="background: #fffbeb; color: #92400e; border: 1.5px solid #fde68a;">
+                <i class="fas fa-ad" style="color: #f59e0b;"></i> الإعلانات <span id="adsPendingCount" class="badge-count" style="display:none"></span>
+            </button>
             <button class="nav-tab" onclick="showTab('archived-streams')" id="archivedStreamsNavBtn">
                 <i class="fas fa-history" style="color: #ec4899;"></i> أرشيف وأدلة البث المحذوفة
             </button>
@@ -1299,6 +1302,17 @@
                     <button class="btn-save" onclick="createPlatformGroup(this)" style="width:100%;"><i class="fas fa-plus-circle"></i> إنشاء المجموعة باسم المنصة</button>
                 </div>
 
+            </div>
+        </div>
+
+        <!-- ===== قسم إدارة الإعلانات ===== -->
+        <div id="adsTab" style="display: none;">
+            <div style="background: #fff; border-radius: 16px; padding: 22px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                <h3 style="margin: 0 0 6px 0; color: #92400e; font-weight: 800;"><i class="fas fa-ad" style="color: #f59e0b;"></i> إدارة الإعلانات المستهدفة</h3>
+                <p style="margin: 0; color: #64748b; font-size: 0.88rem;">إعلانات آمنة (بانر/لافتة/إشعار) تظهر مرة واحدة لكل طالب كل 24 ساعة. فعّل الإعلان ليظهر للطلاب أو أوقفه مؤقتاً.</p>
+            </div>
+            <div id="adminAdsList" style="display: grid; gap: 12px;">
+                <div style="text-align: center; padding: 24px; color: #94a3b8;"><i class="fas fa-spinner fa-spin"></i> جاري تحميل الإعلانات...</div>
             </div>
         </div>
 
@@ -3189,6 +3203,7 @@
             if (document.getElementById('reportsTabContent')) document.getElementById('reportsTabContent').style.display = tab === 'reports' ? 'block' : 'none';
             if (document.getElementById('logsTab')) document.getElementById('logsTab').style.display = tab === 'logs' ? 'block' : 'none';
             if (document.getElementById('blogs-adminTab')) document.getElementById('blogs-adminTab').style.display = tab === 'blogs-admin' ? 'block' : 'none';
+            if (document.getElementById('adsTab')) document.getElementById('adsTab').style.display = tab === 'ads' ? 'block' : 'none';
             if (document.getElementById('packages-adminTab')) document.getElementById('packages-adminTab').style.display = tab === 'packages-admin' ? 'block' : 'none';
             if (document.getElementById('archived-streamsTab')) document.getElementById('archived-streamsTab').style.display = tab === 'archived-streams' ? 'block' : 'none';
             if (document.getElementById('live-streamsTab')) document.getElementById('live-streamsTab').style.display = tab === 'live-streams' ? 'block' : 'none';
@@ -3221,6 +3236,7 @@
             else if (tab === 'reports') loadReportsAdmin();
             else if (tab === 'logs') loadAdminLogs();
             else if (tab === 'blogs-admin') loadAdminBlogs();
+            else if (tab === 'ads') loadAdminAds();
             else if (tab === 'archived-streams') loadArchivedStreamsAdmin();
             else if (tab === 'live-streams') loadStreamsOverview();
             if (document.getElementById('platform-contentTab')) document.getElementById('platform-contentTab').style.display = tab === 'platform-content' ? 'block' : 'none';
@@ -3633,6 +3649,75 @@
             var formCard = document.getElementById('createBlogForm');
             if (formCard) {
                 formCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        // ============ إدارة الإعلانات ============
+        async function loadAdminAds() {
+            var container = document.getElementById('adminAdsList');
+            if (!container) return;
+            container.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
+            try {
+                var res = await fetch('/api/ads/admin/list', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } });
+                var data = await res.json();
+                var ads = (data && data.success && data.ads) ? data.ads : [];
+                var pending = ads.filter(a => a.status === 'pending').length;
+                var badge = document.getElementById('adsPendingCount');
+                if (badge) { badge.style.display = pending ? 'inline-block' : 'none'; badge.textContent = pending; }
+                if (ads.length === 0) {
+                    container.innerHTML = '<p style="text-align:center; padding:20px; color:#94a3b8;">لا توجد إعلانات بعد</p>';
+                    return;
+                }
+                var typeLabels = { banner: 'بانر', static: 'لافتة', notification: 'إشعار' };
+                var placeLabels = { between_posts: 'بين المنشورات', comments: 'التعليقات', packages: 'الباقات', courses: 'الدورات', lessons_header: 'ترويسة الدروس' };
+                container.innerHTML = ads.map(a => {
+                    var stMap = { pending: ['قيد المراجعة', '#f59e0b', '#fffbeb'], active: ['نشط', '#10b981', '#ecfdf5'], paused: ['متوقف', '#64748b', '#f1f5f9'] };
+                    var st = stMap[a.status] || ['غير معروف', '#64748b', '#f1f5f9'];
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;">'
+                        + '<div style="flex:1;min-width:240px;">'
+                        + '<div style="font-weight:800;color:#0f172a;">' + escapeHtml(a.title || 'بدون عنوان') + '</div>'
+                        + '<div style="font-size:0.8rem;color:#64748b;margin-top:4px;">' + escapeHtml(a.advertiser_name || ('معلن #' + a.advertiser_id)) + ' · ' + (typeLabels[a.ad_type] || a.ad_type) + ' · ' + (placeLabels[a.placement] || a.placement) + ' · ' + (a.impressions_count || 0) + ' ظهور · ' + (a.clicks_count || 0) + ' نقرة · ' + (a.price_paid || 0) + ' دج</div>'
+                        + '<div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">' + (a.start_date ? new Date(a.start_date).toLocaleDateString('ar-DZ') : '') + ' ← ' + (a.end_date ? new Date(a.end_date).toLocaleDateString('ar-DZ') : '') + '</div>'
+                        + '</div>'
+                        + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+                        + '<span style="background:' + st[2] + ';color:' + st[1] + ';font-weight:800;font-size:0.75rem;padding:4px 10px;border-radius:20px;">' + st[0] + '</span>'
+                        + (a.status !== 'active' ? '<button onclick="setAdStatus(' + a.id + ',\'active\')" style="background:#10b981;color:#fff;border:none;font-weight:800;font-size:0.78rem;padding:6px 12px;border-radius:8px;cursor:pointer;">تفعيل</button>' : '')
+                        + (a.status === 'active' ? '<button onclick="setAdStatus(' + a.id + ',\'paused\')" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;font-weight:800;font-size:0.78rem;padding:6px 12px;border-radius:8px;cursor:pointer;">إيقاف</button>' : '')
+                        + '<button onclick="deleteAd(' + a.id + ')" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;font-weight:800;font-size:0.78rem;padding:6px 12px;border-radius:8px;cursor:pointer;">حذف</button>'
+                        + '</div></div>';
+                }).join('');
+            } catch (e) {
+                container.innerHTML = '<p style="text-align:center; padding:20px; color:#ef4444;">تعذر تحميل الإعلانات</p>';
+            }
+        }
+
+        async function setAdStatus(id, status) {
+            try {
+                var res = await fetch('/api/ads/admin/' + id + '/status', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token'), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: status })
+                });
+                var d = await res.json();
+                showNotification((d && d.message) || 'تم تحديث الحالة', 'success');
+                loadAdminAds();
+            } catch (e) {
+                showNotification('تعذر تحديث الحالة', 'warning');
+            }
+        }
+
+        async function deleteAd(id) {
+            if (!confirm('هل أنت متأكد من حذف هذا الإعلان؟')) return;
+            try {
+                var res = await fetch('/api/ads/admin/' + id, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') }
+                });
+                var d = await res.json();
+                showNotification((d && d.message) || 'تم الحذف', 'success');
+                loadAdminAds();
+            } catch (e) {
+                showNotification('تعذر حذف الإعلان', 'warning');
             }
         }
 
