@@ -19,6 +19,9 @@ const TYPE_MULTIPLIERS = {
 
 // معامل موضع الظهور
 const PLACEMENT_MULTIPLIERS = {
+    // 📢 لا خيار موضع للحجز بعد الآن: الإعلان يظهر تلقائياً في كل المواضع
+    //    (متوسط معاملات المواضع الخمسة: (1.6+1.35+1.3+1.2+1.0)/5 = 1.29)
+    all: 1.29,
     lessons_header: 1.6,   // ترويسة الدروس
     packages: 1.35,        // صفحات الباقات
     courses: 1.3,          // صفحات الدورات
@@ -57,6 +60,7 @@ const TYPE_LABELS = {
 };
 
 const PLACEMENT_LABELS = {
+    all: 'كل الأماكن (تلقائي)',
     between_posts: 'بين المنشورات',
     comments: 'قسم التعليقات',
     packages: 'صفحات الباقات',

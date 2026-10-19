@@ -226,9 +226,12 @@ function getPublicImageUrl(bucketName, folder, fileName) {
     let resolvedUrl;
     if (supabaseUrl) {
         resolvedUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fullPath}`;
-    } else {
-        resolvedUrl = `/uploads/${fullPath}`;
+        // 📉 تقليل استهلاك Egress من Supabase Storage: كل الصور تمرّ عبر وكيل Vercel
+        //    (/api/proxy-image) المخزَّن في حافة CDN لمدة يوم كامل — تنزيل واحد من
+        //    Supabase لكل صورة بدل تنزيل مع كل زيارة صفحة.
+        return `/api/proxy-image?url=${encodeURIComponent(resolvedUrl)}`;
     }
+    resolvedUrl = `/uploads/${fullPath}`;
     return encodeURI(resolvedUrl);
 }
 

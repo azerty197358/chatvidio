@@ -76,7 +76,8 @@ router.get('/price-preview', async (req, res) => {
         const price = calculateAdPrice({
             education_level: req.query.education_level || 'all',
             ad_type: req.query.ad_type || 'static',
-            placement: req.query.placement || 'between_posts',
+            // لا خيار موضع بعد الآن — الافتراضي "كل الأماكن" (تلقائي)
+            placement: (req.query.placement === 'all' || VALID_PLACEMENTS.includes(req.query.placement)) ? req.query.placement : 'all',
             start_date: req.query.start_date,
             end_date: req.query.end_date,
             seasonalMultiplier: seasonal.multiplier
@@ -148,12 +149,12 @@ router.get('/match', async (req, res) => {
 
         const now = new Date().toISOString();
 
-        // الإعلانات المرشحة: نشطة + ضمن المدة + تطابق الموضع + (المستوى المستهدف أو الكل)
+        // الإعلانات المرشحة: نشطة + ضمن المدة + (الموضع المحدد أو "كل الأماكن" التلقائي) + (المستوى المستهدف أو الكل)
         const { data: candidates, error } = await supabase
             .from('ads')
             .select('*')
             .eq('status', 'active')
-            .eq('placement', placement)
+            .or(`placement.eq.all,placement.eq.${placement}`)
             .lte('start_date', now)
             .gte('end_date', now)
             .or(`education_level.eq.${studentLevel},education_level.eq.all`);
@@ -259,7 +260,9 @@ router.post('/teacher/book', authenticate, authorize(['teacher']), async (req, r
         const imageUrl = cleanText(req.body.image_url, 500);
         const linkUrl = cleanText(req.body.link_url, 500);
         const adType = VALID_TYPES.includes(req.body.ad_type) ? req.body.ad_type : 'static';
-        const placement = VALID_PLACEMENTS.includes(req.body.placement) ? req.body.placement : 'between_posts';
+        // 📢 إزالة خيار الموضع من لوحة المدرّس: كل إعلان جديد يُحجز ليظهر
+        //    تلقائياً في كل المواضع (بين المنشورات + التعليقات + الباقات + الدورات + ترويسة الدروس)
+        const placement = 'all';
         const level = VALID_LEVELS.includes(req.body.education_level) ? req.body.education_level : 'all';
         const startDate = new Date(req.body.start_date);
         const endDate = new Date(req.body.end_date);

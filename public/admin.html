@@ -3742,7 +3742,7 @@
                     return;
                 }
                 var typeLabels = { banner: 'بانر', static: 'لافتة', notification: 'إشعار' };
-                var placeLabels = { between_posts: 'بين المنشورات', comments: 'التعليقات', packages: 'الباقات', courses: 'الدورات', lessons_header: 'ترويسة الدروس' };
+                var placeLabels = { all: 'كل الأماكن', between_posts: 'بين المنشورات', comments: 'التعليقات', packages: 'الباقات', courses: 'الدورات', lessons_header: 'ترويسة الدروس' };
                 container.innerHTML = ads.map(a => {
                     var stMap = { pending: ['قيد المراجعة', '#f59e0b', '#fffbeb'], active: ['نشط', '#10b981', '#ecfdf5'], paused: ['متوقف', '#64748b', '#f1f5f9'], rejected: ['مرفوض', '#dc2626', '#fef2f2'] };
                     var st = stMap[a.status] || ['غير معروف', '#64748b', '#f1f5f9'];

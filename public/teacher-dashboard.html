@@ -5038,14 +5038,8 @@ function appendOptimisticMessage(text, reply) {
                         </select>
                     </div>
                     <div>
-                        <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">موضع الظهور</label>
-                        <select id="adPlacementInput" onchange="updateAdPricePreview()" style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:10px;font-family:inherit;background:#fff;">
-                            <option value="between_posts">بين المنشورات</option>
-                            <option value="comments">قسم التعليقات</option>
-                            <option value="packages">صفحات الباقات</option>
-                            <option value="courses">صفحات الدورات</option>
-                            <option value="lessons_header">ترويسة الدروس</option>
-                        </select>
+                        <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">مواضع الظهور</label>
+                        <div style="padding:10px 12px;border:1.5px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:0.8rem;color:#475569;">📢 يظهر إعلانك تلقائياً في جميع المواضع: بين المنشورات، قسم التعليقات، صفحات الباقات، صفحات الدورات، وترويسة الدروس.</div>
                     </div>
                     <div>
                         <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">المستوى المستهدف</label>
@@ -18644,13 +18638,13 @@ window.clearProfileAiChat = clearProfileAiChat;
                 var p = window.ZoomDzAds.pricePreview({
                     education_level: (document.getElementById('adLevelInput') || {}).value || 'all',
                     ad_type: (document.getElementById('adTypeInput') || {}).value || 'static',
-                    placement: (document.getElementById('adPlacementInput') || {}).value || 'between_posts',
+                    placement: 'all', // لا خيار موضع بعد الآن — يظهر تلقائياً في كل المواضع
                     start_date: (document.getElementById('adStartInput') || {}).value,
                     end_date: (document.getElementById('adEndInput') || {}).value
                 });
                 var el = document.getElementById('adPricePreview');
                 if (el) el.innerHTML = 'السعر التقديري: <span style="color:#f59e0b;font-size:1.2rem;">' + p.total + '</span> دج '
-                    + '<span style="font-size:0.78rem;color:#94a3b8;">(' + p.days + ' يوم × وزن ' + p.levelWeight + ' × نوع ' + p.typeMultiplier + ' × موضع ' + p.placementMultiplier
+                    + '<span style="font-size:0.78rem;color:#94a3b8;">(' + p.days + ' يوم × وزن ' + p.levelWeight + ' × نوع ' + p.typeMultiplier + ' × مواضع ' + p.placementMultiplier
                     + (p.seasonalMultiplier && p.seasonalMultiplier !== 1 ? ' × موسم ' + p.seasonalMultiplier : '') + ')</span>';
             } catch (e) {}
         }
@@ -18744,7 +18738,7 @@ window.clearProfileAiChat = clearProfileAiChat;
             var link = (document.getElementById('adLinkInput') || {}).value || '';
             var image = adUploadedImageUrl || '';
             var type = (document.getElementById('adTypeInput') || {}).value || 'static';
-            var placement = (document.getElementById('adPlacementInput') || {}).value || 'between_posts';
+            var placement = 'all'; // لا خيار موضع بعد الآن — يظهر تلقائياً في كل المواضع
             var level = (document.getElementById('adLevelInput') || {}).value || 'all';
             var start = (document.getElementById('adStartInput') || {}).value || '';
             var end = (document.getElementById('adEndInput') || {}).value || '';

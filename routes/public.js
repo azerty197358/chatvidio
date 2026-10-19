@@ -354,7 +354,8 @@ router.get('/public/offers', async (req, res) => {
 
         let query = supabase
             .from('offers')
-            .select('*')
+            // 📉 أعمدة مطلوبة فقط بدل select('*') — يقلل حجم استجابة Egress من Supabase
+            .select('id, teacher_id, subject_name, duration, offer_date, price, is_free, status, education_level, room_password, room_name, stream_url, stream_platform, booked_count, views_count, views, created_at, stream_active, completed_at')
             .eq('status', 'upcoming')
             .order('offer_date', { ascending: true })
             .limit(150);
@@ -477,7 +478,8 @@ router.get('/public/teacher/:teacherId', [
             .select('*')
             .eq('teacher_id', teacherId)
             .in('status', ['upcoming', 'live', 'teacher_ready'])
-            .order('offer_date', { ascending: true });
+            .order('offer_date', { ascending: true })
+            .limit(200); // 📉 حد أقصى — يمنع جلب كل دروس الأستاذ التاريخية مع كل زيارة للصفحة
 
         if (offersError) {
             logger.error('خطأ في جلب دروس الأستاذ:', offersError.message);
@@ -523,7 +525,7 @@ router.get('/public/teacher/:teacherId', [
         // استخدام Promise.all لتنفيذ الطلبات بشكل متزامن
         // ============================================================
         const [postsResult, totalOffersResult, studentsResult, pendingResult, coursesResult, followersResult] = await Promise.all([
-            supabase.from('posts').select('*').eq('teacher_id', teacherId).order('created_at', { ascending: false }).then(r => r).catch(e => ({ data: [], error: e })),
+            supabase.from('posts').select('*').eq('teacher_id', teacherId).order('created_at', { ascending: false }).limit(50).then(r => r).catch(e => ({ data: [], error: e })),
             supabase.from('offers').select('*', { count: 'exact', head: true }).eq('teacher_id', teacherId).then(r => r).catch(e => ({ count: 0, error: e })),
             (async () => {
                 try {
@@ -541,7 +543,7 @@ router.get('/public/teacher/:teacherId', [
                 } catch (e) {}
                 return { data: [], error: null };
             })(),
-            supabase.from('courses').select('*').eq('teacher_id', teacherId).eq('status', 'published').order('created_at', { ascending: false }).then(r => r).catch(e => ({ data: [], error: e })),
+            supabase.from('courses').select('*').eq('teacher_id', teacherId).eq('status', 'published').order('created_at', { ascending: false }).limit(30).then(r => r).catch(e => ({ data: [], error: e })),
             supabase.from('teacher_followers').select('*', { count: 'exact', head: true }).eq('teacher_id', teacherId).then(r => r).catch(e => ({ count: 0, error: e }))
         ]);
 

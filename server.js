@@ -380,6 +380,8 @@ app.get(['/sitemap.xml', '/public/sitemap.xml'], async (req, res) => {
 
     xml += '\n</urlset>';
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    // 📉 كاش ساعة واحدة — خرائط الموقع تُعاد قراءتها باستمرار من الزواحف
+    res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.send(xml);
 });
@@ -1727,7 +1729,9 @@ app.get('/api/proxy-image', async (req, res) => {
 
         const contentType = response.headers.get('content-type') || 'image/jpeg';
         res.setHeader('Content-Type', contentType);
-        res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+        // 📉 كاش حافة Vercel ليوم كامل + SWR أسبوع: صورة Supabase/Imgur تُنزَّل مرة
+        //    واحدة من المصدر ثم تُقدَّم من الحافة لكل الزيارات اللاحقة (توفير Egress).
+        res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -2175,8 +2179,49 @@ const exerciseRoutes = require('./routes/exercise');
 const packageRoutes = require('./routes/package');
 
 // ============================================================
+// 📉 كاش حافة Vercel للمسارات العامة (يقلل استعلامات Supabase و Egress)
+// ------------------------------------------------------------
+// - الطلبات العامة (بلا Bearer و بلا ?token=) تُخزَّن في حافة Vercel لمدة
+//   ttl ثوانٍ → زيارات متكررة لا تصل إلى الخادم ولا إلى قاعدة البيانات إطلاقاً.
+// - الطلبات المخصّصة (Bearer / ?token=) تحصل على private, no-store للحافة.
+// - الاستثناءات: مسارات الرموز/المصادقة/الدفع/الانضمام والبث (لآثارها الجانبية).
+// - الردود ذات الكود ≥ 400 أو التي تضبط Set-Cookie لا تُخزَّن أبداً.
+// ============================================================
+const EDGE_CACHE_EXCLUDES = [
+    'token', '/auth/', '/login', '/search', '/verify', '/refresh',
+    'proxy-image', '/ping', '/subscribe', '/join', 'start', '/logout',
+    '/payment', 'sofizpay', '/callback', '/webhook', '/wallet', '/booking', '/cancel'
+];
+
+function edgeCachePublic(ttlSeconds) {
+    return (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        try {
+            const url = req.originalUrl || req.url || '';
+            const pathOnly = String(url).split('?')[0];
+            if (EDGE_CACHE_EXCLUDES.some(x => pathOnly.includes(x))) return next();
+
+            const authed = !!(req.headers && req.headers.authorization) || !!(req.query && req.query.token);
+            const originalJson = res.json.bind(res);
+            res.json = (body) => {
+                if (!res.getHeader('Cache-Control') && !res.getHeader('Set-Cookie') && res.statusCode < 400) {
+                    res.setHeader('Cache-Control', authed
+                        ? 'private, max-age=0'
+                        : `public, max-age=${ttlSeconds}, s-maxage=${ttlSeconds}, stale-while-revalidate=60`);
+                }
+                return originalJson(body);
+            };
+        } catch (e) {}
+        next();
+    };
+}
+
+// ============================================================
 // ✅ استخدام المسارات - الترتيب مهم جداً!
 // ============================================================
+
+// ✅ 0. كاش الحافة للطلبات العامة (بعد CSRF — قبل المسارات)
+app.use('/api', edgeCachePublic(30));
 
 // ✅ 1. المسارات العامة (لا تحتاج مصادقة)
 app.use('/api', publicRoutes);

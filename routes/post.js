@@ -261,7 +261,8 @@ router.get('/', async (req, res) => {
         const cacheKey = `posts_${parsedLimit}_${parsedOffset}_${teacher_id || ''}_${student_id || ''}_${post_id || ''}_${saved_only || ''}_${userId || ''}_${userType || ''}`;
         const cachedResult = memoryCache.get(cacheKey);
         if (cachedResult) {
-            res.setHeader('Cache-Control', 'public, max-age=15');
+            // 📉 عام → حافة Vercel15 ثانية | مصادق → خاص (لا يُخزَّن في أي كاش مشترك)
+            res.setHeader('Cache-Control', userId ? 'private, max-age=0' : 'public, max-age=15, s-maxage=15');
             return res.json(cachedResult);
         }
 

@@ -426,7 +426,9 @@ router.get('/conversations/:user_id/:user_type', authenticate, [
 
         const { data } = await supabase
             .from('messages')
-            .select('*')
+            // 📉 أعمدة المعاينة فقط بدل select('*') — استطلاع المحادثات كل15 ثانية
+            //    كان يسحب كل أعمدة الرسائل (روابط/مرفقات/حقول كبيرة) مع كل دورة
+            .select('id, sender_id, receiver_id, sender_type, receiver_type, created_at, is_read, message, message_type, audio_url, file_type')
             .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
             .order('created_at', { ascending: false })
             .limit(500); // ✅ آخر500 رسالة فقط — يمنع جلب سجل المحادثات كاملاً مع كل استطلاع (كل15 ثانية)

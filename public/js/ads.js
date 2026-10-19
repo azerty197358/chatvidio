@@ -9,11 +9,12 @@ window.ZoomDzAds = (function () {
     var BASE_PRICE_PER_DAY = 100;
     var HIGH_WEIGHT_LEVELS = ['bac', '3eme_as', '4eme_am', 'bem'];
     var TYPE_MULTIPLIERS = { notification: 1.6, banner: 1.35, static: 1.0 };
-    var PLACEMENT_MULTIPLIERS = { lessons_header: 1.6, packages: 1.35, courses: 1.3, between_posts: 1.2, comments: 1.0 };
+    var PLACEMENT_MULTIPLIERS = { all: 1.29, lessons_header: 1.6, packages: 1.35, courses: 1.3, between_posts: 1.2, comments: 1.0 };
     // معامل المواسم من الأدمن (1.25 لموسم الامتحانات، 0.5 للصيف، 1 للإيقاف)
     var seasonalMultiplier = 1;
 
     var PLACEMENT_LABELS = {
+        all: 'كل الأماكن (تلقائي)',
         between_posts: 'بين المنشورات',
         comments: 'قسم التعليقات',
         packages: 'صفحات الباقات',
