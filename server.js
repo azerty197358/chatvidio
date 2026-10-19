@@ -382,7 +382,6 @@ app.get(['/sitemap.xml', '/public/sitemap.xml'], async (req, res) => {
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     // 📉 كاش ساعة واحدة — خرائط الموقع تُعاد قراءتها باستمرار من الزواحف
     res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.send(xml);
 });
 
@@ -2205,9 +2204,14 @@ function edgeCachePublic(ttlSeconds) {
             const originalJson = res.json.bind(res);
             res.json = (body) => {
                 if (!res.getHeader('Cache-Control') && !res.getHeader('Set-Cookie') && res.statusCode < 400) {
-                    res.setHeader('Cache-Control', authed
-                        ? 'private, max-age=0'
-                        : `public, max-age=${ttlSeconds}, s-maxage=${ttlSeconds}, stale-while-revalidate=60`);
+                    if (authed) {
+                        res.setHeader('Cache-Control', 'private, max-age=0');
+                    } else {
+                        res.setHeader('Cache-Control', `public, max-age=${ttlSeconds}, s-maxage=${ttlSeconds}, stale-while-revalidate=60`);
+                        // فصل مفتاح الكاش العام عن طلبات Authorization حتى لا يحصل
+                        // مستخدم مصادَق على رد عام مخزَّن (وليس العكس — طلبات Bearer لا تُخزَّن أصلاً)
+                        res.append('Vary', 'Authorization');
+                    }
                 }
                 return originalJson(body);
             };
