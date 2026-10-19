@@ -4,9 +4,9 @@
   "outputDirectory": "public",
   "cleanUrls": false,
   "functions": {
-    "api/[...path].js": { "maxDuration": 120 }
+    "api/index.js": { "maxDuration": 120 }
   },
   "rewrites": [
-    { "source": "/:path*", "destination": "/api/__ssr/:path*" }
+    { "source": "/:path*", "destination": "/api/index?p=:path" }
   ]
 }
