@@ -22,7 +22,9 @@
         iceCandidatePoolSize: 10
     };
 
-    let ws = null;
+    let pusher = null;
+    let pusherUserId = null;            // معرّف presence المستخدم عند إنشاء عميل Pusher
+    let channel = null;
     let localStream = null;
     let peerConnections = new Map(); // userId -> RTCPeerConnection
     let currentRoom = null;
@@ -32,6 +34,7 @@
     let maxReconnectAttempts = 5;
     let reconnectTimer = null;
     let pingTimer = null;
+    let currentToken = null;            // رمز JWT محفوظ لإعادة الاشتراك في قنوات presence
     let onRemoteStreamCallback = null;
     let onParticipantJoinedCallback = null;
     let onParticipantLeftCallback = null;
@@ -58,85 +61,122 @@
         return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
     }
 
+    //  إرسال رسالة إشارة عبر Pusher (أحداث العميل — تُبث للجميع عدا المرسل)
+    function sendSignaling(msg) {
+        if (!channel) return;
+        try {
+            msg.from = currentUserId;
+            msg.fromRole = currentRole;
+            msg.roomId = currentRoom;
+            channel.trigger('client-signal', msg);
+        } catch (e) { /* تجاهل */ }
+    }
+
     async function connect(roomId, userId, role, token, opts) {
-        const isReconnect = !!(opts && opts.isReconnect);
-        const savedAttempts = reconnectAttempts;
-
-        if (ws) {
-            if (isReconnect) {
-                //  إعادة اتصال الإشارات فقط: تُغلق الفقاعة القديمة دون تفكيك الوسائط
-                //  أو الاتصالات القائمة — مسار الفيديو مستقل عن WebSocket، فبقاؤه
-                //  يمنع وميض الكاميرا وقطع البث عند كل ومضة شبكة قصيرة
-                const oldWs = ws;
-                ws = null;
-                try { oldWs.close(); } catch (e) { /* تجاهل */ }
-                stopPing();
-            } else {
-                disconnect();
-            }
-        }
-        //  الحفاظ على عدّاد المحاولات أثناء إعادة الاتصال (ال츨ليق كان يعيد ضبطه
-        //  إلى الحد الأقصى فيُستسلم الاتصال بعد محاولة واحدة فقط)
-        if (isReconnect) reconnectAttempts = savedAttempts;
-
         currentRoom = roomId;
         currentUserId = userId || generateId();
         currentRole = role || 'student';
+        if (token) currentToken = token;
 
-        const wsUrl = getSignalingUrl()
-            .replace('https://', 'wss://')
-            .replace('http://', 'ws://');
-
-        const params = new URLSearchParams({
-            roomId: currentRoom,
-            userId: currentUserId,
-            role: currentRole
-        });
-        if (token) params.set('token', token);
+        const PUSHER_KEY = window.PUSHER_KEY || '0ea10d39dca5fe77b6e5';
+        const PUSHER_CLUSTER = window.PUSHER_CLUSTER || 'eu';
+        const channelName = 'presence-room-' + currentRoom;
 
         return new Promise((resolve, reject) => {
             try {
-                ws = new WebSocket(`${wsUrl}/ws-signaling?${params.toString()}`);
+                if (!window.Pusher) {
+                    reject(new Error('مكتبة Pusher غير محمّلة'));
+                    return;
+                }
 
-                const connectTimeout = setTimeout(() => {
-                    if (ws.readyState !== 1) {
-                        reject(new Error('Connection timeout'));
-                        ws.close();
-                    }
-                }, 10000);
+                // إنشاء عميل Pusher مرة واحدة (يُعاد إنشاؤه إن تغيّر معرّف الغرفة)
+                if (pusher && pusherUserId && pusherUserId !== String(currentUserId)) {
+                    try { pusher.disconnect(); } catch (e) { /* تجاهل */ }
+                    pusher = null;
+                }
+                if (!pusher) {
+                    pusher = new Pusher(PUSHER_KEY, {
+                        cluster: PUSHER_CLUSTER,
+                        authEndpoint: '/api/pusher/auth',
+                        auth: {
+                            headers: currentToken ? { 'Authorization': 'Bearer ' + currentToken } : {},
+                            //  معرّف presence = معرّف الإشارة داخل الغرفة (نفس منطق خادم WebSocket القديم)
+                            params: { user_id: String(currentUserId) }
+                        },
+                        forceTLS: true
+                    });
+                    pusherUserId = String(currentUserId);
+                    //  حالة اتصال Pusher → إعلام واجهة البث وإعادة المحاولة عند الفشل
+                    pusher.connection.bind('state_change', function (states) {
+                        const s = states.current;
+                        if (s === 'connected') {
+                            reconnectAttempts = 0;
+                            if (onConnectionStateCallback) onConnectionStateCallback('connected');
+                        } else if (s === 'failed') {
+                            if (onConnectionStateCallback) onConnectionStateCallback('disconnected');
+                            attemptReconnect();
+                        }
+                    });
+                }
 
-                ws.onopen = () => {
-                    clearTimeout(connectTimeout);
-                    reconnectAttempts = 0;
-                    console.log('[ZoomyRTC] Connected to signaling server');
-                    startPing();
+                // إعادة الاشتراك إن كانت القناة مختلفة
+                if (channel && channel.name === channelName) {
+                    resolve();
+                    return;
+                }
+                if (channel) {
+                    try { channel.unbind_all(); } catch (e) {}
+                    try { pusher.unsubscribe(channel.name); } catch (e) {}
+                    channel = null;
+                }
+
+                channel = pusher.subscribe(channelName);
+
+                channel.bind('pusher:subscription_error', function () {
+                    reject(new Error('تعذر الاشتراك في قناة Pusher'));
+                });
+
+                // نجاح الاشتراك → رسالة 'joined' بقائمة الأعضاء
+                channel.bind('pusher:subscription_succeeded', function (members) {
+                    const participants = [];
+                    const membersMap = (members && members.members) ? members.members : {};
+                    Object.keys(membersMap).forEach(function (uid) {
+                        participants.push({
+                            userId: uid,
+                            role: (membersMap[uid] && membersMap[uid].role) || 'student',
+                            joinedAt: Date.now()
+                        });
+                    });
+                    handleSignalingMessage({
+                        type: 'joined',
+                        roomId: currentRoom,
+                        userId: currentUserId,
+                        role: currentRole,
+                        participants: participants
+                    });
                     startHealthSweep();
                     if (onConnectionStateCallback) onConnectionStateCallback('connected');
                     resolve();
-                };
+                });
 
-                ws.onmessage = (event) => {
-                    try {
-                        const msg = JSON.parse(event.data);
-                        handleSignalingMessage(msg);
-                    } catch (e) {
-                        console.warn('[ZoomyRTC] Message parse error:', e.message);
-                    }
-                };
+                // انضمام/مغادرة عضو (presence)
+                channel.bind('pusher:member_added', function (member) {
+                    handleSignalingMessage({
+                        type: 'participant-joined',
+                        userId: String(member.id),
+                        role: (member.info && member.info.role) || 'student'
+                    });
+                });
+                channel.bind('pusher:member_removed', function (member) {
+                    handleSignalingMessage({
+                        type: 'participant-left',
+                        userId: String(member.id)
+                    });
+                });
 
-                ws.onclose = (event) => {
-                    clearTimeout(connectTimeout);
-                    console.log('[ZoomyRTC] Disconnected:', event.code, event.reason);
-                    stopPing();
-                    if (onConnectionStateCallback) onConnectionStateCallback('disconnected');
-                    attemptReconnect();
-                };
-
-                ws.onerror = (err) => {
-                    clearTimeout(connectTimeout);
-                    console.warn('[ZoomyRTC] WebSocket error');
-                    reject(new Error('Connection failed'));
-                };
+                // أحداث الإشارة: من الأقران (client-signal) ومن الخادم (signal)
+                channel.bind('client-signal', function (msg) { handleSignalingMessage(msg); });
+                channel.bind('signal', function (msg) { handleSignalingMessage(msg); });
             } catch (e) {
                 reject(e);
             }
@@ -144,12 +184,8 @@
     }
 
     function startPing() {
+        // Pusher يحافظ على الاتصال بنبضه الداخلي — لا حاجة لنبض على مستوى التطبيق
         stopPing();
-        pingTimer = setInterval(() => {
-            if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-            }
-        }, 25000);
     }
 
     function stopPing() {
@@ -166,9 +202,20 @@
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
         console.log(`[ZoomyRTC] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
         reconnectTimer = setTimeout(() => {
-            if (currentRoom && currentUserId) {
-                connect(currentRoom, currentUserId, currentRole, null, { isReconnect: true }).catch(() => {});
-            }
+            if (!currentRoom || !currentUserId) return;
+            try {
+                //  Pusher يعيد الاتصال تلقائياً عادةً؛ إن بلغ "failed" نُشعله يدوياً
+                if (pusher && pusher.connection && pusher.connection.state === 'failed') {
+                    pusher.connect();
+                }
+                // تفريغ القناة القديمة ليعاد اشتراكها من جديد
+                if (channel && pusher) {
+                    try { channel.unbind_all(); } catch (e) { /* تجاهل */ }
+                    try { pusher.unsubscribe(channel.name); } catch (e) { /* تجاهل */ }
+                    channel = null;
+                }
+            } catch (e) { /* تجاهل */ }
+            connect(currentRoom, currentUserId, currentRole, currentToken, { isReconnect: true }).catch(() => {});
         }, delay);
     }
 
@@ -210,7 +257,7 @@
 
     function runHealthSweep() {
         //  لا استعادة بلا اتصال إشارات حي (تُعدَّل الحالة لاحقاً عند عودة ws)
-        if (!ws || ws.readyState !== 1 || !peerConnections.size) return;
+        if (!channel || !peerConnections.size) return;
         const now = Date.now();
 
         peerConnections.forEach((pc, userId) => {
@@ -251,17 +298,22 @@
     }
 
     function sendSyncRequest() {
-        if (!ws || ws.readyState !== 1) return;
+        if (!channel) return;
         //  بدون to مقصود: بثّ للغرفة — الأستاذ وحده من يستجيب، وهويته قد تتغيّر
         //  بعد إعادة تحميل صفحته فيصل الطلب لأي أستاذ متصل بالغرفة
-        ws.send(JSON.stringify({
+        sendSignaling({
             type: 'sync-request',
             requestOffer: true,
             timestamp: Date.now()
-        }));
+        });
     }
 
     async function handleSignalingMessage(msg) {
+        //  تجاهل رسائلنا الخاصة إن عادت إلينا (بعض قنوات البث تُعيد أحداث العميل لمرسليها)
+        if (msg && msg.from && String(msg.from) === String(currentUserId)) return;
+        //  تصفية الرسائل الموجّهة لمستخدم معيّن — أحداث العميل تُبث لجميع
+        //  المشتركين في القناة، فيتولّى العضو تجاهل ما ليس له
+        if (msg && msg.to && String(msg.to) !== String(currentUserId)) return;
         switch (msg.type) {
             case 'joined':
                 console.log('[ZoomyRTC] Joined room:', msg.roomId, 'Participants:', msg.participants.length);
@@ -397,12 +449,12 @@
         peerConnections.set(userId, pc);
 
         pc.onicecandidate = (event) => {
-            if (event.candidate && ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({
+            if (event.candidate && channel) {
+                sendSignaling({
                     type: 'ice-candidate',
                     to: userId,
                     candidate: event.candidate
-                }));
+                });
             }
         };
 
@@ -434,15 +486,15 @@
         // بعد إنعاش ICE يُطلق المتصفح حدث negotiationneeded — المبادر (الأستاذ)
         // يُرسل عرضاً جديداً لاستعادة الاتصال بنفس الغرفة دون إعادة انضمام
         pc.addEventListener('negotiationneeded', async () => {
-            if (!initiator || !ws || ws.readyState !== 1) return;
+            if (!initiator || !channel) return;
             try {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                ws.send(JSON.stringify({
+                sendSignaling({
                     type: 'offer',
                     to: userId,
                     offer: pc.localDescription
-                }));
+                });
             } catch (e) {
                 console.warn('[ZoomyRTC] renegotiation failed:', e.message);
             }
@@ -461,12 +513,12 @@
             try {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                if (ws && ws.readyState === 1) {
-                    ws.send(JSON.stringify({
+                if (channel) {
+                    sendSignaling({
                         type: 'offer',
                         to: userId,
                         offer: pc.localDescription
-                    }));
+                    });
                 }
             } catch (e) {
                 console.error('[ZoomyRTC] Create offer error:', e.message);
@@ -487,12 +539,12 @@
             await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({
+            if (channel) {
+                sendSignaling({
                     type: 'answer',
                     to: userId,
                     answer: pc.localDescription
-                }));
+                });
             }
         } catch (e) {
             console.error('[ZoomyRTC] Handle offer error:', e.message);
@@ -765,12 +817,12 @@
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) {
             videoTrack.enabled = !videoTrack.enabled;
-            if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({
+            if (channel) {
+                sendSignaling({
                     type: 'toggle-media',
                     kind: 'video',
                     enabled: videoTrack.enabled
-                }));
+                });
             }
             return videoTrack.enabled;
         }
@@ -782,12 +834,12 @@
         const audioTrack = localStream.getAudioTracks()[0];
         if (audioTrack) {
             audioTrack.enabled = !audioTrack.enabled;
-            if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({
+            if (channel) {
+                sendSignaling({
                     type: 'toggle-media',
                     kind: 'audio',
                     enabled: audioTrack.enabled
-                }));
+                });
             }
             return audioTrack.enabled;
         }
@@ -837,8 +889,8 @@
             try { localStream.addTrack(screenTrack); } catch (e) { /* تجاهل */ }
         }
 
-        if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: 'screen-share-start' }));
+        if (channel) {
+            sendSignaling({ type: 'screen-share-start' });
         }
 
         screenStreamRef = screenStream;
@@ -875,26 +927,26 @@
         if (screenStream) {
             screenStream.getTracks().forEach(function (t) { t.stop(); });
         }
-        if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: 'screen-share-stop' }));
+        if (channel) {
+            sendSignaling({ type: 'screen-share-stop' });
         }
     }
 
     function sendChatMessage(text, displayName) {
-        if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({
+        if (channel) {
+            sendSignaling({
                 type: 'chat-message',
                 text: text,
                 sender: displayName || currentUserId,
                 timestamp: Date.now()
-            }));
+            });
         }
     }
 
     function sendSyncData(toUserId) {
         // إرسال حالة المزامنة (شامل المسار الحالي والوسائط)
-        if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({
+        if (channel) {
+            sendSignaling({
                 type: 'sync-data',
                 to: toUserId,
                 data: {
@@ -903,7 +955,7 @@
                     audioEnabled: localStream?.getAudioTracks()[0]?.enabled ?? true
                 },
                 timestamp: Date.now()
-            }));
+            });
         }
     }
 
@@ -936,9 +988,10 @@
             localStream = null;
         }
 
-        if (ws) {
-            ws.close();
-            ws = null;
+        if (channel) {
+            try { channel.unbind_all(); } catch (e) { /* تجاهل */ }
+            try { if (pusher) pusher.unsubscribe(channel.name); } catch (e) { /* تجاهل */ }
+            channel = null;
         }
 
         currentRoom = null;

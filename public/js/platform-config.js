@@ -1,16 +1,18 @@
 // ============================================================
-// ZoomDz — إعدادات المنصة المشتركة (وضع الهجّين: Vercel للواجهة + Render للخادم)
+// ZoomDz — إعدادات المنصة المشتركة (Vercel للواجهة والـ APIs + Pusher للحظية)
 // ------------------------------------------------------------
 // - على الخادم نفسه (Render / localhost): كل شيء بنفس الأصل — لا تغيير إطلاقاً.
-// - على Vercel: الواجهة الثابتة تُخدَم من هنا بسرعة، بينما تُوجَّه
-//   طلبات /api تلقائياً إلى Render عبر إعادة الكتابة في vercel.json،
-//   ويجب توجيه اتصال WebSocket (إشارة WebRTC والبث) صراحةً إلى Render
-//   لأن إعادة كتابة Vercel لا تمرّر اتصالات WebSocket (Upgrade).
+// - على Vercel: كل شيء (ثابت + APIs) من Vercel، والإشارة اللحظية عبر Pusher.
+// - خدمة Render موقوفة: التحويل إليها معطّل افتراضياً (useRenderUploads).
 // ============================================================
 (function () {
     'use strict';
 
     var RENDER_ORIGIN = 'https://chatvidio.onrender.com';
+    //  ⚠️ معطّل افتراضياً: Render موقوف — الرفع يذهب إلى نفس أصل Vercel.
+    //  (حد Vercel لحجم الطلب4.5MB — الصور مضغوطة في المتصفح قبل الرفع.)
+    //  فعّله يدوياً هنا فقط بعد استئناف خدمة Render.
+    var useRenderUploads = false;
     var host = (window.location && window.location.hostname) || '';
     var onPlatformHost =
         host === '' ||
@@ -22,21 +24,20 @@
     window.ZoomDzConfig.renderOrigin = RENDER_ORIGIN;
     // true = الواجهة مخدومة من نفس خادم المنصة (Render/محلي) → نفس الأصل
     window.ZoomDzConfig.servedByRender = onPlatformHost;
+    window.ZoomDzConfig.useRenderUploads = useRenderUploads;
 
-    // خادم إشارات WebRTC والبث والدردشة اللحظية.
-    // نص فارغ = "نفس الأصل" (سلوك webrtc.js الافتراضي دون أي تغيير).
-    // على Vercel نحدّد Render صراحةً حتى تعمل الغرف والبث مباشرة.
-    window.SIGNALING_SERVER_URL = onPlatformHost ? '' : RENDER_ORIGIN;
+    //  إشارة WebRTC لم تعد عبر WebSocket خادم المنصة — بل عبر Pusher.com
+    //  (نص فارغ = نفس الأصل، وwebrtc.js يبني عميل Pusher مباشرة).
+    window.SIGNALING_SERVER_URL = '';
 
     // ============================================================
-    // ✅ رفع الملفات (FormData) يذهب مباشرة إلى Render
-    //    لأن Vercel يحدّ حجم طلب الدالة بـ 4.5MB كحد أقصى،
-    //    بينما منصتنا تسمح برفع حتى 50MB (منشورات/باقات/مستندات).
-    //    كل طلبات النصوص (JSON) تبقى عبر دالة Vercel لتوفير عرض النطاق على Render.
+    // ✅ رفع الملفات (FormData) — فقط عند تفعيل useRenderUploads
+    //    (Vercel يحدّ حجم طلب الدالة بـ4.5MB، ومنصتنا تسمح برفع حتى50MB
+    //     عبر Render عند تشغيله — وإلا يبقى الرفع في نفس أصل Vercel).
     // ============================================================
     (function () {
         try {
-            if (onPlatformHost || typeof window.fetch !== 'function' || typeof FormData === 'undefined') return;
+            if (!useRenderUploads || onPlatformHost || typeof window.fetch !== 'function' || typeof FormData === 'undefined') return;
             var origFetch = window.fetch.bind(window);
             window.fetch = function (input, init) {
                 try {

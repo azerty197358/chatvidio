@@ -1065,9 +1065,13 @@ router.get('/streams-overview', authenticate, authorize(['admin']), async (req, 
             activeRows = aRows || [];
         }
 
-        // 5️⃣ الغرف الحية عبر خادم الإشارات WebRTC (غرف بصيغة offer_<id>)
+        // 5️⃣ الغرف الحية عبر Pusher (قنوات presence-room- المشغولة بصيغة offer_<id>)
         let roomsSnapshot = [];
-        try { roomsSnapshot = getRoomsSnapshot(); } catch (e) { /* خادم الإشارات غير مفعّل */ }
+        try {
+            const snap = getRoomsSnapshot();
+            roomsSnapshot = (snap && typeof snap.then === 'function') ? (await snap) : snap;
+            if (!Array.isArray(roomsSnapshot)) roomsSnapshot = [];
+        } catch (e) { /* خدمة Pusher غير متاحة — يُعتمد على active_stream */ }
         const roomsByOffer = {};
         for (const r of roomsSnapshot) {
             const m = /^offer_(\d+)/.exec(r.room_id);

@@ -1,23 +1,21 @@
 // ============================================================
-// ZoomDz — دالة Vercel (الهجين: Vercel للـ APIs + Render للإشارات والحالة)
+// ZoomDz — دالة Vercel (نظام هجين: Vercel للواجهة والـ APIs + Pusher للحظية)
 // ------------------------------------------------------------
-// تستضيف تطبيق Express كاملاً (كل الـ APIs النصية: تسجيل، دخول، بيانات، نصوص)
-// لتستفيد من اشتراك Vercel المدفوع وتخفيف عرض النطاق عن Render.
+// تستضيف تطبيق Express كاملاً (كل الـ APIs النصية + مسارات SSR).
 //
-// يُمرَّر إلى Render (خادم الإشارات والحالة — نصوص خفيفة جداً):
-//   • /api/auth/*          رموز الاستعادة ومحاولات الدخول (ذاكرة عاملة واحدة)
-//   • /api/stream/*        حالة البث والدردشة والنبضات والعدّادات
-//   • /api/wallet/*        روابط الدفع تعتمد على مضيف الخادم
-//   • /api/room/*          معلومات غرف الإشارة
-//   • /api/teacher/request-withdraw-otp و /api/teacher/withdraw-request (رمز السحب)
-//
-// قبل ضبط متغيرات قاعدة البيانات على Vercel تمرّ كل الطلبات إلى Render
-// (السلوك الحالي) — وعند إضافتها تبدأ الدالة بالعمل تلقائياً دون إعادة نشر.
+//  ⚠️ خدمة Render موقوفة — التوجيه إليها معطّل افتراضياً:
+//  • RENDER_API_PROXY=1 يعيد التوجيه إلى Render تلقائياً لو عادت الخدمة.
+//  • الإشارة اللحظية (WebRTC) والدردشة الحية عبر Pusher.com بلا WebSocket.
+//  • مسارات SSR تصل هنا عبر علامة __ssr في إعادة الكتابة (vercel.json).
 // ============================================================
 const https = require('https');
 const { URL } = require('url');
 
 const RENDER_ORIGIN = process.env.RENDER_API_ORIGIN || 'https://chatvidio.onrender.com';
+
+//  التوجيه إلى Render معطّل افتراضياً (الخدمة موقوفة والأنظمة عبر Pusher) —
+//  فعّله صراحةً بـ RENDER_API_PROXY=1 فقط لو أُعيد تشغيل الخدمة لاحقاً
+const USE_RENDER_PROXY = process.env.RENDER_API_PROXY === '1';
 
 let app = null;
 function getApp() {
@@ -34,8 +32,9 @@ const HAS_DB = !!(
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// المسارات التي يجب أن تبقى على Render (حالة في ذاكرة عاملة واحدة)
+// المسارات التي تُمرَّر إلى Render (حالة في ذاكرة عاملة واحدة) — عند تفعيل البروكسي فقط
 function needsRender(pathname) {
+    if (!USE_RENDER_PROXY) return false;
     if (/^\/api\/auth(\/|$)/.test(pathname)) return true;                 // روابط جوجل (نطاق الإعادة يعتمد على المضيف)
     if (/^\/api\/stream(\/|$)/.test(pathname)) return true;                // حالة البث والدردشة والنبضات والعدّادات
     if (/^\/api\/wallet(\/|$)/.test(pathname)) return true;                // روابط الدفع تعتمد على مضيف الخادم
@@ -102,25 +101,30 @@ function proxyToRender(req, res) {
 }
 
 module.exports = (req, res) => {
-    // ضمان أن المسار يبدأ بـ /api (دوال Vercel قد تحذف البادئة)
     try {
-        if (typeof req.url === 'string' && req.url.indexOf('/api') !== 0) {
+        if (typeof req.url !== 'string') req.url = '/';
+        //  مسارات SSR (sitemap.xml / صفحات الاستعادة...) تصل عبر إعادة الكتابة
+        //  بعلامة __ssr — نزيّلها ونترك المسار كما هو دون فرض بادئة /api
+        if (req.url.indexOf('/api/__ssr/') === 0) {
+            req.url = req.url.substring('/api/__ssr'.length) || '/';
+        } else if (req.url.indexOf('/api') !== 0) {
+            // ضمان أن المسار يبدأ بـ /api (دوال Vercel قد تحذف البادئة)
             req.url = '/api' + req.url;
         }
     } catch (e) {}
 
-    // قبل ضبط متغيرات قاعدة البيانات على Vercel: كل شيء يمر إلى Render (السلوك الحالي)
-    if (!HAS_DB) {
+    //  وضع قديم فقط عند تفعيل RENDER_API_PROXY وغياب متغيرات قاعدة البيانات
+    if (USE_RENDER_PROXY && !HAS_DB) {
         return proxyToRender(req, res);
     }
 
     const pathname = String(req.url || '').split('?')[0];
 
-    // المسارات ذات الحالة تبقى على Render
+    // المسارات ذات الحالة إلى Render (عند تفعيل البروكسي فقط — وافتراضياً معطّل)
     if (needsRender(pathname)) {
         return proxyToRender(req, res);
     }
 
-    // بقية الـ APIs تعمل على Vercel مباشرة
+    // بقية الـ APIs و SSR تعمل على Vercel مباشرة
     return getApp()(req, res);
 };

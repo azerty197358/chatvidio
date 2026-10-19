@@ -1794,7 +1794,9 @@ const csrfExcludedPaths = [
     '/api/subscribe',
     '/api/groups',
     '/api/group',
-    '/api/ai'
+    '/api/ai',
+    //  مصادقة قنوات Pusher محمية بـ Bearer JWT (لا تعتمد على كوكيز الجلسة)
+    '/api/pusher'
 ];
 
 app.use((req, res, next) => {
@@ -2164,6 +2166,7 @@ const supportRoutes = require('./routes/support');
 const referralRoutes = require('./routes/referral');
 const walletRoutes = require('./routes/wallet');
 const adsRoutes = require('./routes/ads');
+const pusherRoutes = require('./routes/pusher');
 const notificationRoutes = require('./routes/notification');
 const courseRoutes = require('./routes/course');
 const groupRoutes = require('./routes/group');
@@ -2207,6 +2210,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/referral', referralRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/ads', adsRoutes);
+app.use('/api/pusher', pusherRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api', blogRoutes);
 
@@ -4937,6 +4941,15 @@ async function ensureProfilesBucket() {
 // ============================================================
 
 module.exports = app;
+
+//  على Vercel لا توجد عملية listen — نُشغّل المهام الدورية مع تحميل الوحدة
+//  (الوظيفة الرئيسية تُعاد تسخينها وتبقى دافئة؛ العمليات تكرارية آمنة
+//   لأنها تحديثات قاعدة بيانات متكرّرة التوجّه — تجاهل الدروس المنتهية)
+if (process.env.VERCEL) {
+    try { startOfferCron(); } catch (e) { console.warn('offer cron:', e.message); }
+    try { startCleanupCron(); } catch (e) { console.warn('cleanup cron:', e.message); }
+    try { startVipExpiryCron(); } catch (e) { console.warn('vip cron:', e.message); }
+}
 
 if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
     const httpServer = app.listen(PORT, '0.0.0.0', () => {
