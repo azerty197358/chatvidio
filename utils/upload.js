@@ -213,6 +213,11 @@ function getPublicImageUrl(bucketName, folder, fileName) {
         if (cleanFileName.endsWith('/null') || cleanFileName.endsWith('/undefined') || cleanFileName.endsWith('/NULL')) {
             return null;
         }
+        // 📉 رابط تخزين Supabase كامل محفوظ في قاعدة البيانات → مرّره عبر الوسيط
+        //    المخزّن في حافة Vercel (نفس توفير Egress كما في بناء الرابط أدناه)
+        if (cleanFileName.includes('/storage/v1/object/public/')) {
+            return `/api/proxy-image?url=${encodeURIComponent(cleanFileName)}`;
+        }
         return encodeURI(cleanFileName);
     }
 

@@ -333,6 +333,32 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
+// 📉 تمرير روابط Supabase Storage في كل ردود JSON عبر الوسيط المخزّن
+//    (/api/proxy-image ذي كاش حافة Vercel ليوم كامل): تنزيل واحد لكل صورة
+//    من Supabase بدل تنزيل مع كل زيارة صفحة — يغطي كل المسارات دفعة واحدة
+//    بغضّ النظر عن مصدر بناء الرابط (حتى لو كان رابطاً كاملاً محفوظاً في قاعدة البيانات).
+//    إعادة البناء عبر stringify/parse تُنتج أجساماً جديدة فلا تُعدَّل أي نسخة
+//    مخزَّنة في الذاكرة، والتحويل لا-خطي (رابط الوسيط المُرمَّز لا يطابق النمط مجدداً).
+// ============================================================
+const SUPABASE_STORAGE_URL_RE = /https?:\/\/[^"'\\\s]+\/storage\/v1\/object\/public\/[^"'\\\s]+/g;
+app.use((req, res, next) => {
+    const reqPath = req.path || '';
+    if (reqPath.indexOf('/api/') !== 0) return next();
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+        try {
+            const text = JSON.stringify(body);
+            if (typeof text === 'string' && text.indexOf('/storage/v1/object/public/') !== -1) {
+                const rewritten = text.replace(SUPABASE_STORAGE_URL_RE, (m) => '/api/proxy-image?url=' + encodeURIComponent(m));
+                return originalJson(JSON.parse(rewritten));
+            }
+        } catch (e) { /* عند أي خطأ نرسل الجسم الأصلي كما هو */ }
+        return originalJson(body);
+    };
+    next();
+});
+
+// ============================================================
 // ✅ خريطة الموقع (Sitemap) الديناميكية — مسجّلة قبل الملفات الثابتة
 //    حتى لا يقدّم الملف الثابت روابط الصفحات الخاصة
 //    (admin / reset-password / logs / dashboards) لمحركات البحث
