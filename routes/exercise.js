@@ -37,13 +37,14 @@ router.post('/get-signed-upload-url', authenticate, authorize(['teacher']), asyn
 // 1. جلب قائمة التمارين والحلول (تطبيق الفلترة، البحث، والمحفوظات)
 // ============================================================
 router.get('/', optionalAuth, async (req, res) => {
+    // تُعلن خارج try ليبتعد أيضاً عنها معالج الأخطاء (abandon) — وإلا يبقى
+    // انتظار الكاش مسجلاً للأبد وتتوقف كل الطلبات اللاحقة لهذا المفتاح
+    const { level, search, saved_only } = req.query;
+    const currentUserId = req.user ? (req.user.userId || req.user.id) : null;
+    const currentUserType = req.user ? req.user.role : null;
+    const cacheKey = `exercises:${level || ''}:${search || ''}:${saved_only || ''}:${currentUserId || ''}`;
     try {
-        const { level, search, saved_only } = req.query;
-        const currentUserId = req.user ? (req.user.userId || req.user.id) : null;
-        const currentUserType = req.user ? req.user.role : null;
-
         // one query serves every visitor that asks in the same window
-        const cacheKey = `exercises:${level || ''}:${search || ''}:${saved_only || ''}:${currentUserId || ''}`;
         const cached = memoryCache.get(cacheKey);
         if (cached) {
             res.setHeader('Cache-Control', 'public, max-age=20');
@@ -53,16 +54,23 @@ router.get('/', optionalAuth, async (req, res) => {
         }
 
         // another request is already loading this exact list: wait for it
-        // instead of hammering the database a second time
+        // instead of hammering the database a second time — لكن بمهلة قصوى:
+        // طلب مالك عالق (لم يُنهِ كاشه) لا يحقّ لكل الطلبات اللاحقة التجمّد
         const joined = memoryCache.join(cacheKey);
         if (joined) {
             try {
-                const value = await joined;
+                const value = await new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('join-timeout')), 9000);
+                    joined.then(
+                        v => { clearTimeout(timer); resolve(v); },
+                        e => { clearTimeout(timer); reject(e); }
+                    );
+                });
                 res.setHeader('Cache-Control', 'public, max-age=20');
                 return res.json(value);
-            } catch (e) { /* the shared load failed, do it ourselves */ }
+            } catch (e) { /* the shared load failed or stalled: do it ourselves */ }
         }
-        const owns = memoryCache.track(cacheKey);
+        memoryCache.track(cacheKey);
 
         // جلب التمارين المحفوظة إذا كان الطالب يطلب المحفوظات فقط
         let savedExerciseIds = [];
@@ -82,14 +90,19 @@ router.get('/', optionalAuth, async (req, res) => {
             }
 
             if (savedExerciseIds.length === 0) {
+                // publish بدل return مجرّد: وإلا يبقى منتظِر الكاش مسجلاً
+                // للأبد وتبدأ كل طلبات هذا المستخدم في انتظار وعد لا يتحقق
+                memoryCache.publish(cacheKey, [], 20);
                 return res.json([]);
             }
         }
 
-        // بناء استعلام Supabase
+        // بناء استعلام Supabase — أعمدة مطلوبة فقط (لا select('*')):
+        // صور التمارين (حتى 10 لكل منشور) كانت تُسحب مع كل الأعمدة فتضخّم
+        // الاستجابة وتبطّئها حتى التعليق
         let query = supabase
             .from('exercise_posts')
-            .select('*')
+            .select('id, teacher_id, title, description, education_level, subject_name, images, external_link, classification, views_count, created_at')
             .order('created_at', { ascending: false })
             // was unbounded: one busy table could ship thousands of rows
             .limit(300);
@@ -98,7 +111,18 @@ router.get('/', optionalAuth, async (req, res) => {
             query = query.in('id', savedExerciseIds);
         }
 
-        const { data: rawExercises, error } = await query;
+        // مهلة قصوى 8 ثوانٍ: supabase-js لا يضع مهلة افتراضية للاستعلام،
+        // وكان طلب واحد بطيء يعلّق الدالة 30 ثانية ثم — بتسجيل المنتظِر —
+        // يُجمّد كل طلب لاحق لنفس المفتاح حتى إعادة التشغيل
+        const listAbort = new AbortController();
+        const listTimer = setTimeout(() => listAbort.abort(), 8000);
+        let listResult;
+        try {
+            listResult = await query.abortSignal(listAbort.signal);
+        } finally {
+            clearTimeout(listTimer);
+        }
+        const { data: rawExercises, error } = listResult;
 
         if (error && error.code !== 'PGRST116') {
             logger.warn('⚠️ تعذر جلب التمارين من Supabase: ' + error.message);
@@ -227,6 +251,9 @@ router.get('/', optionalAuth, async (req, res) => {
 
         res.json(paginated);
     } catch (err) {
+        // حرّر منتظِر الكاش قبل الرد — وإلا يبقى المفتاح مسجلاً وتتجمّد
+        // كل طلبات هذا المسار اللاحقة على نفس المفتاح
+        memoryCache.abandon(cacheKey);
         logger.error('❌ خطأ في جلب التمارين والحلول:', err.message);
         res.status(500).json({ success: false, error: err.message, stack: err.stack });
     }
