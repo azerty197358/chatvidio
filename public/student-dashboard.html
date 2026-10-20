@@ -11723,7 +11723,12 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         const docs = [];
         files.forEach(fileUrl => {
             if (!fileUrl) return;
-            const cleanUrl = fileUrl.split('?')[0].toLowerCase();
+            // روابط الوسيط (/api/proxy-image?url=...) تحمل الرابط الأصلي مرمزاً —
+            // نفكّ الترميز قبل فحص الامتداد حتى لا تُعرض الصورة كملف مستند
+            const sourceUrl = fileUrl.indexOf('proxy-image?url=') !== -1
+                ? decodeURIComponent(fileUrl.split('url=')[1] || '')
+                : fileUrl;
+            const cleanUrl = sourceUrl.split('?')[0].toLowerCase();
             const isImage = cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.gif') || cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.svg');
             if (isImage) images.push(fileUrl);
             else docs.push(fileUrl);

@@ -344,15 +344,26 @@ const SUPABASE_STORAGE_URL_RE = /https?:\/\/[^"'\\\s]+\/storage\/v1\/object\/pub
 app.use((req, res, next) => {
     const reqPath = req.path || '';
     if (reqPath.indexOf('/api/') !== 0) return next();
+    // عرض فقط (GET): ردود الإنشاء/الرفع لا تُعاد كتابتها حتى لا يحفظ العميل
+    // روابط الوسيط في قاعدة البيانات بدلاً من الروابط الأصلية
+    if (req.method !== 'GET') return next();
     const originalJson = res.json.bind(res);
     res.json = (body) => {
         try {
             const text = JSON.stringify(body);
             if (typeof text === 'string' && text.indexOf('/storage/v1/object/public/') !== -1) {
-                const rewritten = text.replace(SUPABASE_STORAGE_URL_RE, (m) => '/api/proxy-image?url=' + encodeURIComponent(m));
+                let count = 0;
+                const rewritten = text.replace(SUPABASE_STORAGE_URL_RE, (m) => {
+                    count++;
+                    return '/api/proxy-image?url=' + encodeURIComponent(m);
+                });
+                res.setHeader('X-Storage-Rewrite', 'ok:' + count);
                 return originalJson(JSON.parse(rewritten));
             }
-        } catch (e) { /* عند أي خطأ نرسل الجسم الأصلي كما هو */ }
+            res.setHeader('X-Storage-Rewrite', 'none');
+        } catch (e) {
+            res.setHeader('X-Storage-Rewrite', 'err:' + String((e && e.message) || e).slice(0, 60));
+        }
         return originalJson(body);
     };
     next();

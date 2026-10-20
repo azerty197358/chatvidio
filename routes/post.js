@@ -540,7 +540,8 @@ router.get('/', async (req, res) => {
             limit: parsedLimit 
         };
         memoryCache.set(cacheKey, responseData, 20);
-        res.setHeader('Cache-Control', 'public, max-age=15');
+        // عام فقط: رد المصادق مخصّص لكل مستخدم فلا يُخزَّن في حافة Vercel
+        res.setHeader('Cache-Control', userId ? 'private, max-age=0' : 'public, max-age=15');
         res.json(responseData);
     } catch (error) {
         logger.error('❌ خطأ غير متوقع في جلب المنشورات:', error.message);
