@@ -2243,7 +2243,11 @@ const packageRoutes = require('./routes/package');
 const EDGE_CACHE_EXCLUDES = [
     'token', '/auth/', '/login', '/search', '/verify', '/refresh',
     'proxy-image', '/ping', '/subscribe', '/join', 'start', '/logout',
-    '/payment', 'sofizpay', '/callback', '/webhook', '/wallet', '/booking', '/cancel'
+    '/payment', 'sofizpay', '/callback', '/webhook', '/wallet', '/booking', '/cancel',
+    // الإعلانات: /ads/match له أثر جانبي (عدّاد الظهور) ونتيجة مخصصة لكل طالب
+    // (dedupe لكل طالب كل 24 ساعة) — تخزينه عند الحافة كان يعيد نفس الإعلان
+    // المتروك ويمنع ظهور إعلان جديد فور تفعيله
+    '/ads/'
 ];
 
 function edgeCachePublic(ttlSeconds) {

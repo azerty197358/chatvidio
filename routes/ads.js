@@ -129,7 +129,11 @@ router.post('/admin/seasonal', authenticate, authorize(['admin']), async (req, r
 // ------------------------------------------------------------
 router.get('/match', async (req, res) => {
     try {
-        const placement = String(req.query.placement || '');
+        const rawPlacement = String(req.query.placement || '');
+        // 'notification' ليس موضعاً حقيقياً بل نوع الإشعار العلوي — يُطابق من كل
+        // المواضع مع تفضيل الإعلانات ذات النوع notification (وإن كان أي إعلان مناسب)
+        const preferNotificationType = rawPlacement === 'notification';
+        const placement = preferNotificationType ? 'all' : rawPlacement;
         if (!VALID_PLACEMENTS.includes(placement)) {
             return res.json({ success: true, ad: null });
         }
@@ -182,8 +186,15 @@ router.get('/match', async (req, res) => {
             return res.json({ success: true, ad: null });
         }
 
+        // تفضيل نوع notification عند موضع الإشعار العلوي (وإن كان أي إعلان مناسباً)
+        let finalPool = pool;
+        if (preferNotificationType) {
+            const typed = pool.filter(a => a.ad_type === 'notification');
+            finalPool = typed.length > 0 ? typed : pool;
+        }
+
         // تدوير عشوائي عادل بين المطابقين
-        const ad = pool[Math.floor(Math.random() * pool.length)];
+        const ad = finalPool[Math.floor(Math.random() * finalPool.length)];
 
         // تسجيل الظهور (مرة واحدة لكل طالب كل 24 ساعة) — تكميلي لا يُبطل العرض
         if (student && student.userId) {
@@ -446,11 +457,36 @@ router.post('/admin/:id/status', authenticate, authorize(['admin']), async (req,
         const id = parseInt(req.params.id);
         const status = ['active', 'paused', 'pending'].includes(req.body.status) ? req.body.status : 'paused';
         if (!id) return res.status(400).json({ success: false, error: 'معرف غير صالح' });
+
+        // جلب الإعلان قبل التحديث لمعرفة المعلن والحالة السابقة (لإشعاره عند التفعيل)
+        let adRow = null;
+        try {
+            const { data } = await supabase.from('ads').select('advertiser_id, title, status').eq('id', id).maybeSingle();
+            adRow = data;
+        } catch (e) {}
+
         const { error } = await supabase.from('ads').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
         if (error) {
             return res.json({ success: false, error: 'تعذر تحديث الحالة' });
         }
-        res.json({ success: true, message: status === 'active' ? '✅ تم تفعيل الإعلان' : 'تم تحديث الحالة' });
+
+        // ✅ إشعار الأستاذ المعلن فور تفعيل إعلانه (كانت الفجوة: التفعيل يمر دون أي إشعار)
+        if (adRow && adRow.advertiser_id && status === 'active' && adRow.status !== 'active') {
+            try {
+                await supabase.from('notifications').insert({
+                    user_id: adRow.advertiser_id,
+                    user_type: 'teacher',
+                    title: '🎉 تم قبول إعلانك',
+                    message: `إعلانك "${adRow.title || ''}" تمت مراجعته وتم تفعيله الآن — سيظهر للطلاب في مواضع المنصة حسب استهدافه.`,
+                    is_read: false,
+                    created_at: new Date().toISOString()
+                });
+            } catch (notifErr) {
+                logger.warn('تعذر إشعار المعلن بالتفعيل: ' + (notifErr && notifErr.message));
+            }
+        }
+
+        res.json({ success: true, message: status === 'active' ? '✅ تم تفعيل الإعلان وإشعار المعلن' : 'تم تحديث الحالة' });
     } catch (e) {
         res.json({ success: false, error: 'حدث خطأ' });
     }
@@ -467,6 +503,14 @@ router.post('/admin/:id/reject', authenticate, authorize(['admin']), async (req,
         if (!reason) {
             return res.status(400).json({ success: false, error: 'يرجى كتابة سبب الرفض' });
         }
+
+        // جلب الإعلان قبل الرفض لإشعار المعلن بالسبب
+        let adRow = null;
+        try {
+            const { data } = await supabase.from('ads').select('advertiser_id, title').eq('id', id).maybeSingle();
+            adRow = data;
+        } catch (e) {}
+
         const { error } = await supabase
             .from('ads')
             .update({ status: 'rejected', rejection_reason: reason, updated_at: new Date().toISOString() })
@@ -474,7 +518,24 @@ router.post('/admin/:id/reject', authenticate, authorize(['admin']), async (req,
         if (error) {
             return res.json({ success: false, error: 'تعذر رفض الإعلان' });
         }
-        res.json({ success: true, message: 'تم رفض الإعلان وتسجيل السبب' });
+
+        // ✅ إشعار الأستاذ برفض إعلانه وسبب الرفض (يظهر أيضاً في إدارة إعلاناته)
+        if (adRow && adRow.advertiser_id) {
+            try {
+                await supabase.from('notifications').insert({
+                    user_id: adRow.advertiser_id,
+                    user_type: 'teacher',
+                    title: '❌ تم رفض إعلانك',
+                    message: `إعلانك "${adRow.title || ''}" لم يُعتمد. السبب: ${reason} — يمكنك تعديل الإعلان وإعادة إرساله للمراجعة.`,
+                    is_read: false,
+                    created_at: new Date().toISOString()
+                });
+            } catch (notifErr) {
+                logger.warn('تعذر إشعار المعلن بالرفض: ' + (notifErr && notifErr.message));
+            }
+        }
+
+        res.json({ success: true, message: 'تم رفض الإعلان وإشعار المعلن بالسبب' });
     } catch (e) {
         res.json({ success: false, error: 'حدث خطأ' });
     }

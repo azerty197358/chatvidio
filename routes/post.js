@@ -352,7 +352,10 @@ router.get('/', async (req, res) => {
             try {
                 const { data: studentsData } = await supabase
                     .from('students')
-                    .select('id, full_name, name, username, profile_image, profile_url, avatar, avatar_url, education_level, grade')
+                    // select('*') مقصود: النسخة بأعمدة محددة كانت تفشل بالكامل مع
+                    // PostgREST (400) إذا غاب أي عمود مثل name/username/avatar،
+                    // فتُفقد هوية كاتب المنشور ويظهر "طالب المنصة" بدل اسمه وصورته
+                    .select('*')
                     .in('id', studentIds);
 
                 if (studentsData) {
@@ -645,7 +648,8 @@ router.get('/:id', async (req, res) => {
         if (potentialStudentId) {
             const { data: student } = await supabase
                 .from('students')
-                .select('id, full_name, name, username, profile_image, profile_url, avatar, avatar_url, education_level, grade')
+                // select('*') مقصود — نفس سبب التغذية أعلاه (منع سقوط الاستعلام كاملاً)
+                .select('*')
                 .eq('id', potentialStudentId)
                 .maybeSingle();
             if (student) studentObj = student;

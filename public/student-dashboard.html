@@ -534,13 +534,15 @@ function appendOptimisticMessage(text, reply) {
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <script src="/js/platform-config.js"></script>
-    <script src="/js/ads.js?v=1"></script>
+    <script src="/js/ads.js?v=2"></script>
     <script>
         // ✅ تهيئة الإعلانات: إشعار علوي ذكي + مساحة الباقات (مرة واحدة لكل طالب كل 24 ساعة)
         window.addEventListener('DOMContentLoaded', function () {
             if (window.ZoomDzAds) {
                 try { ZoomDzAds.notify(); } catch (e) {}
                 try { ZoomDzAds.renderInto(document.getElementById('studentPackagesAdSlot'), 'packages'); } catch (e) {}
+                try { ZoomDzAds.renderInto(document.getElementById('studentCoursesAdSlot'), 'courses'); } catch (e) {}
+                try { ZoomDzAds.renderInto(document.getElementById('studentLessonsAdSlot'), 'lessons_header'); } catch (e) {}
             }
         });
     </script>
@@ -4876,6 +4878,9 @@ function appendOptimisticMessage(text, reply) {
                 </button>
             </div>
 
+            <!-- ✅ مساحة إعلان ترويسة الدروس (تُملأ بواسطة ads.js — موضع lessons_header) -->
+            <div id="studentLessonsAdSlot" style="margin-bottom: 18px;"></div>
+
             <!-- Search and Filter Bar for Live/Upcoming Offers -->
             <div style="background: white; border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px 18px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between;">
                 <!-- Search Input -->
@@ -5124,6 +5129,8 @@ function appendOptimisticMessage(text, reply) {
                     </optgroup>
                 </select>
             </div>
+            <!-- ✅ مساحة إعلان الدورات (تُملأ بواسطة ads.js — موضع courses) -->
+            <div id="studentCoursesAdSlot" style="margin-bottom: 18px;"></div>
             <div id="coursesList" class="courses-grid"></div>
         </div>
 
