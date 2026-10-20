@@ -112,6 +112,8 @@ router.get('/search', optionalAuth, async (req, res) => {
         const cached = memoryCache.get(cacheKey);
         if (cached) {
             res.setHeader('Cache-Control', 'public, max-age=20');
+            // الرد يحمل is_member حسب هوية المستخدم → فصل مفتاح الكاش عن التوكن
+            if (!currentUserId) res.append('Vary', 'Authorization');
             return res.json(cached);
         }
 
@@ -207,6 +209,8 @@ router.get('/search', optionalAuth, async (req, res) => {
 
         memoryCache.set(cacheKey, enriched, 20);
         res.setHeader('Cache-Control', 'public, max-age=20');
+        // is_member محسوب من هوية المستخدم → فصل مفتاح الكاش العام عن التوكن
+        if (!currentUserId) res.append('Vary', 'Authorization');
         res.json(enriched);
     } catch (error) {
         console.error('Error searching groups:', error);

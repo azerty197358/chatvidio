@@ -47,6 +47,8 @@ router.get('/', optionalAuth, async (req, res) => {
         const cached = memoryCache.get(cacheKey);
         if (cached) {
             res.setHeader('Cache-Control', 'public, max-age=20');
+            // is_saved خاص بكل مستخدم → فصل مفتاح الكاش العام عن التوكن
+            if (!currentUserId) res.append('Vary', 'Authorization');
             return res.json(cached);
         }
 
@@ -209,6 +211,8 @@ router.get('/', optionalAuth, async (req, res) => {
 
         memoryCache.publish(cacheKey, paginated, 20);
         res.setHeader('Cache-Control', 'public, max-age=20');
+        // is_saved خاص بكل مستخدم → فصل مفتاح الكاش العام عن التوكن
+        if (!currentUserId) res.append('Vary', 'Authorization');
 
         if (req.query.paginated === 'true' || req.query.page || req.query.limit) {
             return res.json({

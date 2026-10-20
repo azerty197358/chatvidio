@@ -7131,7 +7131,14 @@ function appendOptimisticMessage(text, reply) {
         const sizeStr = fileSize ? formatFileSize(fileSize) : '';
 
         // التحقق مما إذا كان المرفق صورة لعرضها بشكل مرئي وفوري بجودة عالية
-        const isImage = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|heic|avif)(\?.*)?$/i.test(fileUrl) || 
+        // روابط الوسيط (/api/proxy-image?url=...) تحمل الرابط الأصلي مرمزاً داخل
+        // معلّم url — نفكّ الترميز ونفحص الامتداد على الرابط الأصلي، وإلا
+        // عُرضت كل صورة رسالة كملف مستند (ويظهر فقط /api/proxy-image)
+        const effectiveUrl = (fileUrl.indexOf('proxy-image?url=') !== -1)
+            ? (function () { try { return decodeURIComponent(fileUrl.split('url=')[1] || ''); } catch (e) { return fileUrl; } })()
+            : fileUrl;
+        const isImage = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|heic|avif)(\?.*)?$/i.test(effectiveUrl) ||
+                        /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|heic|avif)$/i.test(effectiveUrl) ||
                         /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|heic|avif)$/i.test(fileName || '') ||
                         fileUrl.startsWith('data:image/');
 

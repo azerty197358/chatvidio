@@ -262,7 +262,10 @@ router.get('/', async (req, res) => {
         const cachedResult = memoryCache.get(cacheKey);
         if (cachedResult) {
             // 📉 عام → حافة Vercel15 ثانية | مصادق → خاص (لا يُخزَّن في أي كاش مشترك)
+            // Vary: Authorization ضروري — بدونه قد يقدّم الحافة ردّ الزائر
+            // المخزّن إلى طالب مصادَق (تختفي إعجاباته ومحفوظاته الشخصية)
             res.setHeader('Cache-Control', userId ? 'private, max-age=0' : 'public, max-age=15, s-maxage=15');
+            if (!userId) res.append('Vary', 'Authorization');
             return res.json(cachedResult);
         }
 
@@ -544,7 +547,10 @@ router.get('/', async (req, res) => {
         };
         memoryCache.set(cacheKey, responseData, 20);
         // عام فقط: رد المصادق مخصّص لكل مستخدم فلا يُخزَّن في حافة Vercel
+        // Vary: Authorization ضروري — بدونه قد يخزّن الحافة ردّ الزائر
+        // ويقدّمه لطالب مصادَق (تختفي إعجاباته ومحفوظاته الشخصية)
         res.setHeader('Cache-Control', userId ? 'private, max-age=0' : 'public, max-age=15');
+        if (!userId) res.append('Vary', 'Authorization');
         res.json(responseData);
     } catch (error) {
         logger.error('❌ خطأ غير متوقع في جلب المنشورات:', error.message);
