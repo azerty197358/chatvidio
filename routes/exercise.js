@@ -11,6 +11,101 @@ const { getOne, insert, remove, update } = require('../utils/helpers');
 const { uploadToSupabase } = require('../utils/upload');
 const logger = require('../utils/logger');
 const memoryCache = require('../utils/cache');
+const sharp = require('sharp');
+
+// ============================================================
+// ترحيل صور base64 المخزّنة داخل قاعدة البيانات إلى التخزين
+// بعض المنتورات القديمة تحفظ الصور كـ data URLs داخل عمود
+// images (حتى 2.8MB للصورة الواحدة) — كل تحميل لصفحة التمارين
+// كان يسحب 10MB ويبطّئ اللوحة كاملة. تُرفع الصورة مرة واحدة
+// إلى bucket exercises ثم يُحفظ الرابط مكان البيانات.
+// ============================================================
+const _migratingExerciseIds = new Set();
+
+// يرفع أي data URLs في المصفوفة إلى bucket exercises ويعيد مصفوفة الروابط
+async function migrateImageListToStorage(imagesList) {
+    const migrated = [];
+    let changed = false;
+    for (const img of imagesList) {
+        if (typeof img !== 'string' || !img.startsWith('data:')) {
+            migrated.push(img);
+            continue;
+        }
+        const match = img.match(/^data:(image\/[a-z+]+);base64,([A-Za-z0-9+/=\s]+)$/);
+        if (!match) { migrated.push(img); continue; }
+
+        const buffer = Buffer.from(match[2], 'base64');
+        if (buffer.length === 0 || buffer.length > 12 * 1024 * 1024) {
+            migrated.push(img);
+            continue;
+        }
+
+        // ضغط محافظ: حتى 1500px وجودة 72 تكفي لقراءة الصور عند التكبير
+        let outBuffer = buffer;
+        let contentType = match[1];
+        try {
+            let pipeline = sharp(buffer).rotate().flatten({ background: '#ffffff' });
+            const meta = await pipeline.metadata();
+            const largest = Math.max(meta.width || 0, meta.height || 0);
+            if (largest > 1500) {
+                pipeline = pipeline.resize({ width: 1500, height: 1500, fit: 'inside', withoutEnlargement: true });
+            }
+            outBuffer = await pipeline.jpeg({ quality: 72, progressive: true }).toBuffer();
+            contentType = 'image/jpeg';
+        } catch (sharpErr) {
+            // نرفع الأصل كما هو إن تعذر الضغط
+        }
+
+        const ext = contentType === 'image/png' ? 'png' : 'jpg';
+        const filePath = `migrated/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error: upErr } = await supabase.storage
+            .from('exercises')
+            .upload(filePath, outBuffer, { contentType: contentType, cacheControl: '86400' });
+        if (upErr) {
+            logger.warn('تعذر رفع صورة base64 إلى التخزين: ' + upErr.message);
+            migrated.push(img);
+            continue;
+        }
+        const { data: pub } = supabase.storage.from('exercises').getPublicUrl(filePath);
+        migrated.push((pub && pub.publicUrl) || img);
+        changed = true;
+    }
+    return { list: migrated, changed: changed };
+}
+
+async function migrateBase64ExerciseImages(row) {
+    try {
+        if (!row || row.id == null || _migratingExerciseIds.has(row.id)) return row;
+
+        let imagesList = [];
+        if (Array.isArray(row.images)) {
+            imagesList = row.images;
+        } else if (typeof row.images === 'string') {
+            try { imagesList = JSON.parse(row.images); } catch (e) { return row; }
+        }
+        if (!Array.isArray(imagesList) || !imagesList.some(im => typeof im === 'string' && im.startsWith('data:'))) {
+            return row;
+        }
+
+        _migratingExerciseIds.add(row.id);
+        try {
+            const { list, changed } = await migrateImageListToStorage(imagesList);
+            if (changed) {
+                const { error: updErr } = await supabase
+                    .from('exercise_posts')
+                    .update({ images: JSON.stringify(list) })
+                    .eq('id', row.id);
+                if (!updErr) row.images = list;
+            }
+        } finally {
+            _migratingExerciseIds.delete(row.id);
+        }
+        return row;
+    } catch (e) {
+        logger.warn('تعذر ترحيل صور base64 للتمرين ' + (row && row.id) + ': ' + e.message);
+        return row;
+    }
+}
 
 // ============================================================
 // 1.5. رفع ملف PDF (للأساتذة فقط)
@@ -159,6 +254,10 @@ router.get('/', optionalAuth, async (req, res) => {
         }
 
         let exercises = Array.isArray(rawExercises) ? rawExercises : [];
+
+        // ترحيل أي صور base64 قديمة إلى التخزين — مرة واحدة لكل منشور
+        // ثم تُحفظ الروابط فيتخفّض حجم الاستجابة من 10MB إلى كيلوبايتات
+        await Promise.all(exercises.map(exRow => migrateBase64ExerciseImages(exRow)));
 
         // جلب معلومات الأساتذة المقترنين بالتمارين
         const teacherIds = [...new Set(exercises.map(e => e.teacher_id).filter(Boolean))];
@@ -327,6 +426,9 @@ router.get('/:id', optionalAuth, async (req, res) => {
             return res.status(404).json({ error: 'منشور التمارين والحلول غير موجود' });
         }
 
+        // ترحيل صورة base64 قديمة إلى التخزين إن وُجدت (مرة واحدة)
+        await migrateBase64ExerciseImages(exercise);
+
         // زيادة عداد المشاهدات
         try {
             await supabase
@@ -416,13 +518,16 @@ router.post('/', authenticate, [
             imagesArray = [images];
         }
 
+        // صور base64 تُرفع فوراً إلى التخزين — لا تُخزَّن بيانات ضخمة داخل قاعدة البيانات
+        const { list: postSafeImages } = await migrateImageListToStorage(imagesArray);
+
         const newExerciseData = {
             teacher_id: req.user.userId || req.user.id,
             title: title.trim(),
             description: (description || '').trim(),
             education_level: education_level.trim(),
             subject_name: (subject_name || '').trim() || 'عام',
-            images: JSON.stringify(imagesArray),
+            images: JSON.stringify(postSafeImages),
             external_link: (external_link || '').trim() || null,
             likes_count: 0,
             views_count: 0,
@@ -505,12 +610,15 @@ router.put('/:id', authenticate, [
             externalLink = 'https://' + externalLink;
         }
 
+        // صور base64 تُرفع فوراً إلى التخزين — لا تُخزَّن بيانات ضخمة داخل قاعدة البيانات
+        const { list: putSafeImages } = await migrateImageListToStorage(imagesArray);
+
         const updatedData = {
             title: title.trim(),
             description: (description || '').trim(),
             education_level: education_level.trim(),
             subject_name: (subject_name || '').trim() || 'عام',
-            images: JSON.stringify(imagesArray),
+            images: JSON.stringify(putSafeImages),
             external_link: (externalLink || '').trim() || null,
             updated_at: new Date().toISOString(),
             classification: (classification || 'تمرين').trim()
