@@ -342,8 +342,11 @@ app.use((req, res, next) => {
 // ============================================================
 const SUPABASE_STORAGE_URL_RE = /https?:\/\/[^"'\\\s]+\/storage\/v1\/object\/public\/[^"'\\\s]+/g;
 app.use((req, res, next) => {
+    global.__rwRuns = (global.__rwRuns || 0) + 1;
+    global.__rwLastPath = req.path || '';
     const reqPath = req.path || '';
     if (reqPath.indexOf('/api/') !== 0) return next();
+    global.__rwArmed = true;
     // عرض فقط (GET): ردود الإنشاء/الرفع لا تُعاد كتابتها حتى لا يحفظ العميل
     // روابط الوسيط في قاعدة البيانات بدلاً من الروابط الأصلية
     if (req.method !== 'GET') return next();
@@ -367,6 +370,20 @@ app.use((req, res, next) => {
         return originalJson(body);
     };
     next();
+});
+
+// ── تشخيص مباشر: هل وسيط إعادة الكتابة يعمل على النشر الفعلي؟ ──
+app.get('/api/__rw-probe', (req, res) => {
+    res.json({
+        ok: true,
+        probePath: req.path,
+        probeUrl: req.url,
+        armed: global.__rwArmed === true,
+        runs: global.__rwRuns || 0,
+        lastPath: global.__rwLastPath || '',
+        nodeEnv: process.env.NODE_ENV || '',
+        probe: 'probe-v2'
+    });
 });
 
 // ============================================================
