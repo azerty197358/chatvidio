@@ -102,7 +102,8 @@ router.get('/', optionalAuth, async (req, res) => {
         // الاستجابة وتبطّئها حتى التعليق
         let query = supabase
             .from('exercise_posts')
-            .select('id, teacher_id, title, description, education_level, subject_name, images, external_link, classification, views_count, created_at')
+            // views_count غير موجود فعلياً في الجدول — ذكره يُفشل الاستعلام
+            .select('id, teacher_id, title, description, education_level, subject_name, images, external_link, classification, created_at')
             .order('created_at', { ascending: false })
             // was unbounded: one busy table could ship thousands of rows
             .limit(300);
@@ -121,6 +122,27 @@ router.get('/', optionalAuth, async (req, res) => {
             listResult = await query.abortSignal(listAbort.signal);
         } finally {
             clearTimeout(listTimer);
+        }
+
+        // إن كان لدى الجدول أعمدة قديمة ناقصة (exercise_posts.views_count
+        // مثلاً غير موجودة فعلياً) نعود إلى select('*') مع نفس المهلة
+        if (listResult.error && /column|PGRST204/i.test(listResult.error.message || '')) {
+            logger.warn('⚠️ أعمدة ضيقة غير متاحة على exercise_posts، الرجوع إلى select(*): ' + listResult.error.message);
+            let fallbackQuery = supabase
+                .from('exercise_posts')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(300);
+            if (saved_only === 'true' && savedExerciseIds.length > 0) {
+                fallbackQuery = fallbackQuery.in('id', savedExerciseIds);
+            }
+            const fbAbort = new AbortController();
+            const fbTimer = setTimeout(() => fbAbort.abort(), 8000);
+            try {
+                listResult = await fallbackQuery.abortSignal(fbAbort.signal);
+            } finally {
+                clearTimeout(fbTimer);
+            }
         }
         const { data: rawExercises, error } = listResult;
 
