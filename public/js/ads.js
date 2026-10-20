@@ -132,6 +132,15 @@ window.ZoomDzAds = (function () {
         var ad = await match('notification');
         if (!ad) return;
 
+        // الصورة إن وُجدت تُعرض أعلى الشريط (يجب أن يظهر الإعلان مع صورته)
+        var barImage = '';
+        if (ad.image_url) {
+            barImage = '<img src="' + esc(ad.image_url) + '" alt="' + esc(ad.title)
+                + '" loading="lazy" decoding="async" '
+                + 'style="width:44px;height:44px;flex-shrink:0;border-radius:10px;object-fit:cover;border:1px solid rgba(255,255,255,0.35);" '
+                + 'onerror="this.style.display=\'none\';">';
+        }
+
         // شريط علوي لطيف يختفي تلقائياً
         var bar = document.createElement('div');
         bar.setAttribute('data-ad-notify', '1');
@@ -143,9 +152,10 @@ window.ZoomDzAds = (function () {
         var link = ad.link_url && /^https?:\/\//i.test(ad.link_url)
             ? '<a href="' + esc(ad.link_url) + '" target="_blank" rel="nofollow sponsored" '
                 + 'onclick="ZoomDzAds.trackClick(' + (ad.id || 0) + ');" '
-                + 'style="color:#fff;text-decoration:underline;font-weight:800;margin-right:8px;">اعرف المزيد</a>'
+                + 'style="color:#fff;text-decoration:underline;font-weight:800;margin-right:8px;white-space:nowrap;">اعرف المزيد</a>'
             : '';
         bar.innerHTML = '<i class="fas fa-bell" style="flex-shrink:0;"></i>'
+            + barImage
             + '<span style="font-weight:700;font-size:0.9rem;">' + esc(ad.title)
             + (ad.content ? ' — ' + esc(ad.content) : '') + '</span>'
             + link
