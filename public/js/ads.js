@@ -60,9 +60,10 @@ window.ZoomDzAds = (function () {
     }
 
     // أبعاد ثابتة لكل نوع إعلان لتتلاءم مع مواضعها (لابتوب + جوال) وتقليل اهتزاز التخطيط (CLS)
+    // الصورة تُعرض كاملة (object-fit:contain) لا مقصوصة — بخلفية فاتحة تحفظ شكل البطاقة
     var TYPE_DIMS = {
-        banner: 'aspect-ratio:4 / 1; max-height:170px;',
-        static: 'aspect-ratio:3 / 2; max-height:230px;',
+        banner: 'aspect-ratio:4 / 1; max-height:200px; background:#f8fafc;',
+        static: 'aspect-ratio:3 / 2; max-height:300px; background:#f8fafc;',
         notification: null
     };
     var TYPE_IMG_ATTRS = {
@@ -88,7 +89,7 @@ window.ZoomDzAds = (function () {
         var imgAttrs = TYPE_IMG_ATTRS[ad.ad_type] || TYPE_IMG_ATTRS.static;
         if (ad.image_url && dimStyle) {
             inner += '<img src="' + esc(ad.image_url) + '" alt="' + esc(ad.title) + '" loading="lazy" decoding="async" ' + imgAttrs + ' '
-                + 'style="width:100%;object-fit:cover;border-radius:12px;margin-bottom:10px;' + dimStyle + '" '
+                + 'style="width:100%;object-fit:contain;border-radius:12px;margin-bottom:10px;padding:6px;box-sizing:border-box;' + dimStyle + '" '
                 + 'onerror="this.style.display=\'none\';">';
         }
         inner += '<div style="font-weight:800;color:#0f172a;font-size:0.98rem;margin-bottom:4px;">'
@@ -128,6 +129,7 @@ window.ZoomDzAds = (function () {
     }
 
     // إشعار علوي ذكي (يظهر مرة واحدة لكل طالب كل 24 ساعة — يفرضها الخادم)
+    // يُستدعى مبكراً أثناء تحليل الصفحة (قبل body) — الطلب يبدأ فوراً والإظهار ينتظر body
     async function notify() {
         var ad = await match('notification');
         if (!ad) return;
@@ -167,7 +169,14 @@ window.ZoomDzAds = (function () {
         var style = document.createElement('style');
         style.textContent = '@keyframes zoomdzAdSlideDown{from{transform:translateY(-100%);opacity:0;}to{transform:translateY(0);opacity:1;}}';
         document.head.appendChild(style);
-        document.body.appendChild(bar);
+        // body قد لا يكون جاهزاً عند الاستدعاء المبكر — ننتظره قبل الإضافة
+        if (document.body) {
+            document.body.appendChild(bar);
+        } else {
+            document.addEventListener('DOMContentLoaded', function () {
+                if (document.body && !bar.parentElement) document.body.appendChild(bar);
+            });
+        }
 
         // إخفاء تلقائي بعد 7 ثوانٍ
         setTimeout(function () {

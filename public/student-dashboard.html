@@ -534,15 +534,46 @@ function appendOptimisticMessage(text, reply) {
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <script src="/js/platform-config.js"></script>
-    <script src="/js/ads.js?v=2"></script>
+    <script src="/js/ads.js?v=3"></script>
     <script>
-        // ✅ تهيئة الإعلانات: إشعار علوي ذكي + مساحة الباقات (مرة واحدة لكل طالب كل 24 ساعة)
+        // ✅ تهيئة الإعلانات:
+        //    1) الإشعار العلوي يبدأ طلبه فور تحليل الصفحة (يكسب سباق match — لكل طالب مشاهدة واحدة لكل إعلان كل 24 ساعة)
+        //    2) مساحات الباقات/الدورات/الدروس بعد اكتمال التحميل
+        //    3) تبويبات جديدة (الرسائل/المجموعات/التمارين/المجتمع/الأساتذة/المعاملات/الإحالة/الحجوزات)
+        //       تُعرض عند أول فتح لكل تبويب — كي تُحتسب المشاهدة وقت الرؤية الفعلية فقط
+        if (window.ZoomDzAds) {
+            try { ZoomDzAds.notify(); } catch (e) {}
+        }
         window.addEventListener('DOMContentLoaded', function () {
             if (window.ZoomDzAds) {
-                try { ZoomDzAds.notify(); } catch (e) {}
                 try { ZoomDzAds.renderInto(document.getElementById('studentPackagesAdSlot'), 'packages'); } catch (e) {}
                 try { ZoomDzAds.renderInto(document.getElementById('studentCoursesAdSlot'), 'courses'); } catch (e) {}
                 try { ZoomDzAds.renderInto(document.getElementById('studentLessonsAdSlot'), 'lessons_header'); } catch (e) {}
+            }
+            var _adTabsRendered = {};
+            var adTabMap = {
+                messages: ['studentMessagesAdSlot', 'messages'],
+                groups: ['studentGroupsAdSlot', 'groups'],
+                exercises: ['studentExercisesAdSlot', 'exercises'],
+                'community-channels': ['studentCommunityAdSlot', 'community'],
+                teachers: ['studentTeachersAdSlot', 'teachers'],
+                transactions: ['studentTransactionsAdSlot', 'transactions'],
+                referral: ['studentReferralAdSlot', 'referral'],
+                bookings: ['studentBookingsAdSlot', 'bookings']
+            };
+            var _origShowSectionAds = window.showSection;
+            if (typeof _origShowSectionAds === 'function') {
+                window.showSection = function (section) {
+                    var r = _origShowSectionAds.apply(this, arguments);
+                    try {
+                        var slot = adTabMap[section];
+                        if (slot && !_adTabsRendered[section] && window.ZoomDzAds) {
+                            _adTabsRendered[section] = true;
+                            ZoomDzAds.renderInto(document.getElementById(slot[0]), slot[1]);
+                        }
+                    } catch (e) {}
+                    return r;
+                };
             }
         });
     </script>
@@ -4846,6 +4877,8 @@ function appendOptimisticMessage(text, reply) {
         <!-- COMMUNITY CHANNELS SECTION -->
         <div id="communityChannelsSection" style="display: none;">
             <div class="section-title"><i class="fas fa-bullhorn" style="color: #0284c7;"></i> قنوات ومجتمع المنصة 📢</div>
+            <!-- ✅ مساحة إعلان تبويب المجتمع -->
+            <div id="studentCommunityAdSlot" style="margin-bottom: 18px;"></div>
             <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 1.5px solid #bae6fd; border-radius: 16px; padding: 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 16px;">
                 <div style="background: white; border-radius: 14px; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; color: #0284c7; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15); flex-shrink: 0;">
                     <i class="fas fa-globe-africa"></i>
@@ -4948,6 +4981,9 @@ function appendOptimisticMessage(text, reply) {
                 </button>
             </div>
 
+            <!-- ✅ مساحة إعلان تبويب التمارين -->
+            <div id="studentExercisesAdSlot" style="margin-bottom: 18px;"></div>
+
             <!-- Filter Controls -->
             <div class="exercise-filter-container" style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; background: white; padding: 14px 18px; border-radius: 14px; border: 1px solid #e2e8f0; align-items: center;">
                 <div class="exercise-filter-item" style="flex: 1; min-width: 200px;">
@@ -5017,6 +5053,8 @@ function appendOptimisticMessage(text, reply) {
         <!-- TEACHERS SECTION -->
         <div id="teachersSection" style="display: none;">
             <div class="section-title"><i class="fas fa-chalkboard-user"></i> قائمة الأساتذة والمعلمين</div>
+            <!-- ✅ مساحة إعلان تبويب الأساتذة -->
+            <div id="studentTeachersAdSlot" style="margin-bottom: 18px;"></div>
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 18px; margin-bottom: 18px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
                 <div style="font-size: 0.88rem; color: #0c4a6e; font-weight: 600;">
                     <i class="fas fa-filter" style="color: var(--primary);"></i> عرض الأساتذة:
@@ -5137,6 +5175,8 @@ function appendOptimisticMessage(text, reply) {
         <!-- BOOKINGS SECTION -->
         <div id="bookingsSection" style="display: none;">
             <div class="section-title"><i class="fas fa-calendar-check" style="color: var(--primary);"></i> حصصي المحجوزة</div>
+            <!-- ✅ مساحة إعلان تبويب الحجوزات -->
+            <div id="studentBookingsAdSlot" style="margin-bottom: 18px;"></div>
             <div id="bookingsList"></div>
         </div>
 
@@ -5173,12 +5213,17 @@ function appendOptimisticMessage(text, reply) {
                 </div>
             </div>
 
+            <!-- ✅ مساحة إعلان تبويب المعاملات (أسفل بطاقة الرصيد — غير مزعجة) -->
+            <div id="studentTransactionsAdSlot" style="margin-bottom: 18px;"></div>
+
             <div id="transactionsList"></div>
         </div>
 
         <!-- REFERRAL SECTION -->
         <div id="referralSection" style="display: none;">
             <div class="section-title"><i class="fas fa-link" style="color:var(--gold);"></i> نظام الإحالة</div>
+            <!-- ✅ مساحة إعلان تبويب الإحالة -->
+            <div id="studentReferralAdSlot" style="margin-bottom: 18px;"></div>
             
             <div class="referral-card">
                 <h4 style="margin-bottom:6px; font-weight:800;"><i class="fas fa-gift"></i> رمز الإحالة الخاص بك</h4>
@@ -5224,6 +5269,8 @@ function appendOptimisticMessage(text, reply) {
         <!-- MESSAGES SECTION -->
         <div id="messagesSection" style="display: none;">
             <div class="section-title"><i class="fab fa-facebook-messenger" style="color: #0084ff;"></i> الرسائل والدردشة</div>
+            <!-- ✅ مساحة إعلان تبويب الرسائل (تُملأ بواسطة ads.js — مرة واحدة لكل طالب كل 24 ساعة) -->
+            <div id="studentMessagesAdSlot" style="margin-bottom: 16px;"></div>
             <div id="conversationsList"></div>
             <div id="chatView" style="display: none;">
                 <button class="back-to-list" onclick="backToConversations()" style="background: none; border: none; color: var(--primary); font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 0.9rem;"><i class="fas fa-arrow-right"></i> العودة للمحادثات</button>
@@ -5301,6 +5348,8 @@ function appendOptimisticMessage(text, reply) {
         <div id="groupsSection" style="display: none; direction: rtl;">
             <!-- MAIN VIEW (STUDENT GROUPS GRID) -->
             <div id="studentGroupsMainView">
+                <!-- ✅ مساحة إعلان تبويب المجموعات -->
+                <div id="studentGroupsAdSlot" style="margin-bottom: 16px;"></div>
                 <div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-radius: 16px; padding: 22px 26px; margin-bottom: 22px; color: white; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2);">
                     <div>
                         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 6px;">
@@ -7149,13 +7198,16 @@ toast.className = `toast ${kind}`;
         else if (section === 'transactions') loadTransactions();
         else if (section === 'referral') loadReferralData();
         else if (section === 'messages') {
+            const _msgAd = document.getElementById('studentMessagesAdSlot');
             if (!currentChatTeacher) {
                 const cList = document.getElementById('conversationsList');
                 const cView = document.getElementById('chatView');
                 if (cList) cList.style.display = 'block';
                 if (cView) cView.style.display = 'none';
+                if (_msgAd) _msgAd.style.display = 'block';
                 loadConversations();
             } else {
+                if (_msgAd) _msgAd.style.display = 'none';
                 loadConversations(true);
             }
         }
@@ -10428,6 +10480,9 @@ toast.className = `toast ${kind}`;
         startDirectChatPolling();
         document.getElementById('conversationsList').style.display = 'none';
         document.getElementById('chatView').style.display = 'block';
+        // إخفاء مساحة إعلان الرسائل داخل المحادثة الفردية (تظهر مرة أخرى عند العودة)
+        var _msgAd = document.getElementById('studentMessagesAdSlot');
+        if (_msgAd) _msgAd.style.display = 'none';
 
         const isStudent = otherType === 'student';
         const typeLabel = isStudent ? 'طالب' : 'أستاذ';
@@ -10853,6 +10908,8 @@ ${isSent ? `<span class="msg-status ${msg.is_read ? 'read' : ''}" title="${msg.i
         currentChatTeacher = null;
         document.getElementById('chatView').style.display = 'none';
         document.getElementById('conversationsList').style.display = 'block';
+        var _msgAd = document.getElementById('studentMessagesAdSlot');
+        if (_msgAd) _msgAd.style.display = 'block';
         loadConversations();
     }
 

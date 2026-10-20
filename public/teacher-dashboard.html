@@ -5039,7 +5039,7 @@ function appendOptimisticMessage(text, reply) {
                     </div>
                     <div>
                         <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">مواضع الظهور</label>
-                        <div style="padding:10px 12px;border:1.5px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:0.8rem;color:#475569;">📢 يظهر إعلانك تلقائياً في جميع المواضع: بين المنشورات، قسم التعليقات، صفحات الباقات، صفحات الدورات، وترويسة الدروس.</div>
+                        <div style="padding:10px 12px;border:1.5px dashed #cbd5e1;border-radius:10px;background:#f8fafc;font-size:0.8rem;color:#475569;">📢 يظهر إعلانك تلقائياً في جميع مواضع المنصة: بين المنشورات، التعليقات، الباقات، الدورات، ترويسة الدروس، الرسائل، المجموعات، التمارين، وقنوات المجتمع — مرة واحدة فقط لكل طالب كل 24 ساعة.</div>
                     </div>
                     <div>
                         <label style="display:block;font-weight:800;font-size:0.82rem;color:#334155;margin-bottom:6px;">المستوى المستهدف</label>
@@ -5068,9 +5068,12 @@ function appendOptimisticMessage(text, reply) {
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;flex-wrap:wrap;">
-                    <div id="adPricePreview" style="font-weight:800;color:#0f172a;">السعر التقديري: <span style="color:#f59e0b;font-size:1.2rem;">0</span> دج</div>
+                    <div>
+                        <div id="adPricePreview" style="font-weight:800;color:#0f172a;">السعر التقديري: <span style="color:#f59e0b;font-size:1.2rem;">0</span> دج</div>
+                        <div id="adBalanceInfo" style="font-size:0.8rem;color:#64748b;margin-top:4px;">💳 سيتم خصم السعر من رصيدك — يُعاد كاملاً إذا رُفض الإعلان</div>
+                    </div>
                     <button onclick="bookTeacherAd()" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:none;font-weight:800;padding:11px 26px;border-radius:12px;cursor:pointer;box-shadow:0 4px 12px rgba(245,158,11,0.3);">
-                        <i class="fas fa-paper-plane"></i> إرسال للمراجعة
+                        <i class="fas fa-paper-plane"></i> حجز ودفع من الرصيد
                     </button>
                 </div>
             </div>
@@ -10363,14 +10366,15 @@ function updateUI() {
             for (const t of transactions) {
                 const date = new Date(t.created_at);
                 const formattedDate = date.toLocaleString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                const isDeposit = t.type === 'deposit' || t.type === 'credit' || t.type === 'deposit_manual' || t.type === 'manual_deposit';
+                const isDeposit = t.type === 'deposit' || t.type === 'credit' || t.type === 'deposit_manual' || t.type === 'manual_deposit' || t.type === 'ad_refund';
                 const isWithdraw = t.type === 'withdraw';
                 const isFees = t.type === 'fees';
+                const isAdBooking = t.type === 'ad_booking';
                 
-                let icon = isDeposit ? (t.type === 'deposit_manual' || t.type === 'manual_deposit' ? 'fa-money-bill-transfer' : 'fa-arrow-up') : (isWithdraw ? 'fa-hand-holding-usd' : 'fa-arrow-down');
-                let color = isDeposit ? 'var(--secondary)' : (isWithdraw ? '#2563eb' : 'var(--danger)');
-                let bg = isDeposit ? 'var(--secondary-soft)' : (isWithdraw ? '#dbeafe' : 'var(--danger-soft)');
-                let label = isDeposit ? (t.type === 'deposit_manual' || t.type === 'manual_deposit' ? 'شحن رصيد (بريدي موب / CCP)' : 'شحن رصيد') : (isWithdraw ? 'سحب رصيد' : (isFees ? 'رسوم إنشاء حصة مجانية' : 'خصم رصيد'));
+                let icon = isDeposit ? (t.type === 'deposit_manual' || t.type === 'manual_deposit' ? 'fa-money-bill-transfer' : (t.type === 'ad_refund' ? 'fa-rotate-left' : 'fa-arrow-up')) : (isWithdraw ? 'fa-hand-holding-usd' : (isAdBooking ? 'fa-bullhorn' : 'fa-arrow-down'));
+                let color = isDeposit ? 'var(--secondary)' : (isWithdraw ? '#2563eb' : (isAdBooking ? '#d97706' : 'var(--danger)'));
+                let bg = isDeposit ? 'var(--secondary-soft)' : (isWithdraw ? '#dbeafe' : (isAdBooking ? '#fffbeb' : 'var(--danger-soft)'));
+                let label = isDeposit ? (t.type === 'ad_refund' ? '💰 استرداد إعلان (مرفوض/محذوف)' : (t.type === 'deposit_manual' || t.type === 'manual_deposit' ? 'شحن رصيد (بريدي موب / CCP)' : 'شحن رصيد')) : (isWithdraw ? 'سحب رصيد' : (isFees ? 'رسوم إنشاء حصة مجانية' : (isAdBooking ? '📢 حجز إعلان' : 'خصم رصيد')));
                 
                 // تحديد حالة العملية
                 let statusLabel = '';
@@ -18612,7 +18616,7 @@ window.clearProfileAiChat = clearProfileAiChat;
 </script>
 
     <script src="/js/packages-teacher.js?v=3"></script>
-    <script src="/js/ads.js?v=2"></script>
+    <script src="/js/ads.js?v=3"></script>
     <script>
         // ============ إعلانات الأستاذ ============
         var adUploadedImageUrl = '';
@@ -18643,6 +18647,28 @@ window.clearProfileAiChat = clearProfileAiChat;
             } catch (e) {
                 if (state) state.textContent = '⚠️ تعذر رفع الصورة — يمكنك المتابعة بدونها';
             }
+        }
+
+        // عرض رصيد الأستاذ بجانب حاسبة السعر (يُحدَّث بعد الحجز/الحذف)
+        var adTeacherBalance = null;
+        function setAdBalanceInfo(bal) {
+            if (typeof bal === 'number') adTeacherBalance = bal;
+            var el = document.getElementById('adBalanceInfo');
+            if (!el) return;
+            if (adTeacherBalance === null) {
+                el.textContent = '💳 سيتم خصم السعر من رصيدك — يُعاد كاملاً إذا رُفض الإعلان';
+                return;
+            }
+            el.innerHTML = '💳 رصيدك الحالي: <b style="color:#0f172a;">' + adTeacherBalance.toLocaleString('ar-DZ') + ' دج</b> — سيتم خصم السعر منه (يُعاد إذا رُفض الإعلان)';
+        }
+        async function loadAdBalance() {
+            try {
+                var tid = teacherId || (window.userData && (window.userData.id || window.userData.teacher_id)) || '';
+                if (!tid) return;
+                var res = await fetchWithAuth('/api/wallet/transactions-teacher/' + tid);
+                var d = await res.json();
+                if (d && typeof d.balance === 'number') setAdBalanceInfo(d.balance);
+            } catch (e) {}
         }
 
         function updateAdPricePreview() {
@@ -18707,11 +18733,15 @@ window.clearProfileAiChat = clearProfileAiChat;
                 var res = await fetchWithAuth('/api/ads/teacher/mine');
                 var d = await res.json();
                 var ads = (d && d.success && d.ads) ? d.ads : [];
+                var expiredCount = ads.filter(function (a) { return a.end_date && new Date(a.end_date) < new Date(); }).length;
                 if (ads.length === 0) {
                     list.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;background:#fff;border:1px dashed #cbd5e1;border-radius:14px;">لا توجد إعلانات بعد — احجز أول إعلان لك من الأعلى!</div>';
                     return;
                 }
-                list.innerHTML = ads.map(function (ad) {
+                var deleteExpiredBtn = expiredCount > 0
+                    ? '<div style="text-align:left;margin-bottom:12px;"><button onclick="deleteExpiredAds()" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;font-weight:800;font-size:0.8rem;padding:7px 16px;border-radius:10px;cursor:pointer;"><i class="fas fa-trash-alt"></i> حذف الحملات المنتهية (' + expiredCount + ')</button></div>'
+                    : '';
+                list.innerHTML = deleteExpiredBtn + ads.map(function (ad) {
                     var statusMap = {
                         pending: ['قيد المراجعة', '#f59e0b', '#fffbeb'],
                         active: ['نشط', '#10b981', '#ecfdf5'],
@@ -18721,26 +18751,94 @@ window.clearProfileAiChat = clearProfileAiChat;
                     var st = statusMap[ad.status] || ['غير معروف', '#64748b', '#f1f5f9'];
                     var typeLabel = (window.ZoomDzAds.TYPE_LABELS || {})[ad.ad_type] || ad.ad_type;
                     var placeLabel = (window.ZoomDzAds.PLACEMENT_LABELS || {})[ad.placement] || ad.placement;
+                    var levelLabel = (window.ZoomDzAds.LEVEL_LABELS || {})[ad.education_level] || ad.education_level || 'الكل';
                     var reasonHtml = (ad.status === 'rejected' && ad.rejection_reason)
                         ? '<div style="font-size:0.8rem;color:#dc2626;margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;">سبب الرفض: ' + escapeHtml(ad.rejection_reason) + '</div>'
                         : '';
+                    // عداد الأيام المتبقية (أو المنتهية)
+                    var daysHtml = '';
+                    if (ad.end_date) {
+                        var msLeft = new Date(ad.end_date).getTime() - Date.now();
+                        var daysLeft = Math.ceil(msLeft / 86400000);
+                        if (msLeft <= 0) {
+                            daysHtml = '<span style="background:#f1f5f9;color:#64748b;font-weight:800;font-size:0.75rem;padding:4px 10px;border-radius:8px;">⏳ انتهت الحملة</span>';
+                        } else {
+                            daysHtml = '<span style="background:#eff6ff;color:#1e40af;font-weight:800;font-size:0.75rem;padding:4px 10px;border-radius:8px;">📅 متبقي ' + daysLeft + ' يوم</span>';
+                        }
+                    }
                     var statsBtn = (ad.status === 'active')
                         ? '<button onclick="showAdStats(' + ad.id + ')" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;font-weight:800;font-size:0.78rem;padding:6px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;">📊 الإحصائيات</button>'
                         : '';
+                    var pauseBtn = (ad.status === 'active' || ad.status === 'paused')
+                        ? '<button onclick="toggleAdPause(' + ad.id + ')" style="background:' + (ad.status === 'active' ? '#fffbeb;color:#d97706;border:1px solid #fde68a;' : '#ecfdf5;color:#059669;border:1px solid #a7f3d0;') + 'font-weight:800;font-size:0.78rem;padding:6px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;">' + (ad.status === 'active' ? '⏸ إيقاف' : '▶ استئناف') + '</button>'
+                        : '';
+                    var deleteBtn = '<button onclick="deleteTeacherAd(' + ad.id + ')" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;font-weight:800;font-size:0.78rem;padding:6px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;">🗑 حذف</button>';
                     return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
                         + '<div style="flex:1;min-width:220px;">'
                         + '<div style="font-weight:800;color:#0f172a;">' + (ad.title || 'بدون عنوان') + '</div>'
-                        + '<div style="font-size:0.8rem;color:#64748b;margin-top:4px;">' + typeLabel + ' · ' + placeLabel + ' · ' + (ad.impressions_count || 0) + ' ظهور · ' + (ad.clicks_count || 0) + ' نقرة · ' + (ad.price_paid || 0) + ' دج</div>'
+                        + '<div style="font-size:0.8rem;color:#64748b;margin-top:4px;">' + typeLabel + ' · ' + placeLabel + ' · 🎯 ' + levelLabel + ' · ' + (ad.impressions_count || 0) + ' ظهور · ' + (ad.clicks_count || 0) + ' نقرة · ' + (ad.price_paid || 0) + ' دج</div>'
+                        + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">' + daysHtml + '</div>'
                         + reasonHtml
                         + '</div>'
-                        + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
-                        + statsBtn
+                        + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;">'
+                        + statsBtn + pauseBtn + deleteBtn
                         + '<span style="background:' + st[2] + ';color:' + st[1] + ';font-weight:800;font-size:0.78rem;padding:5px 12px;border-radius:20px;white-space:nowrap;">' + st[0] + '</span>'
                         + '</div>'
                         + '</div>';
                 }).join('');
             } catch (e) {
                 list.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;">تعذر تحميل الإعلانات</div>';
+            }
+        }
+
+        // إيقاف/استئناف حملة
+        async function toggleAdPause(id) {
+            try {
+                var res = await fetchWithAuth('/api/ads/teacher/' + id + '/pause', { method: 'POST' });
+                var d = await res.json();
+                if (d && d.success) {
+                    showToast(d.message || 'تم تحديث الحالة', 'success');
+                    loadTeacherAds();
+                } else {
+                    showToast((d && d.error) || 'تعذر تحديث الحالة', 'warning');
+                }
+            } catch (e) {
+                showToast('تعذر الاتصال بالخادم', 'warning');
+            }
+        }
+
+        // حذف إعلان (مع استرداد الأيام غير المستهلكة تلقائياً)
+        async function deleteTeacherAd(id) {
+            if (!confirm('هل أنت متأكد من حذف هذا الإعلان؟\n✅ الأيام غير المستهلكة من قيمة الإعلان ستُعاد إلى رصيدك تلقائياً.')) return;
+            try {
+                var res = await fetchWithAuth('/api/ads/teacher/' + id, { method: 'DELETE' });
+                var d = await res.json();
+                if (d && d.success) {
+                    showToast(d.message || 'تم حذف الإعلان', 'success');
+                    loadAdBalance();
+                    loadTeacherAds();
+                } else {
+                    showToast((d && d.error) || 'تعذر حذف الإعلان', 'warning');
+                }
+            } catch (e) {
+                showToast('تعذر الاتصال بالخادم', 'warning');
+            }
+        }
+
+        // حذف كل الحملات المنتهية
+        async function deleteExpiredAds() {
+            if (!confirm('هل أنت متأكد من حذف جميع حملاتك المنتهية؟')) return;
+            try {
+                var res = await fetchWithAuth('/api/ads/teacher/expired', { method: 'DELETE' });
+                var d = await res.json();
+                if (d && d.success) {
+                    showToast(d.message || 'تم الحذف', 'success');
+                    loadTeacherAds();
+                } else {
+                    showToast((d && d.error) || 'تعذر الحذف', 'warning');
+                }
+            } catch (e) {
+                showToast('تعذر الاتصال بالخادم', 'warning');
             }
         }
 
@@ -18771,7 +18869,8 @@ window.clearProfileAiChat = clearProfileAiChat;
                 });
                 var d = await res.json();
                 if (d && d.success) {
-                    showToast(d.message || 'تم إرسال إعلانك للمراجعة', 'success');
+                    showToast(d.message || 'تم حجز إعلانك وخصم قيمته من رصيدك', 'success');
+                    if (typeof d.balance === 'number') setAdBalanceInfo(d.balance);
                     ['adTitleInput', 'adContentInput', 'adLinkInput', 'adImageInput'].forEach(function (id) {
                         var el = document.getElementById(id); if (el) el.value = '';
                     });
@@ -18792,6 +18891,7 @@ window.clearProfileAiChat = clearProfileAiChat;
             if (section === 'ads') {
                 if (window.ZoomDzAds && window.ZoomDzAds.loadSeasonal) await window.ZoomDzAds.loadSeasonal();
                 updateAdPricePreview();
+                loadAdBalance();
                 loadTeacherAds();
             }
         };
