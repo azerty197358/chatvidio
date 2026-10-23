@@ -7396,9 +7396,58 @@ toast.className = `toast ${kind}`;
     }
 
     // ================================================================
-    // ✅ نتيجة العودة من بوابة الدفع (?status=...) — تظهر مرة واحدة ثم تُنظف من الرابط
+    // ✅ نتيجة العودة من بوابة الدفع (?status=...&txn=...)
+    //    تأخير تأكيد البنك بعد الدفع طبيعي: نفحص الحالة كل 10 ثوانٍ
+    //    لمدة دقيقة، وعند التأكيد نضيف الرصيد ونعرض رسال نجاح —
+    //    ولا نعرض رسالة فشل قبل انتهاء المهلة.
     // ================================================================
-    function handlePaymentReturnStatus(paymentStatus) {
+    var paymentStatusPollTimer = null;
+
+    function stopPaymentStatusPolling() {
+        if (paymentStatusPollTimer) {
+            clearInterval(paymentStatusPollTimer);
+            paymentStatusPollTimer = null;
+        }
+    }
+
+    async function pollDepositStatusOnce(txnId, attemptsLeft) {
+        try {
+            const res = await fetchWithAuth('/api/wallet/deposit/status/' + encodeURIComponent(txnId));
+            const data = await res.json();
+            if (data && data.success) {
+                if (data.status === 'success') {
+                    stopPaymentStatusPolling();
+                    if (typeof data.balance === 'number' && data.balance !== null) {
+                        syncAllBalanceDisplays(data.balance);
+                    }
+                    showToast('✅ تم تأكيد الدفع بنجاح — تم إضافة ' + (data.amount != null ? data.amount + ' دج' : 'المبلغ') + ' إلى رصيدك', 'success');
+                    if (typeof loadTransactions === 'function') loadTransactions();
+                    return;
+                }
+                if (data.status === 'failed' || data.status === 'canceled') {
+                    stopPaymentStatusPolling();
+                    showToast('ℹ️ لم تكتمل عملية الدفع — لم يُخصم منك أي شيء', 'info');
+                    return;
+                }
+            }
+        } catch (e) { /* خطأ عابر — نستمر في المراقبة حتى انتهاء المهلة */ }
+        if (attemptsLeft <= 1) {
+            stopPaymentStatusPolling();
+            showToast('ℹ️ استغرق تأكيد الدفع وقتاً أطول من المعتاد — سيُضاف الرصيد تلقائياً فور تأكيد البنك، تحقق من قائمة المعاملات بعد قليل', 'info');
+        }
+    }
+
+    function startPaymentStatusPolling(txnId) {
+        if (!txnId || paymentStatusPollTimer) return;
+        let attemptsLeft = 6; // فحص فوري + 5 فحوصات كل 10 ثوانٍ ≈ دقيقة
+        pollDepositStatusOnce(txnId, attemptsLeft);
+        paymentStatusPollTimer = setInterval(function () {
+            attemptsLeft--;
+            pollDepositStatusOnce(txnId, attemptsLeft);
+        }, 10000);
+    }
+
+    function handlePaymentReturnStatus(paymentStatus, txnId) {
         try {
             const s = String(paymentStatus || '').toLowerCase();
             if (s === 'paid' || s === 'completed' || s === 'success') {
@@ -7406,13 +7455,15 @@ toast.className = `toast ${kind}`;
             } else if (s === 'canceled' || s === 'cancelled' || s === 'failed' || s === 'declined') {
                 showToast('ℹ️ لم تكتمل عملية الدفع وتم إلغاؤها — لم يُخصم أي شيء', 'info');
             } else if (s === 'pending') {
-                showToast('ℹ️ لم تكتمل عملية الدفع بعد — إن أُكملت لاحقاً سيُضاف الرصيد تلقائياً', 'info');
+                showToast('ℹ️ جاري التحقق من حالة الدفع من البنك…', 'info');
+                startPaymentStatusPolling(txnId);
             } else {
                 showToast('ℹ️ تعذر تأكيد نتيجة الدفع — راجع قائمة المعاملات للتأكد', 'info');
             }
             try {
                 const u = new URL(window.location.href);
                 u.searchParams.delete('status');
+                u.searchParams.delete('txn');
                 window.history.replaceState({}, '', u);
             } catch (e) {}
         } catch (e) {}
@@ -7435,7 +7486,7 @@ toast.className = `toast ${kind}`;
 
             // ✅ حالة الدفع بعد العودة من البوابة
             const paymentReturnStatus = urlParams.get('status');
-            if (paymentReturnStatus) handlePaymentReturnStatus(paymentReturnStatus);
+            if (paymentReturnStatus) handlePaymentReturnStatus(paymentReturnStatus, urlParams.get('txn'));
 
             let storedData = localStorage.getItem('userData');
             let token = localStorage.getItem('token');

@@ -285,6 +285,22 @@ async function creditWalletTransaction(transaction) {
     }
 }
 
+//  الرصيد الحالي لصاحب المعاملة (طالب أو أستاذ) — يُعاد مع تأكيد الدفع
+//  لتحديث الواجهة فوراً بدل انتظار إعادة تحميل.
+async function getWalletOwnerBalance(transaction) {
+    try {
+        if (transaction.student_id) {
+            const student = await getOne('students', 'id', transaction.student_id);
+            return student ? (parseInt(student.wallet_balance) || 0) : null;
+        }
+        if (transaction.teacher_id) {
+            const teacher = await getOne('teachers', 'id', transaction.teacher_id);
+            return teacher ? (parseFloat(teacher.balance) || 0) : null;
+        }
+    } catch (e) {}
+    return null;
+}
+
 // ============================================================
 // شحن الرصيد عبر بوابة سوفيز باي (SofizPay)
 // ============================================================
@@ -880,7 +896,7 @@ router.get('/sofizpay-callback', async (req, res) => {
 
         const targetCibId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
         if (!targetCibId) {
-            return res.redirect(`${dash}?status=pending`);
+            return res.redirect(`${dash}?status=pending&txn=${transaction.id}`);
         }
 
         // ✅ التحقق مجدداً من البوابة قبل إضافة أي مبلغ (لا نثق بالرابط وحده)
@@ -896,7 +912,7 @@ router.get('/sofizpay-callback', async (req, res) => {
             });
         }
 
-        res.redirect(`${dash}?status=${verdict === 'success' ? 'paid' : verdict}`);
+        res.redirect(`${dash}?status=${verdict === 'success' ? 'paid' : verdict}&txn=${transaction.id}`);
     } catch (error) {
         logger.error('❌ خطأ في معالجة كولباك SofizPay:', error.message);
         res.redirect(`/student-dashboard.html?status=error`);
@@ -961,6 +977,61 @@ router.post('/sofizpay-webhook', async (req, res) => {
         res.json({ success: true, status: verdict });
     } catch (error) {
         logger.error('❌ خطأ في معالجة ويب هوك SofizPay:', error.message);
+        res.status(500).json({ success: false, error: 'خطأ داخلي' });
+    }
+});
+
+// ============================================================
+// ✅ فحص حالة شحن الرصيد — تستخدمه الواجهة لإعادة المحاولة كل
+//    10 ثوانٍ لمدة دقيقة بعد العودة من البوابة: تأخير تأكيد
+//    البنك طبيعي، وعند التأكيد تُضاف الحصة ويُعاد الرصيد المحدّث.
+// ============================================================
+router.get('/deposit/status/:transaction_id', authenticate, async (req, res) => {
+    try {
+        const transaction = await getOne('wallet_transactions', 'id', req.params.transaction_id);
+        if (!transaction) {
+            return res.status(404).json({ success: false, error: 'المعاملة غير موجودة' });
+        }
+
+        const isOwner = (transaction.student_id && Number(transaction.student_id) === Number(req.user.userId))
+            || (transaction.teacher_id && Number(transaction.teacher_id) === Number(req.user.userId));
+        if (!isOwner) {
+            return res.status(403).json({ success: false, error: 'غير مصرح لك بعرض هذه المعاملة' });
+        }
+
+        if (transaction.status === 'completed') {
+            return res.json({ success: true, status: 'success', amount: parseFloat(transaction.amount) || 0, balance: await getWalletOwnerBalance(transaction) });
+        }
+        if (transaction.status === 'failed' || transaction.status === 'cancelled') {
+            return res.json({ success: true, status: transaction.status === 'cancelled' ? 'canceled' : 'failed' });
+        }
+
+        // pending → فحص مؤكد من البوابة (لا نثق بالرابط وحده)
+        const checkId = transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
+        if (!checkId) {
+            return res.json({ success: true, status: 'pending' });
+        }
+
+        const verdict = interpretSofizPayStatus(await checkSofizPayTransactionStatus(checkId));
+        if (verdict === 'success') {
+            const credited = await creditWalletTransaction(transaction);
+            if (credited) {
+                return res.json({ success: true, status: 'success', amount: parseFloat(transaction.amount) || 0, balance: await getWalletOwnerBalance(transaction) });
+            }
+            // الإضافة تأجلت (خطأ عابر في القاعدة) — نُبقيها pending وتُعاد المحاولة في الدورة التالية
+            return res.json({ success: true, status: 'pending' });
+        }
+        if (verdict === 'failed') {
+            await update('wallet_transactions', transaction.id, {
+                status: 'failed',
+                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
+            });
+            return res.json({ success: true, status: 'failed' });
+        }
+
+        res.json({ success: true, status: 'pending' });
+    } catch (error) {
+        logger.error('❌ خطأ في فحص حالة شحن الرصيد:', error.message);
         res.status(500).json({ success: false, error: 'خطأ داخلي' });
     }
 });
