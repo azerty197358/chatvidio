@@ -83,6 +83,8 @@ const DEFAULT_CORS_ORIGINS = [
     'https://chatvidio-git-*.vercel.app',
     'https://chatvidio-*.vercel.app',
     'https://*.vercel.app',
+    'https://*.up.railway.app',
+    'https://*.railway.app',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002'
@@ -143,7 +145,15 @@ function isOriginAllowed(origin) {
 // ============================================================
 
 const app = express();
-const PORT = 3000;
+
+//  المنفذ: على Vercel لا يوجد listen أصلاً، وعلى Railway (وأي استضافة ذاتية)
+//  تُحقن المنصة المنفذ في متغير البيئة PORT — نلتزم به ونرجع لـ3000 محلياً.
+const PORT = Number(process.env.PORT) || 3000;
+
+//  بيئة التشغيل الحالية: vercel (الإنتاج) | railway (تطوير واختبار) | self-hosted
+//  تُستخدم في سجلات التشغيل وفي /api/health للتمييز بين النسخ.
+const DEPLOY_PLATFORM = process.env.VERCEL ? 'vercel'
+    : (process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_SERVICE_NAME || process.env.RAILWAY_PROJECT_NAME ? 'railway' : 'self-hosted');
 
 // LRU-like simple cache to prevent memory leak
 const publicCache = new Map();
@@ -4102,7 +4112,9 @@ app.get('/api/health', (req, res) => {
             rss: Math.round(memoryUsage.rss / 1024 / 1024)
         },
         nodeVersion: process.version,
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        platform: DEPLOY_PLATFORM,
+        port: PORT
     });
 });
 
@@ -5063,6 +5075,7 @@ if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
         console.log(`Server running on http://localhost:${PORT}`);
         console.log(`Server running on port ${PORT}`);
         console.log(`🚀 الخادم يعمل على http://localhost:${PORT}`);
+        console.log(`🌍 بيئة التشغيل: ${DEPLOY_PLATFORM} | المنفذ: ${PORT}`);
         console.log('='.repeat(60));
         console.log('📅 التاريخ:', new Date().toLocaleString('ar-EG'));
         console.log(' نظام البث: WebRTC محلّي (مجاني 100%)');

@@ -34,3 +34,6 @@ test-server.js
 cleanup-*.js
 check-*.js
 fix-*.js
+
+# ===== Build output (Vercel / Railway build) =====
+dist/
