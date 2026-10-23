@@ -9815,6 +9815,40 @@ toast.className = `toast ${kind}`;
         if (modalWallet) modalWallet.textContent = `${currentBalance} دج`;
     }
 
+    // ================================================================
+    // ✅ فحص تلقائي للمعاملات المعلّقة عند عرض القائمة — يستدعي الخادم
+    //    الذي يتحقق من بوابة الدفع ومن سجل Stellar العام ويضيف الرصيد
+    //    فور ثبوت الدفع (بلا أي رسالة فشل — تأخر التأكيد طبيعي).
+    // ================================================================
+    var pendingDepositVerifyInFlight = false;
+    async function verifyPendingDeposits(transactions) {
+        if (pendingDepositVerifyInFlight || !Array.isArray(transactions)) return;
+        const pendingRows = transactions.filter(t => t && t.status === 'pending').slice(0, 3);
+        if (pendingRows.length === 0) return;
+        pendingDepositVerifyInFlight = true;
+        let healed = false, healedBalance = null;
+        try {
+            for (const row of pendingRows) {
+                try {
+                    const res = await fetchWithAuth('/api/wallet/deposit/status/' + encodeURIComponent(row.id));
+                    const data = await res.json();
+                    if (data && data.success && data.status === 'success') {
+                        healed = true;
+                        if (typeof data.balance === 'number' && data.balance !== null) healedBalance = data.balance;
+                    }
+                } catch (e) { /* خطأ مؤقت — نعيد المحاولة عند الفتح القادم */ }
+            }
+        } finally {
+            pendingDepositVerifyInFlight = false;
+        }
+        if (healed) {
+            if (healedBalance !== null) syncAllBalanceDisplays(healedBalance);
+            showToast('✅ تم تأكيد الدفع بنجاح — أُضيف المبلغ إلى رصيدك', 'success');
+            loadTransactions();
+            if (typeof loadModalTransactions === 'function') loadModalTransactions();
+        }
+    }
+
     async function loadTransactions() {
         const container = document.getElementById('transactionsList');
         if (container) container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> جاري التحميل...</div>';
@@ -9828,6 +9862,7 @@ toast.className = `toast ${kind}`;
             if (container) {
                 container.innerHTML = renderTransactionsHtml(transactions);
             }
+            verifyPendingDeposits(transactions);
         } catch(e) { 
             if (e.message !== 'انتهت صلاحية الجلسة') {
                 showToast('حدث خطأ في تحميل المعاملات', 'error');
@@ -9871,6 +9906,7 @@ toast.className = `toast ${kind}`;
             }
             const transactions = data.transactions || [];
             container.innerHTML = renderTransactionsHtml(transactions);
+            verifyPendingDeposits(transactions);
         } catch(e) {
             if (e.message !== 'انتهت صلاحية الجلسة') {
                 container.innerHTML = '<p style="text-align:center; padding:20px; color:var(--danger);">تعذر تحميل العمليات</p>';

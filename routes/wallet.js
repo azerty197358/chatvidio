@@ -67,6 +67,20 @@ if (!SOFIZPAY_ACCOUNT) {
 
 console.log(`💳 SofizPay: وضع ${SOFIZPAY_IS_SANDBOX ? 'الساند بوكس (اختبار)' : 'الإنتاج'} — API: ${SOFIZPAY_API_URL}`);
 
+// ============================================================
+// ✅ التحقق المستقل عبر سجل Stellar العام (Horizon)
+//    بوابة سوفيز باي لا تعرف أرقام طلباتها الجديدة أحياناً في واجهة
+//    cib-transaction-check (تُعيد 404 لرقم طلب صحيح موجود في لوحة التاجر)،
+//    لكن الحقيقة القاطعة تظهر في سجل Stellar: دفعة DZT إلى حساب المنصة
+//    تحمل memo ينتهي بـ ZD-<رقم المعاملة>. السجل موقّع تلقائياً وغير قابل
+//    للتزوير، ومصدر الأصل (المُصدِر) معلوم — فلا تُضاف الحصيلة إلا بproof.
+// ============================================================
+const STELLAR_HORIZON_URL = String(process.env.STELLAR_HORIZON_URL || 'https://horizon.stellar.org').replace(/\/+$/, '');
+// مُصدِر عملة DZT لدى SofizPay — أي أصل آخر لا يُعتمد مهما طابق اسمه
+const SOFIZPAY_DZT_ISSUER = process.env.SOFIZPAY_DZT_ISSUER || 'GCAZI7YBLIDJWIVEL7ETNAZGPP3LC24NO6KAOBWZHUERXQ7M5BC52DLV';
+// خزينة SofizPay التي ترسل الأموال فعلياً — تُسجَّل للأصلية فقط (لا شرط تحقق صارم حتى لا نعلّق عند تغيير محفظتهم)
+const SOFIZPAY_FUNDING_ACCOUNT = process.env.SOFIZPAY_FUNDING_ACCOUNT || 'GBYCZO2R2QPLJ4DD2YMYSWSGTOVSFTHI3H22KZVK6DSHENLAJ5MBW4TY';
+
 //  الدومين الأساسي لروابط الدفع (return_url و webhook_url):
 //  PLATFORM_URL من البيئة يعلو كل شيء (لاختبار على نطاق آخر مثل نطاق Railway)،
 //  وإلا نستعمل الدومين الرسمي zoomdz.com — لا نبني الروابط من طلب المتصفح
@@ -220,6 +234,89 @@ function interpretSofizPayStatus(result) {
     return 'pending';
 }
 
+// ✅ البحث في سجل Stellar عن دفعة حقيقية لهذه المعاملة:
+//    memo ينتهي بـ ZD-<id>، أصل DZT من مُصدِر SofizPay، بمبلغ يغطي طلبنا،
+//    ولم تصدر العملية نفسها قبل إنشاء الطلب.
+async function findStellarPaymentForTransaction(transaction) {
+    try {
+        const suffix = 'ZD-' + transaction.id;
+        const minAmount = parseFloat(transaction.amount) || 0;
+        const createdAt = Date.parse(transaction.created_at || '') || 0;
+        let cursor = '';
+
+        for (let page = 0; page < 8; page++) {
+            const url = `${STELLAR_HORIZON_URL}/accounts/${SOFIZPAY_ACCOUNT}/operations?limit=50&order=desc&join=transactions${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+            const response = await axios.get(url, { timeout: 15000 });
+            const records = (response.data && response.data._embedded && response.data._embedded.records) || [];
+            if (records.length === 0) break;
+
+            for (const op of records) {
+                if (!op || op.type !== 'payment') continue;
+                if (op.to && op.to !== SOFIZPAY_ACCOUNT) continue;
+                if (String(op.asset_code || '') !== 'DZT') continue;
+                if (SOFIZPAY_DZT_ISSUER && op.asset_issuer && op.asset_issuer !== SOFIZPAY_DZT_ISSUER) continue;
+                const memo = String((op.transaction && op.transaction.memo) || '').trim();
+                if (!memo.endsWith(suffix)) continue;
+                const opTime = Date.parse(op.created_at || '') || 0;
+                // الدفعة يجب أن تأتي بعد إنشاء الطلب (دقيقتان هامش للتزامن)
+                if (createdAt && opTime && opTime < createdAt - 120000) continue;
+                if ((parseFloat(op.amount) || 0) < minAmount) continue;
+                if (op.source_account && op.source_account !== SOFIZPAY_FUNDING_ACCOUNT) {
+                    logger.warn(`⚠️ Stellar: دفعة المعاملة ${transaction.id} من محفظة غير متوقعة: ${op.source_account}`);
+                }
+                return {
+                    found: true,
+                    amount: parseFloat(op.amount) || 0,
+                    memo: memo,
+                    source: op.source_account || null,
+                    created_at: op.created_at || null
+                };
+            }
+
+            const oldest = records[records.length - 1];
+            const oldestTime = Date.parse(oldest.created_at || '') || 0;
+            // توقف عند وصولنا لما قبل يوم من إنشاء الطلب أو نهاية السجل
+            if (createdAt && oldestTime && oldestTime < createdAt - 86400000) break;
+            if (records.length < 50) break;
+            if (!oldest.paging_token || oldest.paging_token === cursor) break;
+            cursor = oldest.paging_token;
+        }
+    } catch (error) {
+        logger.warn('⚠️ تعذر البحث في سجل Stellar للتحقق من الدفع:', error.message);
+    }
+    return { found: false };
+}
+
+// ✅ التحقق الشامل في معاملة شحن معلّقة: بوابة سوفيز باي بكل معرّفاتها
+//    المتوفرة، ثم إثبات الدفع من سجل Stellar العام.
+//    النتيجة: 'success' | 'failed' | 'pending'
+async function verifyDepositTransaction(transaction, extraIds) {
+    const candidates = [];
+    const pushId = (value) => {
+        const text = String(value || '').trim();
+        if (text && candidates.indexOf(text) === -1) candidates.push(text);
+    };
+    (Array.isArray(extraIds) ? extraIds : []).forEach(pushId);
+    pushId(transaction.cib_transaction_id);
+    pushId(transaction.sofizpay_transaction_id);
+
+    let checkFailed = false;
+    for (const id of candidates) {
+        const verdict = interpretSofizPayStatus(await checkSofizPayTransactionStatus(id));
+        if (verdict === 'success') return 'success';
+        if (verdict === 'failed') checkFailed = true;
+    }
+
+    // الدفعة الحقيقية في السجل العام تغلب أي خلل مؤقت في واجهة الفحص
+    const stellar = await findStellarPaymentForTransaction(transaction);
+    if (stellar.found) {
+        logger.info(`✅ Stellar: إثبات دفع للمعاملة ${transaction.id} — ${stellar.amount} DZT (memo: ${stellar.memo})`);
+        return 'success';
+    }
+
+    return checkFailed ? 'failed' : 'pending';
+}
+
 // ✅ إضافة المبلغ إلى المحفظة بشكل ذرّي (pending → completed) — لا تُضاف الحصيلة أبداً مرتين
 async function creditWalletTransaction(transaction) {
     const { data: txUpdate, error: txError } = await supabase
@@ -299,6 +396,37 @@ async function getWalletOwnerBalance(transaction) {
         }
     } catch (e) {}
     return null;
+}
+
+// ✅ تسوية معاملة شحن: تحقق شامل ثم إضافة ذرّية أو تعليم — تتشاركها
+//    كل مسارات التأكيد (الكولباك، الويب هوك، فحص الحالة من الواجهة،
+//    ومؤقت إعادة الفحص في الخادم). لا تُضاف الحصيلة مرتين مهما تكرر النداء.
+async function settlePendingDeposit(transaction, extraIds) {
+    const verdict = await verifyDepositTransaction(transaction, extraIds);
+
+    if (verdict === 'success') {
+        const credited = await creditWalletTransaction(transaction);
+        if (credited) {
+            return {
+                status: 'success',
+                amount: parseFloat(transaction.amount) || 0,
+                balance: await getWalletOwnerBalance(transaction)
+            };
+        }
+        // الإضافة تأجلت (سبق أن أكملها مسار آخر أو خطأ عابر) — نبقى pending
+        // ويعيد المسار التالي فحص الحالة فيجد المعاملة completed
+        return { status: 'pending' };
+    }
+
+    if (verdict === 'failed') {
+        await update('wallet_transactions', transaction.id, {
+            status: 'failed',
+            description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
+        });
+        return { status: 'failed' };
+    }
+
+    return { status: 'pending' };
 }
 
 // ============================================================
@@ -894,25 +1022,25 @@ router.get('/sofizpay-callback', async (req, res) => {
             return res.redirect(`${dash}?status=canceled`);
         }
 
-        const targetCibId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
-        if (!targetCibId) {
-            return res.redirect(`${dash}?status=pending&txn=${transaction.id}`);
+        // ✅ نحفظ معرّفات البوابة القادمة في الرابط — من دونها لا يستطيع
+        //    فحص الحالة لاحقاً ولا الويب هوك إيجاد المعاملة
+        const queryCibId = String(req.query.cib_transaction_id || '').trim();
+        const queryTxId = String(req.query.transaction_id || '').trim();
+        const idPatch = {};
+        if (queryCibId && !transaction.cib_transaction_id) idPatch.cib_transaction_id = queryCibId;
+        if (queryTxId && !transaction.sofizpay_transaction_id) idPatch.sofizpay_transaction_id = queryTxId;
+        if (Object.keys(idPatch).length > 0) {
+            try {
+                await update('wallet_transactions', transaction.id, idPatch);
+                Object.assign(transaction, idPatch);
+            } catch (e) {}
         }
 
-        // ✅ التحقق مجدداً من البوابة قبل إضافة أي مبلغ (لا نثق بالرابط وحده)
-        const statusResult = await checkSofizPayTransactionStatus(targetCibId);
-        const verdict = interpretSofizPayStatus(statusResult);
+        // ✅ التحقق الشامل (بوابة سوفيز باي بكل معرّفاتها ثم سجل Stellar العام)
+        //    قبل إضافة أي مبلغ — لا نثق بالرابط وحده
+        const settled = await settlePendingDeposit(transaction, [cibId, queryTxId]);
 
-        if (verdict === 'success') {
-            await creditWalletTransaction(transaction);
-        } else if (verdict === 'failed') {
-            await update('wallet_transactions', transaction.id, {
-                status: 'failed',
-                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
-            });
-        }
-
-        res.redirect(`${dash}?status=${verdict === 'success' ? 'paid' : verdict}&txn=${transaction.id}`);
+        res.redirect(`${dash}?status=${settled.status === 'success' ? 'paid' : settled.status}&txn=${transaction.id}`);
     } catch (error) {
         logger.error('❌ خطأ في معالجة كولباك SofizPay:', error.message);
         res.redirect(`/student-dashboard.html?status=error`);
@@ -948,6 +1076,16 @@ router.post('/sofizpay-webhook', async (req, res) => {
         } catch (e) {}
 
         if (!transaction) {
+            // معرّفات غير مطابقة (قد لا نخزّنها أبداً عند الإنشاء) ← نستخرج
+            // رقم المعاملة من memo الذي أرسلناه نحن أنفسنا: ZD-<id>
+            const memoText = String(event.memo || event.transaction_memo || (event.data && event.data.memo) || '').trim();
+            const memoMatch = /ZD-(\d+)$/.exec(memoText);
+            if (memoMatch) {
+                try { transaction = await getOne('wallet_transactions', 'id', memoMatch[1]); } catch (e) {}
+            }
+        }
+
+        if (!transaction) {
             // لا توجد معاملة مطابقة — نعيد200 حتى لا تعيد البوابة الإرسال بلا نهاية
             return res.json({ success: true, message: 'ignored: no matching transaction' });
         }
@@ -956,25 +1094,22 @@ router.post('/sofizpay-webhook', async (req, res) => {
             return res.json({ success: true, message: 'already completed' });
         }
 
-        // ✅ فحص مؤكد من البوابة قبل أي إضافة (حماية ضد حمولات مزيفة)
-        const checkId = cibId || transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
-        let verdict = 'pending';
-        if (checkId) {
-            verdict = interpretSofizPayStatus(await checkSofizPayTransactionStatus(checkId));
-        } else if (paymentStatus === 'success') {
-            verdict = 'success';
+        // ✅ نحفظ معرّفات البوابة من الحدث إن كانت معاملتنا بلا معرّفات
+        const idPatch = {};
+        if (cibId && !transaction.cib_transaction_id) idPatch.cib_transaction_id = cibId;
+        if (sofizTxId && !transaction.sofizpay_transaction_id) idPatch.sofizpay_transaction_id = sofizTxId;
+        if (Object.keys(idPatch).length > 0) {
+            try {
+                await update('wallet_transactions', transaction.id, idPatch);
+                Object.assign(transaction, idPatch);
+            } catch (e) {}
         }
 
-        if (verdict === 'success') {
-            await creditWalletTransaction(transaction);
-        } else if (verdict === 'failed') {
-            await update('wallet_transactions', transaction.id, {
-                status: 'failed',
-                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
-            });
-        }
+        // ✅ تحقق شامل (البوابة ثم سجل Stellar العام) — لا نضيف الحصيلة
+        //    إلا بproof حقيقي من مصدر لا يُزوى حتى لو قيل لنا success
+        const settled = await settlePendingDeposit(transaction, [cibId, sofizTxId]);
 
-        res.json({ success: true, status: verdict });
+        res.json({ success: true, status: settled.status });
     } catch (error) {
         logger.error('❌ خطأ في معالجة ويب هوك SofizPay:', error.message);
         res.status(500).json({ success: false, error: 'خطأ داخلي' });
@@ -1006,30 +1141,15 @@ router.get('/deposit/status/:transaction_id', authenticate, async (req, res) => 
             return res.json({ success: true, status: transaction.status === 'cancelled' ? 'canceled' : 'failed' });
         }
 
-        // pending → فحص مؤكد من البوابة (لا نثق بالرابط وحده)
-        const checkId = transaction.cib_transaction_id || transaction.sofizpay_transaction_id;
-        if (!checkId) {
-            return res.json({ success: true, status: 'pending' });
-        }
-
-        const verdict = interpretSofizPayStatus(await checkSofizPayTransactionStatus(checkId));
-        if (verdict === 'success') {
-            const credited = await creditWalletTransaction(transaction);
-            if (credited) {
-                return res.json({ success: true, status: 'success', amount: parseFloat(transaction.amount) || 0, balance: await getWalletOwnerBalance(transaction) });
-            }
-            // الإضافة تأجلت (خطأ عابر في القاعدة) — نُبقيها pending وتُعاد المحاولة في الدورة التالية
-            return res.json({ success: true, status: 'pending' });
-        }
-        if (verdict === 'failed') {
-            await update('wallet_transactions', transaction.id, {
-                status: 'failed',
-                description: 'فشلت عملية الدفع عبر بوابة سوفيز باي'
-            });
-            return res.json({ success: true, status: 'failed' });
-        }
-
-        res.json({ success: true, status: 'pending' });
+        // pending → تحقق شامل (البوابة بجميع معرّفاتها ثم سجل Stellar العام)
+        // ثم إضافة ذرّية — تعيد {status, amount, balance} للواجهة
+        const settled = await settlePendingDeposit(transaction, []);
+        res.json({
+            success: true,
+            status: settled.status,
+            amount: settled.amount,
+            balance: settled.balance
+        });
     } catch (error) {
         logger.error('❌ خطأ في فحص حالة شحن الرصيد:', error.message);
         res.status(500).json({ success: false, error: 'خطأ داخلي' });
@@ -1288,3 +1408,5 @@ function renderErrorPage(title, message, buttonLink) {
 }
 
 module.exports = router;
+//  تُصدَّر للـcron في server.js: إعادة فحص الشحنات المعلّقة دورياً
+module.exports.settlePendingDeposit = settlePendingDeposit;

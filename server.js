@@ -5009,6 +5009,50 @@ function startVipExpiryCron() {
     console.log('👑 Cron: فحص وإلغاء ترقية VIP المنتهية للأساتذة - يعمل كل5 دقائق');
 }
 
+// ✅ Cron: إعادة فحص شحنات الرصيد المعلّقة (كل 5 دقائق + فحص فوري عند الإقلاع)
+//    يكمّل مسار تأكيد الدفع من طرف الخادم: حتى لو أُغلق المتصفح قبل الكولباك
+//    أو تعذّر وصول الويب هوك، نتحقق مجدداً من بوابة سوفيز باي ومن سجل
+//    Stellar العام ونضيف الرصيد فور ثبوت الدفع — دون أي تدخل من المستخدم.
+async function recheckPendingWalletDeposits() {
+    try {
+        const since = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+        const { data: rows, error } = await supabase
+            .from('wallet_transactions')
+            .select('*')
+            .eq('status', 'pending')
+            .gte('created_at', since)
+            .limit(10);
+        if (error) {
+            console.error('Wallet recheck error:', error.message);
+            return;
+        }
+        if (!rows || rows.length === 0) return;
+
+        for (const row of rows) {
+            try {
+                const settled = await walletRoutes.settlePendingDeposit(row, []);
+                if (settled.status === 'success') {
+                    console.log(`💰 Wallet recheck: أُضيف مبلغ ${row.amount} دج للمعاملة ${row.id} بعد التحقق من الدفع`);
+                }
+            } catch (rowErr) {
+                console.error('Wallet recheck row error:', rowErr.message);
+            }
+        }
+    } catch (err) {
+        console.error('Wallet recheck error:', err.message);
+    }
+}
+
+function startWalletRecheckCron() {
+    // تشغيل فوري عند بدء الخادم (يعالج المعلّقات القائمة فور النشر)
+    recheckPendingWalletDeposits();
+
+    // ثم فحص دوري كل5 دقائق
+    setInterval(recheckPendingWalletDeposits, 5 * 60 * 1000);
+
+    console.log('🔁 Cron: إعادة فحص شحنات الرصيد المعلّقة - كل 5 دقائق + فحص فوري عند الإقلاع');
+}
+
 // ✅ التحقق من وجود حاوية التخزين profiles وتكوينها كحاوية عامة (Public) تلقائياً
 async function ensureProfilesBucket() {
     if (!supabaseUrl || !supabaseKey) {
@@ -5068,6 +5112,7 @@ if (process.env.VERCEL) {
     try { startOfferCron(); } catch (e) { console.warn('offer cron:', e.message); }
     try { startCleanupCron(); } catch (e) { console.warn('cleanup cron:', e.message); }
     try { startVipExpiryCron(); } catch (e) { console.warn('vip cron:', e.message); }
+    try { startWalletRecheckCron(); } catch (e) { console.warn('wallet recheck cron:', e.message); }
 }
 
 if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
@@ -5091,6 +5136,7 @@ if ((require.main === module || !process.env.IS_TEST) && !process.env.VERCEL) {
         startOfferCron();
         startCleanupCron();
         startVipExpiryCron();
+        startWalletRecheckCron();
     });
 
     //  إرفاق خادم إشارات WebRTC على نفس الخادم الرئيسي (/ws-signaling)

@@ -10349,6 +10349,36 @@ function updateUI() {
         }
     }
 
+    // ================================================================
+    // ✅ فحص تلقائي للمعاملات المعلّقة عند عرض القائمة — يستدعي الخادم
+    //    الذي يتحقق من بوابة الدفع ومن سجل Stellar العام ويضيف الرصيد
+    //    فور ثبوت الدفع (بلا أي رسالة فشل — تأخر التأكيد طبيعي).
+    // ================================================================
+    var pendingDepositVerifyInFlight = false;
+    async function verifyPendingDeposits(transactions) {
+        if (pendingDepositVerifyInFlight || !Array.isArray(transactions)) return;
+        const pendingRows = transactions.filter(t => t && t.status === 'pending').slice(0, 3);
+        if (pendingRows.length === 0) return;
+        pendingDepositVerifyInFlight = true;
+        let healed = false;
+        try {
+            for (const row of pendingRows) {
+                try {
+                    const res = await fetchWithAuth('/api/wallet/deposit/status/' + encodeURIComponent(row.id));
+                    const data = await res.json();
+                    if (data && data.success && data.status === 'success') healed = true;
+                } catch (e) { /* خطأ مؤقت — نعيد المحاولة عند الفتح القادم */ }
+            }
+        } finally {
+            pendingDepositVerifyInFlight = false;
+        }
+        if (healed) {
+            if (typeof loadBalance === 'function') loadBalance();
+            showToast('✅ تم تأكيد الدفع بنجاح — أُضيف المبلغ إلى رصيدك', 'success');
+            loadTransactions();
+        }
+    }
+
     async function loadTransactions() {
         const container = document.getElementById('transactionsList');
         if (!container) return;
@@ -10441,6 +10471,7 @@ function updateUI() {
                 `;
             }
             container.innerHTML = html;
+            verifyPendingDeposits(transactions);
         } catch(e) { 
             if (e.message !== 'انتهت صلاحية الجلسة') {
                 showToast('حدث خطأ أثناء تحميل المعاملات', 'error');
