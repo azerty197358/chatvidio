@@ -4382,7 +4382,22 @@ function appendOptimisticMessage(text, reply) {
             html.zoomy-net-offline .toast-container { top: 130px !important; }
         }
 </style>
-    </head>
+    <style>
+    /* 🎬 مشغّل الفيديو: متجاوب بين الكمبيوتر والجوال */
+    .ex-video-wrap { display: flex; gap: 10px; margin: 12px 0; align-items: stretch; }
+    .ex-video-main { flex: 1; min-width: 0; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; background: #0f172a; position: relative; aspect-ratio: 16 / 9; }
+    .ex-video-playlist { width: 128px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 230px; flex-shrink: 0; padding-left: 2px; }
+    .ex-video-thumb { position: relative; cursor: pointer; border: 2px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #0f172a; flex-shrink: 0; transition: border-color 0.2s; }
+    .ex-video-thumb:hover { border-color: #f87171; }
+    .ex-video-thumb img { width: 100%; height: 66px; object-fit: cover; display: block; }
+    .ex-video-thumb .ex-thumb-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.1rem; background: rgba(0,0,0,0.25); pointer-events: none; }
+    @media (max-width: 640px) {
+        .ex-video-wrap { flex-direction: column; }
+        .ex-video-playlist { width: 100%; flex-direction: row; max-height: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+        .ex-video-thumb { width: 132px; }
+    }
+</style>
+</head>
 <body>
 <!-- ===== PLATFORM PRELOADER SPLASH SCREEN ===== -->
 <div id="platformPreloader" class="platform-preloader" aria-label="جاري التحميل">
@@ -5040,9 +5055,7 @@ function appendOptimisticMessage(text, reply) {
                     </select>
                 </div>
                 <div class="exercise-filter-item" style="flex: 1; min-width: 180px; max-width: 220px;">
-                    <select id="exerciseSubjectFilter" onchange="filterExercises()" style="width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-family: 'Cairo', sans-serif; font-size: 0.9rem; background: white;">
-                        <option value="all">📚 جميع المواد</option>
-                    </select>
+                    <input type="text" id="exerciseSubjectFilter" oninput="filterExercises()" placeholder="📚 اكتب اسم المادة..." style="width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-family: 'Cairo', sans-serif; font-size: 0.9rem;">
                 </div>
                 <div class="exercise-filter-item">
                     <button id="exerciseSavedFilterBtn" class="exercise-filter-button" onclick="toggleExerciseSavedFilter()" style="background: #f8fafc; color: #475569; border: 1px solid #cbd5e1; padding: 10px 18px; border-radius: 10px; font-weight: 700; font-size: 0.88rem; cursor: pointer; display: flex; align-items: center; gap: 8px;">
@@ -5128,7 +5141,15 @@ function appendOptimisticMessage(text, reply) {
                     كود الفيديو أو الرابط <span style="color:red;">*</span>
                 </label>
                 <div style="font-size: 0.78rem; color: #64748b; margin-bottom: 6px;"><i class="fas fa-info-circle"></i> الصق كود الـ iframe كما هو من يوتيوب (زر «Embed») أو الرابط — وللمقاطع المتعددة (قائمة تشغيل) ضع كل فيديو في سطر</div>
-                <textarea id="studentVideoUrl" rows="2" placeholder="https://www.youtube.com/watch?v=... أو الصق كود الـ iframe كاملاً — ولعدة فيديوهات ضع كل واحد في سطر" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.9rem; margin-bottom:14px; direction:ltr; text-align:right; resize:vertical;"></textarea>
+                <textarea id="studentVideoUrl" rows="2" placeholder="https://www.youtube.com/watch?v=... أو الصق كود الـ iframe كاملاً" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.9rem; margin-bottom:10px; direction:ltr; text-align:right; resize:vertical;"></textarea>
+
+                <!-- 📺 خيار قائمة التشغيل: خانات إضافية لعدة فيديوهات -->
+                <label style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--gray-800); margin-bottom:8px; cursor:pointer;">
+                    <input type="checkbox" id="studentVideoPlaylistToggle" onchange="togglePlaylistFields('student')" style="width:18px; height:18px; accent-color: #dc2626;">
+                    📺 قائمة تشغيل (إضافة عدة فيديوهات لهذا الدرس)
+                </label>
+                <div id="studentPlaylistExtra" style="display:none; margin-bottom: 10px; padding: 12px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px;"></div>
+                <button type="button" onclick="addPlaylistRow('student')" id="studentPlaylistExtraAddBtn" style="display:none; background:#fef2f2; color:#b91c1c; border:1px dashed #fca5a5; padding:8px 14px; border-radius:10px; font-weight:700; font-size:0.82rem; cursor:pointer; margin-bottom:14px;"><i class="fas fa-plus"></i> إضافة فيديو آخر للقائمة</button>
 
                 <label style="display:block; margin-bottom:6px; font-weight:700; color:var(--gray-800);">وصف مختصر (اختياري)</label>
                 <textarea id="studentVideoDesc" rows="2" placeholder="ما الذي يشرحه هذا الفيديو؟" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.9rem;"></textarea>
@@ -13514,16 +13535,75 @@ let studentPostFilesArray = [];
         return ids;
     }
 
-    // 🎬 تبديل الفيديو النشط في قائمة التشغيل داخل البطاقة
+    // 🎬 بدء التشغيل: يحلّ المشغّل الحقيقي مكان الصورة المصغّرة.
+    //    نستخدم youtube.com/embed بدل youtube-nocookie: نطاق nocookie
+    //    محجوب من مانعات الإعلانات (Brave) فتظهر رسالة «محتوى محجوب»
+    function playExerciseVideo(exId, videoId) {
+        const box = document.getElementById('yt-player-' + exId);
+        if (!box) return;
+        box.innerHTML = '<iframe width="100%" height="100%" src="https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>';
+        recordExerciseView(exId);
+    }
+
+    // 🎬 تبديل الفيديو النشط في قائمة التشغيل — يعمل أثناء التشغيل أو قبله
     function swapExerciseVideo(exId, videoId, el) {
-        const iframe = document.getElementById('yt-player-' + exId);
-        if (iframe) iframe.src = 'https://www.youtube-nocookie.com/embed/' + videoId;
+        const box = document.getElementById('yt-player-' + exId);
+        if (box) {
+            const iframe = box.querySelector('iframe');
+            if (iframe) {
+                iframe.src = 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0';
+            } else {
+                const img = box.querySelector('img');
+                if (img) img.src = 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
+                const btn = box.querySelector('button');
+                if (btn) btn.setAttribute('onclick', 'playExerciseVideo(' + exId + ", '" + videoId + "')");
+            }
+        }
         const container = el && el.parentElement;
         if (container) {
             Array.from(container.children).forEach(function (c) { c.style.borderColor = '#e2e8f0'; });
         }
         if (el) el.style.borderColor = '#dc2626';
         recordExerciseView(exId);
+    }
+
+    // ============================================================
+    // 📺 قائمة التشغيل: خانات إضافية تظهر عند تفعيل الخيار
+    // ============================================================
+    function togglePlaylistFields(mode) {
+        const isTeacher = mode === 'teacher';
+        const checkbox = document.getElementById(isTeacher ? 'exercisePlaylistToggle' : 'studentVideoPlaylistToggle');
+        const container = document.getElementById(isTeacher ? 'teacherPlaylistExtra' : 'studentPlaylistExtra');
+        const addBtn = document.getElementById(isTeacher ? 'teacherPlaylistAddBtn' : 'studentPlaylistExtraAddBtn');
+        if (!checkbox || !container) return;
+        container.style.display = checkbox.checked ? 'block' : 'none';
+        if (addBtn) addBtn.style.display = checkbox.checked ? 'inline-flex' : 'none';
+        if (checkbox.checked && container.children.length === 0) {
+            addPlaylistRow(mode);
+        } else if (!checkbox.checked) {
+            container.innerHTML = '';
+        }
+    }
+
+    function addPlaylistRow(mode) {
+        const isTeacher = mode === 'teacher';
+        const container = document.getElementById(isTeacher ? 'teacherPlaylistExtra' : 'studentPlaylistExtra');
+        if (!container) return;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+        row.innerHTML = `
+            <input type="text" class="${isTeacher ? 'teacher' : 'student'}PlaylistExtraInput" placeholder="رابط أو كود iframe لفيديو إضافي" style="flex:1; padding:9px 12px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.85rem; direction:ltr; text-align:right;">
+            <button type="button" onclick="this.parentElement.remove()" title="حذف هذا الفيديو من القائمة" style="background:#fee2e2; color:#ef4444; border:none; width:34px; height:34px; border-radius:10px; cursor:pointer; flex-shrink:0;"><i class="fas fa-times"></i></button>`;
+        container.appendChild(row);
+    }
+
+    // جمع الفيديو الأساسي + خانات القائمة إلى معرفات موحّدة بدون تكرار
+    function collectYouTubeIds(mode) {
+        const isTeacher = mode === 'teacher';
+        const mainVal = document.getElementById(isTeacher ? 'exerciseModalExternalLink' : 'studentVideoUrl')?.value || '';
+        const extras = Array.from(document.querySelectorAll('.' + (isTeacher ? 'teacher' : 'student') + 'PlaylistExtraInput'))
+            .map(inp => inp.value).join('\n');
+        return extractYouTubeVideoIds(mainVal + '\n' + extras);
     }
 
     function openStudentVideoModal() {
@@ -13544,7 +13624,7 @@ let studentPostFilesArray = [];
         const subject = document.getElementById('studentVideoSubject')?.value.trim();
         const level = document.getElementById('studentVideoLevel')?.value || 'all';
         const desc = document.getElementById('studentVideoDesc')?.value.trim();
-        const ytIds = extractYouTubeVideoIds(document.getElementById('studentVideoUrl')?.value.trim());
+        const ytIds = collectYouTubeIds('student');
 
         if (!title) {
             showToast('⚠️ يرجى إدخال عنوان الفيديو', 'warning');
@@ -13581,6 +13661,13 @@ let studentPostFilesArray = [];
                 if (document.getElementById('studentVideoTitle')) document.getElementById('studentVideoTitle').value = '';
                 if (document.getElementById('studentVideoUrl')) document.getElementById('studentVideoUrl').value = '';
                 if (document.getElementById('studentVideoDesc')) document.getElementById('studentVideoDesc').value = '';
+                // إعادة ضبط خيارات قائمة التشغيل
+                const chk = document.getElementById('studentVideoPlaylistToggle');
+                if (chk) chk.checked = false;
+                const extra = document.getElementById('studentPlaylistExtra');
+                if (extra) { extra.style.display = 'none'; extra.innerHTML = ''; }
+                const addBtn = document.getElementById('studentPlaylistExtraAddBtn');
+                if (addBtn) addBtn.style.display = 'none';
                 loadExercises(true);
             } else {
                 showToast('❌ ' + (data.error || 'فشل نشر الفيديو'), 'error');
@@ -13636,7 +13723,6 @@ let studentPostFilesArray = [];
             }
         }
 
-        populateExerciseSubjectFilter();
         filterExercises();
 
         // Check if url has ?exercise=ID
@@ -13671,28 +13757,13 @@ let studentPostFilesArray = [];
         filterExercises();
     }
 
-    // 📚 بناء فلتر المواد ديناميكياً من المواد الموجودة فعلياً
-    function populateExerciseSubjectFilter() {
-        const sel = document.getElementById('exerciseSubjectFilter');
-        if (!sel) return;
-        const current = sel.value || 'all';
-        const subjects = [];
-        (allStudentExercises || []).forEach(ex => {
-            const s = (ex.subject_name || ex.subject || '').trim();
-            if (s && subjects.indexOf(s) === -1) subjects.push(s);
-        });
-        subjects.sort((a, b) => a.localeCompare(b, 'ar'));
-        sel.innerHTML = '<option value="all">📚 جميع المواد</option>' + subjects.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
-        sel.value = subjects.indexOf(current) !== -1 ? current : 'all';
-    }
-
     function filterExercises() {
         const grid = document.getElementById('exercisesGrid');
         if (!grid) return;
 
         const searchText = (document.getElementById('exerciseSearchInput')?.value || '').toLowerCase().trim();
         const levelFilter = document.getElementById('exerciseLevelFilter')?.value || 'all';
-        const subjectFilter = document.getElementById('exerciseSubjectFilter')?.value || 'all';
+        const subjectFilter = (document.getElementById('exerciseSubjectFilter')?.value || '').trim();
 
         let filtered = allStudentExercises.filter(ex => {
             // Search text
@@ -13709,10 +13780,10 @@ let studentPostFilesArray = [];
                 return false;
             }
 
-            // فلترة حسب المادة الدراسية
-            if (subjectFilter !== 'all') {
-                const exSubject = (ex.subject_name || ex.subject || 'عام').trim();
-                if (exSubject !== subjectFilter) return false;
+            // فلترة حسب المادة الدراسية (كتابة جزئية مسموحة)
+            if (subjectFilter) {
+                const exSubject = (ex.subject_name || ex.subject || 'عام');
+                if (exSubject.indexOf(subjectFilter) === -1) return false;
             }
 
             // Level filter
@@ -13844,23 +13915,28 @@ let studentPostFilesArray = [];
             }
         }
 
-        // 🎬 فيديو يوتيوب (أو قائمة تشغيل بعدة فيديوهات): مشغّل مدمج
+        // 🎬 فيديو يوتيوب (أو قائمة تشغيل): صورة مصغّرة + تشغيل عند النقر
         const ytIds = (classification === 'فيديو') ? extractYouTubeVideoIds(ex.external_link) : [];
         const ytMainId = ytIds.length > 0 ? ytIds[0] : null;
         const videoEmbedHtml = ytMainId ? `
-            <div style="display: flex; gap: 10px; margin: 12px 0; align-items: stretch;">
-                <div style="flex: 1; min-width: 0; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; background: #0f172a; aspect-ratio: 16 / 9;">
-                    <iframe id="yt-player-${ex.id}" width="100%" height="100%" src="https://www.youtube-nocookie.com/embed/${ytMainId}" title="${escapeHtml(ex.title || 'فيديو تعليمي')}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen loading="lazy" style="display:block; border:0;" onload="recordExerciseView(${ex.id})"></iframe>
+            <div class="ex-video-wrap">
+                <div class="ex-video-main" id="yt-player-${ex.id}">
+                    <img src="https://i.ytimg.com/vi/${ytMainId}/hqdefault.jpg" alt="${escapeHtml(ex.title || 'فيديو تعليمي')}" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;" loading="lazy" referrerpolicy="no-referrer">
+                    <button type="button" onclick="playExerciseVideo(${ex.id}, '${ytMainId}')" aria-label="تشغيل الفيديو" style="position: absolute; inset: 0; margin: auto; width: 70px; height: 50px; border: none; border-radius: 12px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"><i class="fas fa-play"></i></button>
                 </div>
                 ${ytIds.length > 1 ? `
-                <div style="width: 128px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 220px; padding-left: 2px;">
+                <div class="ex-video-playlist">
                     ${ytIds.map((vid, i) => `
-                        <div onclick="swapExerciseVideo(${ex.id}, '${vid}', this)" title="تشغيل الفيديو ${i + 1}" style="position: relative; cursor: pointer; border: 2px solid ${i === 0 ? '#dc2626' : '#e2e8f0'}; border-radius: 8px; overflow: hidden; background: #0f172a; flex-shrink: 0; transition: border-color 0.2s;">
-                            <img src="https://i.ytimg.com/vi/${vid}/mqdefault.jpg" alt="فيديو ${i + 1}" style="width: 100%; height: 66px; object-fit: cover; display: block;" loading="lazy" referrerpolicy="no-referrer">
-                            <span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.1rem; background: rgba(0,0,0,0.25); pointer-events: none;"><i class="fas fa-play-circle"></i></span>
+                        <div class="ex-video-thumb" onclick="swapExerciseVideo(${ex.id}, '${vid}', this)" title="تشغيل الفيديو ${i + 1}" style="${i === 0 ? 'border-color:#dc2626;' : ''}">
+                            <img src="https://i.ytimg.com/vi/${vid}/mqdefault.jpg" alt="فيديو ${i + 1}" loading="lazy" referrerpolicy="no-referrer">
+                            <span class="ex-thumb-play"><i class="fas fa-play-circle"></i></span>
                         </div>`).join('')}
                 </div>` : ''}
             </div>` : '';
+        const playlistBadgeHtml = ytIds.length > 1 ? `
+            <span style="background: #f5f3ff; color: #7c3aed; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 800; border: 1px solid #ddd6fe; display: inline-flex; align-items: center; gap: 4px;">
+                <i class="fas fa-list-ol"></i> قائمة تشغيل (${ytIds.length} فيديوهات)
+            </span>` : '';
         const hasTeacher = ex.teacher_id != null && parseInt(ex.teacher_id) > 0;
 
         return `
@@ -13893,6 +13969,7 @@ let studentPostFilesArray = [];
                             <i class="fas fa-graduation-cap" style="color: var(--primary);"></i> ${escapeHtml(levelLabel)}
                         </span>
                         ${classificationBadgeHtml}
+                        ${playlistBadgeHtml}
                     </div>
 
                     <!-- Title & Description -->
