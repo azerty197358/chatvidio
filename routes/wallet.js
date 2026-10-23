@@ -67,6 +67,14 @@ if (!SOFIZPAY_ACCOUNT) {
 
 console.log(`💳 SofizPay: وضع ${SOFIZPAY_IS_SANDBOX ? 'الساند بوكس (اختبار)' : 'الإنتاج'} — API: ${SOFIZPAY_API_URL}`);
 
+//  الدومين الأساسي لروابط الدفع (return_url و webhook_url):
+//  PLATFORM_URL من البيئة يعلو كل شيء (لاختبار على نطاق آخر مثل نطاق Railway)،
+//  وإلا نستعمل الدومين الرسمي zoomdz.com — لا نبني الروابط من طلب المتصفح
+//  حتى لا تتجه روابط الويب هوك والعودة إلى نطاق مؤقت بالخطأ.
+function getSofizPayBaseUrl() {
+    return String(process.env.PLATFORM_URL || 'https://zoomdz.com').replace(/\/+$/, '');
+}
+
 // ============================================================
 // إنشاء طلب دفع عبر بوابة سوفيز باي (SofizPay — CIB / EDAHABIA)
 // ============================================================
@@ -340,13 +348,15 @@ router.post('/deposit', authenticate, authorize(['student']), [
             return res.status(500).json({ success: false, error: 'فشل إنشاء سجل المعاملة. يرجى المحاولة لاحقاً.' });
         }
 
-        const baseUrl = String(process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host')).replace(/\/+$/, '');
+        const baseUrl = getSofizPayBaseUrl();
 
         // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
         const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;
 
-        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي (SofizPay):', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
+        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي (SofizPay):', {
+            transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged,
+            base_url: baseUrl, return_url: returnUrl, webhook_url: `${baseUrl}/api/wallet/sofizpay-webhook`
+        });
 
         const checkout = await createSofizPayCheckout(
             totalCharged,
@@ -454,13 +464,15 @@ router.post('/deposit-teacher', authenticate, authorize(['teacher']), [
             return res.status(500).json({ success: false, error: 'فشل إنشاء سجل المعاملة. يرجى المحاولة لاحقاً.' });
         }
 
-        const baseUrl = String(process.env.PLATFORM_URL ||
-                        (req.get('x-forwarded-proto') || req.protocol) + '://' + req.get('host')).replace(/\/+$/, '');
+        const baseUrl = getSofizPayBaseUrl();
 
         // ✅ العودة تمر عبر كولباك الخادم للتحقق من الحالة مجدداً ثم التحويل إلى لوحة التحكم
         const returnUrl = `${baseUrl}/api/wallet/sofizpay-callback?txn=${transaction.id}`;
 
-        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي للأستاذ:', { transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged });
+        console.log('ℹ️ جاري إنشاء طلب دفع عبر سوفيز باي للأستاذ:', {
+            transaction_id: transaction.id, amount: finalAmount, fee: paymentFee, totalCharged,
+            base_url: baseUrl, return_url: returnUrl, webhook_url: `${baseUrl}/api/wallet/sofizpay-webhook`
+        });
 
         const checkout = await createSofizPayCheckout(
             totalCharged,
