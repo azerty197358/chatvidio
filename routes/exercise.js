@@ -179,6 +179,16 @@ router.post('/get-signed-upload-url', authenticate, authorize(['teacher']), asyn
 // ============================================================
 // 1. جلب قائمة التمارين والحلول (تطبيق الفلترة، البحث، والمحفوظات)
 // ============================================================
+// ============================================================
+// 🎬 استخراج معرف الفيديو من روابط يوتيوب بأنواعها
+//    (watch?v= / youtu.be / embed / shorts / live)
+// ============================================================
+function extractYouTubeVideoId(url) {
+    if (!url || typeof url !== 'string') return null;
+    const match = url.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+    return match ? match[1] : null;
+}
+
 router.get('/', optionalAuth, async (req, res) => {
     // تُعلن خارج try ليبتعد أيضاً عنها معالج الأخطاء (abandon) — وإلا يبقى
     // انتظار الكاش مسجلاً للأبد وتتوقف كل الطلبات اللاحقة لهذا المفتاح
@@ -248,7 +258,8 @@ router.get('/', optionalAuth, async (req, res) => {
         let query = supabase
             .from('exercise_posts')
             // views_count غير موجود فعلياً في الجدول — ذكره يُفشل الاستعلام
-            .select('id, teacher_id, title, description, education_level, subject_name, images, external_link, classification, created_at')
+            // student_id يتيح تمييز فيديوهات الطلاب (يُستبدل select('*') تلقائياً إن غاب)
+            .select('id, teacher_id, student_id, title, description, education_level, subject_name, images, external_link, classification, created_at')
             .order('created_at', { ascending: false })
             // was unbounded: one busy table could ship thousands of rows
             .limit(300);
@@ -365,9 +376,9 @@ router.get('/', optionalAuth, async (req, res) => {
 
             return {
                 ...ex,
-                teacher_name: teacher.full_name || ex.teacher_name || 'أستاذ المادة',
+                teacher_name: teacher.full_name || ex.teacher_name || (ex.student_id ? 'طالب في المنصة' : 'أستاذ المادة'),
                 teacher_profile_image: teacher.profile_image || teacher.profile_url || '/images/default-avatar.svg',
-                teacher_specialization: teacher.specialization || ex.subject_name || 'أستاذ المحتوى',
+                teacher_specialization: teacher.specialization || ex.subject_name || (ex.student_id ? 'طالب في المنصة' : 'أستاذ المحتوى'),
                 images: imagesList,
                 is_saved: allUserBookmarks.has(ex.id)
             };
@@ -543,14 +554,18 @@ router.post('/', authenticate, [
     body('education_level').notEmpty().withMessage('المستوى الدراسي مطلوب')
 ], async (req, res) => {
     try {
-        if (req.user.role !== 'teacher') {
-            return res.status(403).json({ error: 'عذراً، يقتصر إضافة التمارين والحلول على الأساتذة فقط' });
+        const isTeacher = req.user.role === 'teacher';
+        const isStudent = req.user.role === 'student';
+        if (!isTeacher && !isStudent) {
+            return res.status(403).json({ error: 'عذراً، يقتصر النشر على الأساتذة والطلاب فقط' });
         }
 
-        const teacherId = req.user.userId || req.user.id;
-        const teacher = await getOne('teachers', 'id', teacherId);
-        if (!teacher || teacher.status !== 'approved') {
-            return res.status(403).json({ error: 'حسابك غير معتمد بعد، لا يمكنك إضافة تمارين حتى يتم قبول حسابك من قبل الإدارة' });
+        const currentUserId = req.user.userId || req.user.id;
+        if (isTeacher) {
+            const teacher = await getOne('teachers', 'id', currentUserId);
+            if (!teacher || teacher.status !== 'approved') {
+                return res.status(403).json({ error: 'حسابك غير معتمد بعد، لا يمكنك إضافة تمارين حتى يتم قبول حسابك من قبل الإدارة' });
+            }
         }
 
         const errors = validationResult(req);
@@ -559,6 +574,32 @@ router.post('/', authenticate, [
         }
 
         const { title, description, education_level, subject_name, images, external_link, classification } = req.body;
+
+        // 🎬 الطالب ينشر فيديوهات تعليمية فقط: يُفرض عليه تصنيف «فيديو»
+        //    ويجب أن يكون الرابط رابط فيديو يوتيوب صالحاً
+        let finalClassification = (classification || 'تمرين').trim();
+        let finalExternalLink = (external_link || '').trim() || null;
+        if (isStudent) {
+            finalClassification = 'فيديو';
+            const ytId = extractYouTubeVideoId(finalExternalLink);
+            if (!ytId) {
+                return res.status(400).json({ error: 'يرجى إدخال رابط فيديو يوتيوب صحيح ( youtube.com/watch أو youtu.be )' });
+            }
+            finalExternalLink = 'https://www.youtube.com/watch?v=' + ytId;
+
+            // 🛡️ حد يومي بسيط يمنع الإزعاج — يتخطّى بهدوء إن لم يوجد العمود بعد
+            try {
+                const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+                const { count, error: countErr } = await supabase
+                    .from('exercise_posts')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('student_id', currentUserId)
+                    .gte('created_at', dayAgo);
+                if (!countErr && count >= 10) {
+                    return res.status(429).json({ error: 'لقد نشرت 10 فيديوهات خلال 24 ساعة — انتظر قليلاً قبل النشر مجدداً' });
+                }
+            } catch (limitErr) { /* لا شيء */ }
+        }
 
         // التأكد من أن الصور مصفوفة ولا تتجاوز 10 صور
         let imagesArray = [];
@@ -572,19 +613,20 @@ router.post('/', authenticate, [
         const { list: postSafeImages } = await migrateImageListToStorage(imagesArray);
 
         const newExerciseData = {
-            teacher_id: req.user.userId || req.user.id,
+            teacher_id: isTeacher ? currentUserId : null,
+            student_id: isStudent ? currentUserId : null,
             title: title.trim(),
             description: (description || '').trim(),
             education_level: education_level.trim(),
             subject_name: (subject_name || '').trim() || 'عام',
             images: JSON.stringify(postSafeImages),
-            external_link: (external_link || '').trim() || null,
+            external_link: finalExternalLink,
             likes_count: 0,
             views_count: 0,
             shares_count: 0,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-            classification: (classification || 'تمرين').trim()
+            classification: finalClassification
         };
 
         let created;
@@ -596,6 +638,9 @@ router.post('/', authenticate, [
                 const fallbackData = { ...newExerciseData };
                 delete fallbackData.classification;
                 created = await insert('exercise_posts', fallbackData);
+            } else if (isStudent && insertErr.message && insertErr.message.includes('teacher_id')) {
+                // بعض قواعد البيانات تجعل teacher_id غير قابل للفراغ — نحفظه بصفر كحجز
+                created = await insert('exercise_posts', { ...newExerciseData, teacher_id: 0 });
             } else {
                 throw insertErr;
             }
@@ -603,7 +648,7 @@ router.post('/', authenticate, [
 
         res.json({
             success: true,
-            message: '🎉 تم نشر التمارين والحلول بنجاح!',
+            message: isStudent ? '🎬 تم نشر الفيديو التعليمي بنجاح!' : '🎉 تم نشر التمارين والحلول بنجاح!',
             exercise: created
         });
     } catch (err) {
@@ -629,8 +674,10 @@ router.put('/:id', authenticate, [
             return res.status(404).json({ error: 'عذراً، لم يتم العثور على منشور التمارين والحلول هذا' });
         }
 
-        // Authorize: Only the owner (teacher_id matches currentUserId) or admin can edit
-        if (req.user.role !== 'admin' && parseInt(existingExercise.teacher_id) !== parseInt(currentUserId)) {
+        // Authorize: المالك (أستاذ أو طالب صاحب الفيديو) أو الأدمن فقط
+        const isTeacherOwner = req.user.role === 'teacher' && parseInt(existingExercise.teacher_id) === parseInt(currentUserId);
+        const isStudentOwner = req.user.role === 'student' && existingExercise.student_id != null && parseInt(existingExercise.student_id) === parseInt(currentUserId);
+        if (req.user.role !== 'admin' && !isTeacherOwner && !isStudentOwner) {
             return res.status(403).json({ error: 'عذراً، لا تملك الصلاحية لتعديل هذا المنشور' });
         }
 
@@ -660,6 +707,17 @@ router.put('/:id', authenticate, [
             externalLink = 'https://' + externalLink;
         }
 
+        // الطالب لا يملك إلا فيديوهاته — يبقى تصنيفها «فيديو» ورابطها يوتيوب
+        let putClassification = (classification || 'تمرين').trim();
+        if (isStudentOwner) {
+            putClassification = 'فيديو';
+            const ytId = extractYouTubeVideoId(externalLink);
+            if (!ytId) {
+                return res.status(400).json({ error: 'يرجى إدخال رابط فيديو يوتيوب صحيح' });
+            }
+            externalLink = 'https://www.youtube.com/watch?v=' + ytId;
+        }
+
         // صور base64 تُرفع فوراً إلى التخزين — لا تُخزَّن بيانات ضخمة داخل قاعدة البيانات
         const { list: putSafeImages } = await migrateImageListToStorage(imagesArray);
 
@@ -671,7 +729,7 @@ router.put('/:id', authenticate, [
             images: JSON.stringify(putSafeImages),
             external_link: (externalLink || '').trim() || null,
             updated_at: new Date().toISOString(),
-            classification: (classification || 'تمرين').trim()
+            classification: putClassification
         };
 
         let updated;
@@ -811,7 +869,10 @@ router.delete('/:id', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'المنشور غير موجود' });
         }
 
-        if (req.user.role !== 'admin' && (req.user.role !== 'teacher' || parseInt(exercise.teacher_id) !== parseInt(req.user.userId || req.user.id))) {
+        const currentUserId = req.user.userId || req.user.id;
+        const isTeacherOwner = req.user.role === 'teacher' && parseInt(exercise.teacher_id) === parseInt(currentUserId);
+        const isStudentOwner = req.user.role === 'student' && exercise.student_id != null && parseInt(exercise.student_id) === parseInt(currentUserId);
+        if (req.user.role !== 'admin' && !isTeacherOwner && !isStudentOwner) {
             return res.status(403).json({ error: 'غير مصرح لك بحذف هذا المنشور' });
         }
 

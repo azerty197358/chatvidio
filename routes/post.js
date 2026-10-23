@@ -234,6 +234,17 @@ router.post('/create', authenticate, authorize(['student', 'teacher']), upload.a
 // ============================================================
 // 2. جلب جميع المنشورات (للجميع: أساتذة وطلاب)
 // ============================================================
+// 🏆 درجة تفاعل المنشور لترتيب الفيد: المشاهدات والإعجابات والتعليقات
+//    مع مكافأة بسيطة للمحتوى الحديث حتى لا يختفي الجديد تماماً
+function postEngagementScore(post) {
+    const views = Number(post.views_count ?? post.views) || 0;
+    const likes = Number(post.likes) || 0;
+    const comments = Number(post.comments_count) || 0;
+    const hoursSince = (Date.now() - new Date(post.created_at).getTime()) / 3600000;
+    const freshness = (isFinite(hoursSince) && hoursSince >= 0 && hoursSince < 48) ? (48 - hoursSince) * 2 : 0;
+    return views + likes * 3 + comments * 5 + freshness;
+}
+
 router.get('/', async (req, res) => {
     try {
         let userId = null;
@@ -299,7 +310,18 @@ router.get('/', async (req, res) => {
             }
         }
 
-        query = query.range(parsedOffset, parsedOffset + parsedLimit - 1);
+        // 🏆 وضع الاكتشاف (الفيد العام بلا فلاتر): نجلب نافذة أوسع من
+        // المنشورات الأحدث ثم نرتّبها حسب التفاعل — الأكثر مشاهدة
+        // وإعجاباً وتعليقاً يظهر أولاً — ونقطّع الصفحات من نافذة متسقة
+        const isDiscoveryFeed = !post_id && !teacher_id && !student_id
+            && !(saved_only === 'true' || saved_only === true);
+        const FEED_RANKING_WINDOW = 200;
+        if (isDiscoveryFeed) {
+            const windowEnd = Math.min(Math.max(parsedOffset + parsedLimit, parsedLimit), FEED_RANKING_WINDOW) - 1;
+            query = query.range(0, windowEnd);
+        } else {
+            query = query.range(parsedOffset, parsedOffset + parsedLimit - 1);
+        }
 
         const { data: posts, error } = await query;
 
@@ -308,6 +330,12 @@ router.get('/', async (req, res) => {
         }
 
         let rawPosts = posts || [];
+
+        // 🏆 إعادة الترتيب حسب التفاعل ثم قصّة الصفحة المطلوبة من النافذة
+        if (isDiscoveryFeed && rawPosts.length > parsedLimit) {
+            rawPosts.sort((a, b) => postEngagementScore(b) - postEngagementScore(a));
+            rawPosts = rawPosts.slice(parsedOffset, parsedOffset + parsedLimit);
+        }
 
         // التأكد من تضمين المنشور المشترك في حال لم يكن ضمن أول صفحة
         const targetPostId = parseInt(include_post_id || post_id);
