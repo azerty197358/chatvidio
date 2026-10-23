@@ -22,7 +22,25 @@ const sharp = require('sharp');
 // ============================================================
 const _migratingExerciseIds = new Set();
 
-// يرفع أي data URLs في المصفوفة إلى bucket exercises ويعيد مصفوفة الروابط
+// إحصاءات الترحيل تُعرض في ترويسة X-Ex-Migration لتشخيص الإنتاج
+const _exMigrationStats = { attempted: 0, migrated: 0, failed: 0, lastError: '' };
+let _exBucketEnsured = false;
+
+// الحاوية exercises قد لا تكون منشأة أصلاً — نإنشها مرة واحدة ثم نكمل
+async function ensureExercisesBucket() {
+    if (_exBucketEnsured) return;
+    _exBucketEnsured = true;
+    try {
+        const { error } = await supabase.storage.createBucket('exercises', { public: true });
+        if (error && !/already exists|duplicate/i.test(error.message || '')) {
+            logger.warn('تعذر إنشاء حاوية التخزين exercises: ' + error.message);
+        }
+    } catch (e) {
+        logger.warn('استثناء عند إنشاء حاوية exercises: ' + e.message);
+    }
+}
+
+// يرفع أي data URLs في المصفوفة إلى التخزين ويعيد مصفوفة الروابط
 async function migrateImageListToStorage(imagesList) {
     const migrated = [];
     let changed = false;
@@ -39,6 +57,7 @@ async function migrateImageListToStorage(imagesList) {
             migrated.push(img);
             continue;
         }
+        _exMigrationStats.attempted++;
 
         // ضغط محافظ: حتى 1500px وجودة 72 تكفي لقراءة الصور عند التكبير
         let outBuffer = buffer;
@@ -57,18 +76,47 @@ async function migrateImageListToStorage(imagesList) {
         }
 
         const ext = contentType === 'image/png' ? 'png' : 'jpg';
-        const filePath = `migrated/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error: upErr } = await supabase.storage
-            .from('exercises')
-            .upload(filePath, outBuffer, { contentType: contentType, cacheControl: '86400' });
-        if (upErr) {
-            logger.warn('تعذر رفع صورة base64 إلى التخزين: ' + upErr.message);
+        const fileTail = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const uploadOpts = { contentType: contentType, cacheControl: '86400' };
+
+        // الحاوية الأساسية exercises — إن لم تكن منشأة نإنشها ثم نعيد
+        let storedPath = null;
+        let storedBucket = null;
+        let lastUpErr = null;
+        const primaryPath = `migrated/${fileTail}`;
+        let up = await supabase.storage.from('exercises').upload(primaryPath, outBuffer, uploadOpts);
+        if (up.error && /bucket/i.test(up.error.message || '')) {
+            await ensureExercisesBucket();
+            up = await supabase.storage.from('exercises').upload(primaryPath, outBuffer, uploadOpts);
+        }
+        if (!up.error) {
+            storedPath = primaryPath;
+            storedBucket = 'exercises';
+        } else {
+            lastUpErr = up.error;
+            // حل أخير: الحاضنة المعروفة profiles (تُستخدم للصور الشخصية أصلاً)
+            const fbPath = `exercise-migrated/${fileTail}`;
+            const fb = await supabase.storage.from('profiles').upload(fbPath, outBuffer, uploadOpts);
+            if (!fb.error) {
+                storedPath = fbPath;
+                storedBucket = 'profiles';
+            } else {
+                lastUpErr = fb.error;
+            }
+        }
+
+        if (!storedPath) {
+            _exMigrationStats.failed++;
+            _exMigrationStats.lastError = ((lastUpErr && lastUpErr.message) || 'upload failed').slice(0, 80);
+            logger.warn('تعذر رفع صورة base64 إلى التخزين: ' + _exMigrationStats.lastError);
             migrated.push(img);
             continue;
         }
-        const { data: pub } = supabase.storage.from('exercises').getPublicUrl(filePath);
+
+        const { data: pub } = supabase.storage.from(storedBucket).getPublicUrl(storedPath);
         migrated.push((pub && pub.publicUrl) || img);
         changed = true;
+        _exMigrationStats.migrated++;
     }
     return { list: migrated, changed: changed };
 }
@@ -138,6 +186,8 @@ router.get('/', optionalAuth, async (req, res) => {
     const currentUserId = req.user ? (req.user.userId || req.user.id) : null;
     const currentUserType = req.user ? req.user.role : null;
     const cacheKey = `exercises:${level || ''}:${search || ''}:${saved_only || ''}:${currentUserId || ''}`;
+    // ترويسة تشخيص: تُظهر إن كان كود الترحيل منشوراً في الإنتاج ونتائجه
+    res.setHeader('X-Ex-Migration', `att=${_exMigrationStats.attempted}; ok=${_exMigrationStats.migrated}; fail=${_exMigrationStats.failed}; err=${(_exMigrationStats.lastError || '-').replace(/[^\x20-\x7E]/g, '')}`);
     try {
         // one query serves every visitor that asks in the same window
         const cached = memoryCache.get(cacheKey);
