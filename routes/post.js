@@ -310,15 +310,15 @@ router.get('/', async (req, res) => {
             }
         }
 
-        // 🏆 وضع الاكتشاف (الفيد العام بلا فلاتر): نجلب نافذة أوسع من
-        // المنشورات الأحدث ثم نرتّبها حسب التفاعل — الأكثر مشاهدة
-        // وإعجاباً وتعليقاً يظهر أولاً — ونقطّع الصفحات من نافذة متسقة
+        // 🏆 وضع الاكتشاف (الفيد العام بلا فلاتر): نجلب نافذة ثابتة من
+        // أحدث 100 منشور ثم نرتّبها حسب التفاعل — حتى يظهر الأعلى
+        // مشاهدة وإعجاباً وتعليقاً في أول صفحة فعلاً (وليس ضمن أحدث 10)
+        // ونقطّع الصفحات من نافذة متسقة حتى لا تتضارب الترتيبات
         const isDiscoveryFeed = !post_id && !teacher_id && !student_id
             && !(saved_only === 'true' || saved_only === true);
-        const FEED_RANKING_WINDOW = 200;
+        const FEED_RANKING_WINDOW = 100;
         if (isDiscoveryFeed) {
-            const windowEnd = Math.min(Math.max(parsedOffset + parsedLimit, parsedLimit), FEED_RANKING_WINDOW) - 1;
-            query = query.range(0, windowEnd);
+            query = query.range(0, FEED_RANKING_WINDOW - 1);
         } else {
             query = query.range(parsedOffset, parsedOffset + parsedLimit - 1);
         }

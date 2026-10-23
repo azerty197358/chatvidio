@@ -180,13 +180,31 @@ router.post('/get-signed-upload-url', authenticate, authorize(['teacher']), asyn
 // 1. جلب قائمة التمارين والحلول (تطبيق الفلترة، البحث، والمحفوظات)
 // ============================================================
 // ============================================================
-// 🎬 استخراج معرف الفيديو من روابط يوتيوب بأنواعها
-//    (watch?v= / youtu.be / embed / shorts / live)
+// 🎬 استخراج معرفات الفيديو من كود الـ iframe الكامل أو الروابط
+//    (watch?v= / youtu.be / embed / shorts / live /
+//    youtube-nocookie) — يقبل نصاً متعدد الأسطر لقائمة تشغيل
 // ============================================================
-function extractYouTubeVideoId(url) {
-    if (!url || typeof url !== 'string') return null;
-    const match = url.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-    return match ? match[1] : null;
+function extractYouTubeVideoIds(text) {
+    if (!text || typeof text !== 'string') return [];
+    const re = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g;
+    const ids = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        if (ids.indexOf(m[1]) === -1) ids.push(m[1]);
+    }
+    return ids;
+}
+
+function extractYouTubeVideoId(text) {
+    return extractYouTubeVideoIds(text)[0] || null;
+}
+
+// توحيد المدخلات (رابط أو كود iframe أو عدة أسطر) إلى
+// روابط معيارية — سطر واحد لكل فيديو في قائمة التشغيل
+function normalizeYouTubePlaylist(text) {
+    return extractYouTubeVideoIds(text)
+        .map(id => 'https://www.youtube.com/watch?v=' + id)
+        .join('\n');
 }
 
 router.get('/', optionalAuth, async (req, res) => {
@@ -581,11 +599,11 @@ router.post('/', authenticate, [
         let finalExternalLink = (external_link || '').trim() || null;
         if (isStudent) {
             finalClassification = 'فيديو';
-            const ytId = extractYouTubeVideoId(finalExternalLink);
-            if (!ytId) {
-                return res.status(400).json({ error: 'يرجى إدخال رابط فيديو يوتيوب صحيح ( youtube.com/watch أو youtu.be )' });
+            const normalizedVideos = normalizeYouTubePlaylist(finalExternalLink);
+            if (!normalizedVideos) {
+                return res.status(400).json({ error: 'يرجى لصق كود iframe أو رابط فيديو يوتيوب صحيح (يمكن لصق أكثر من فيديو — كل فيديو في سطر)' });
             }
-            finalExternalLink = 'https://www.youtube.com/watch?v=' + ytId;
+            finalExternalLink = normalizedVideos;
 
             // 🛡️ حد يومي بسيط يمنع الإزعاج — يتخطّى بهدوء إن لم يوجد العمود بعد
             try {
@@ -599,6 +617,15 @@ router.post('/', authenticate, [
                     return res.status(429).json({ error: 'لقد نشرت 10 فيديوهات خلال 24 ساعة — انتظر قليلاً قبل النشر مجدداً' });
                 }
             } catch (limitErr) { /* لا شيء */ }
+        }
+
+        // 🎬 الأستاذ أيضاً يستطيع نشر فيديو (أو قائمة تشغيل بعدة فيديوهات)
+        if (finalClassification === 'فيديو' && !isStudent) {
+            const normalizedVideos = normalizeYouTubePlaylist(finalExternalLink);
+            if (!normalizedVideos) {
+                return res.status(400).json({ error: 'يرجى لصق كود iframe أو رابط فيديو يوتيوب صحيح (يمكن لصق أكثر من فيديو — كل فيديو في سطر)' });
+            }
+            finalExternalLink = normalizedVideos;
         }
 
         // التأكد من أن الصور مصفوفة ولا تتجاوز 10 صور
@@ -707,15 +734,18 @@ router.put('/:id', authenticate, [
             externalLink = 'https://' + externalLink;
         }
 
-        // الطالب لا يملك إلا فيديوهاته — يبقى تصنيفها «فيديو» ورابطها يوتيوب
+        // الطالب لا يملك إلا فيديوهاته — يبقى تصنيفها «فيديو»
         let putClassification = (classification || 'تمرين').trim();
         if (isStudentOwner) {
             putClassification = 'فيديو';
-            const ytId = extractYouTubeVideoId(externalLink);
-            if (!ytId) {
-                return res.status(400).json({ error: 'يرجى إدخال رابط فيديو يوتيوب صحيح' });
+        }
+        // 🎬 «فيديو» يتطلب كود iframe أو رابطاً صالحاً — يقبل قائمة تشغيل
+        if (putClassification === 'فيديو') {
+            const normalizedVideos = normalizeYouTubePlaylist(externalLink);
+            if (!normalizedVideos) {
+                return res.status(400).json({ error: 'يرجى لصق كود iframe أو رابط فيديو يوتيوب صحيح (يمكن لصق أكثر من فيديو — كل فيديو في سطر)' });
             }
-            externalLink = 'https://www.youtube.com/watch?v=' + ytId;
+            externalLink = normalizedVideos;
         }
 
         // صور base64 تُرفع فوراً إلى التخزين — لا تُخزَّن بيانات ضخمة داخل قاعدة البيانات
