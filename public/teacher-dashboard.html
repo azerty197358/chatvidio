@@ -630,7 +630,7 @@ function appendOptimisticMessage(text, reply) {
     
     <meta charset="UTF-8">
     <meta name="robots" content="noindex, nofollow">
-    <meta name="referrer" content="no-referrer">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <script src="/js/platform-config.js"></script>
     <title>ZoomDz | لوحة الأستاذ</title>
@@ -6801,7 +6801,7 @@ function appendOptimisticMessage(text, reply) {
             <i class="fas fa-link" style="color:var(--primary); margin-left:4px;"></i> رابط الملف الخارجي أو كود فيديو يوتيوب (اختياري)
         </label>
         <div id="exerciseExternalLinkHint" style="font-size: 0.78rem; color: #64748b; margin-bottom: 6px;"><i class="fas fa-info-circle"></i> الصق رابط ملف PDF أو كود الـ iframe لليوتيوب كما هو من زر «Embed» — ولعدة فيديوهات ضع كل واحد في سطر</div>
-        <textarea id="exerciseModalExternalLink" rows="2" placeholder="https://drive.google.com/... أو الصق كود الـ iframe لليوتيوب — ولعدة فيديوهات ضع كل واحد في سطر" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.9rem; margin-bottom:10px; direction:ltr; text-align:right; resize:vertical;"></textarea>
+        <textarea id="exerciseModalExternalLink" rows="2" placeholder="الصق كود الـ iframe كاملاً من «مشاركة ← تضمين» — مثال: <iframe width=&quot;560&quot; height=&quot;315&quot; src=&quot;https://www.youtube-nocookie.com/embed/XXXXXXXXXXX&quot; ...></iframe> — ولعدة فيديوهات كل كود في سطر" style="width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.9rem; margin-bottom:10px; direction:ltr; text-align:right; resize:vertical;"></textarea>
 
         <!-- 📺 خيار قائمة التشغيل: خانات إضافية لعدة فيديوهات -->
         <label style="display:flex; align-items:center; gap:8px; font-weight:700; color:var(--gray-800); margin-bottom:8px; cursor:pointer;">
@@ -15604,7 +15604,6 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 <div class="ex-video-wrap">
                     <div class="ex-video-main" id="yt-player-${ex.id}">
                         <img src="https://i.ytimg.com/vi/${ytMainId}/hqdefault.jpg" alt="${escapeHtml(ex.title || 'فيديو تعليمي')}" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;" loading="lazy" referrerpolicy="no-referrer">
-                        <a href="https://www.youtube.com/watch?v=${ytMainId}" target="_blank" rel="noopener" data-yt-link="1" title="فتح الفيديو على يوتيوب مباشرة" style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(15,23,42,0.78); color:#fff; font-size:0.68rem; font-weight:800; padding:4px 10px; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 8px rgba(0,0,0,0.35);"><i class="fab fa-youtube" style="color:#ff4444;"></i> فتح على يوتيوب</a>
                         <button type="button" onclick="playExerciseVideo(${ex.id}, '${ytMainId}')" aria-label="تشغيل الفيديو" style="position: absolute; inset: 0; margin: auto; width: 70px; height: 50px; border: none; border-radius: 12px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"><i class="fas fa-play"></i></button>
                     </div>
                     ${ytIds.length > 1 ? `
@@ -15963,22 +15962,21 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     }
 
     // 🎬 بدء التشغيل: يحلّ المشغّل الحقيقي مكان الصورة المصغّرة.
-    //    نستخدم youtube.com/embed بدل youtube-nocookie: نطاق nocookie
-    //    محجوب من مانعات الإعلانات (Brave) فتظهر رسالة «محتوى محجوب»
-    //    ويبقى رابط «فتح على يوتيوب» دائماً كحل بديل إن حُجب المشغّل
-    //    (فيديو معطّل التضمين من صاحبه مثلاً)
+    //    نصيحتان من تشخيص خطأ يوتيوب 153 (خطأ في إعدادات المشغل):
+    //    1) يوتيوب يرفض التشغيل بلا «Referer» صالح — نثبت
+    //       referrerpolicy على الـ iframe ونرسل origin صراحةً
+    //    2) نطاق youtube.com/embed المعتمد عالمياً (وليست nocookie
+    //       المحجوبة من بعض مانعات الإعلانات)
+    function ytEmbedSrc(videoId) {
+        return 'https://www.youtube.com/embed/' + videoId
+            + '?autoplay=1&rel=0&origin=' + encodeURIComponent(window.location.origin);
+    }
+
     function playExerciseVideo(exId, videoId) {
         const box = document.getElementById('yt-player-' + exId);
         if (!box) return;
-        box.innerHTML = '<iframe width="100%" height="100%" src="https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>'
-            + ytWatchLinkHtml(videoId);
+        box.innerHTML = '<iframe width="100%" height="100%" src="' + ytEmbedSrc(videoId) + '" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>';
         recordExerciseView(exId);
-    }
-
-    // رابط صغير «فتح على يوتيوب» يبقى فوق المشغّل — خيار مضمون
-    // إن منع الموقع أو المتصفح تشغيل الفيديو المضمن
-    function ytWatchLinkHtml(videoId) {
-        return '<a href="https://www.youtube.com/watch?v=' + videoId + '" target="_blank" rel="noopener" data-yt-link="1" title="فتح الفيديو على يوتيوب مباشرة" style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(15,23,42,0.78); color:#fff; font-size:0.68rem; font-weight:800; padding:4px 10px; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 8px rgba(0,0,0,0.35);"><i class="fab fa-youtube" style="color:#ff4444;"></i> فتح على يوتيوب</a>';
     }
 
     // 🎬 تبديل الفيديو النشط في قائمة التشغيل — يعمل أثناء التشغيل أو قبله
@@ -15987,16 +15985,13 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         if (box) {
             const iframe = box.querySelector('iframe');
             if (iframe) {
-                iframe.src = 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0';
+                iframe.src = ytEmbedSrc(videoId);
             } else {
                 const img = box.querySelector('img');
                 if (img) img.src = 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
                 const btn = box.querySelector('button');
                 if (btn) btn.setAttribute('onclick', 'playExerciseVideo(' + exId + ", '" + videoId + "')");
             }
-            // رابط «فتح على يوتيوب» يتبع الفيديو المختار دائماً
-            const watchLink = box.querySelector('a[data-yt-link]');
-            if (watchLink) watchLink.href = 'https://www.youtube.com/watch?v=' + videoId;
         }
         const container = el && el.parentElement;
         if (container) {
@@ -16031,7 +16026,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
         row.innerHTML = `
-            <input type="text" class="${isTeacher ? 'teacher' : 'student'}PlaylistExtraInput" placeholder="رابط أو كود iframe لفيديو إضافي" style="flex:1; padding:9px 12px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.85rem; direction:ltr; text-align:right;">
+            <input type="text" class="${isTeacher ? 'teacher' : 'student'}PlaylistExtraInput" placeholder="كود iframe لفيديو إضافي (من «مشاركة ← تضمين»)" style="flex:1; padding:9px 12px; border:1px solid #cbd5e1; border-radius:10px; font-family:'Cairo'; font-size:0.85rem; direction:ltr; text-align:right;">
             <button type="button" onclick="this.parentElement.remove()" title="حذف هذا الفيديو من القائمة" style="background:#fee2e2; color:#ef4444; border:none; width:34px; height:34px; border-radius:10px; cursor:pointer; flex-shrink:0;"><i class="fas fa-times"></i></button>`;
         container.appendChild(row);
     }
@@ -16093,7 +16088,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
 
         // 🎬 اختيار «فيديو» يتطلب كود iframe أو رابط يوتيوب صالحاً
         if (classification === 'فيديو' && extractYouTubeVideoIds(externalLinkInput).length === 0) {
-            showToast('⚠️ يرجى لصق كود iframe أو رابط فيديو يوتيوب صحيح', 'warning');
+            showToast('⚠️ يرجى لصق كود الـ iframe للفيديو (من: مشاركة ← تضمين)', 'warning');
             return;
         }
 
