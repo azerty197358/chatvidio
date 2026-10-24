@@ -241,7 +241,11 @@ app.use(helmet({
                 "https://cdn.jsdelivr.net", "https://*.jsdelivr.net", "https://unpkg.com"
             ],
             workerSrc: ["'self'", "blob:"],
-            childSrc: ["'self'", "blob:"],
+            childSrc: ["'self'", "blob:",
+                // 🎬 تضمين يوتيوب (احتياط للمتصفحات القديمة التي ترجع إلى child-src)
+                "https://www.youtube.com", "https://*.youtube.com",
+                "https://www.youtube-nocookie.com", "https://youtube-nocookie.com"
+            ],
             imgSrc: [
                 "'self'", "data:", "blob:", "https://ui-avatars.com", "https://api.qrserver.com",
                 "https://*.supabase.co", "https://*.google.com", "https://*.gstatic.com", "https://*.google",
@@ -263,7 +267,12 @@ app.use(helmet({
                 "'self'", "https://meet.google.com", "https://*.google.com", "https://*.gstatic.com", "https://*.google",
                 "https://*.adtrafficquality.google", "https://*.googleadservices.com",
                 "https://googleads.g.doubleclick.net", "https://*.doubleclick.net",
-                "https://*.googlesyndication.com", "https://tpc.googlesyndication.com"
+                "https://*.googlesyndication.com", "https://tpc.googlesyndication.com",
+                // 🎬 تضمين يوتيوب — بدون هذه الأسماء يحجب المتصفح الإطار نفسه
+                // برسالة «هذا المحتوى محجوب» (سبب مشكلة الفيديو — لا علاقة للدومين)
+                // *.google.com لا تشمل youtube.com لأنها دومين مختلف
+                "https://www.youtube.com", "https://*.youtube.com",
+                "https://www.youtube-nocookie.com", "https://youtube-nocookie.com"
             ]
         }
     },
