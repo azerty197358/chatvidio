@@ -132,11 +132,22 @@ class MemoryCache {
         return promise;
     }
 
-    /** Store the result and hand it to everyone who joined. */
+    /**
+     * Store the result and hand it to everyone who joined.
+     *
+     * إذا مُسح المفتاح أثناء التحميل (كتابة/تعديل حذفته بالتوسط) فلا نُعيد
+     * إحيائه ببيانات قادمة من الاستعلام القديم — وإلا عاد المستخدم يرى
+     * المنشور قبل تعديله حتى20 ثانية رغم نجاح العملية.
+     */
     publish(key, value, ttlSeconds = 30) {
-        this.set(key, value, ttlSeconds);
         const w = this.waiters.get(key);
-        if (w) { this.waiters.delete(key); w.resolve(value); }
+        if (!w) {
+            // التحميل بدأ قبل الإبطال: نتيجته قديمة — ن discardها بهدوء
+            return;
+        }
+        this.waiters.delete(key);
+        this.set(key, value, ttlSeconds);
+        w.resolve(value);
     }
 
     /** Give up on the load; joiners fall through and try on their own. */
@@ -153,6 +164,20 @@ class MemoryCache {
         for (const key of this.cache.keys()) {
             if (key.startsWith(prefix)) {
                 this.cache.delete(key);
+            }
+        }
+        // نُلغي أيضاً التحميلات الجارية لهذا النمط: وعدها سيحل ببيانات
+        // مُطلوبة قبل الإبطال، ومنتظروها سيتجمدون بلا فائدة
+        for (const key of this.inflight.keys()) {
+            if (key.startsWith(prefix)) {
+                this.inflight.delete(key);
+            }
+        }
+        for (const key of this.waiters.keys()) {
+            if (key.startsWith(prefix)) {
+                const w = this.waiters.get(key);
+                this.waiters.delete(key);
+                if (w) w.reject(new Error('cache-cleared'));
             }
         }
     }

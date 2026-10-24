@@ -774,14 +774,28 @@ router.put('/:id', authenticate, [
                 // Fallback if column does not exist yet on database
                 const fallbackData = { ...updatedData };
                 delete fallbackData.classification;
+                delete fallbackData.updated_at;
                 updated = await update('exercise_posts', exerciseId, fallbackData);
             } else {
                 throw updateErr;
             }
         }
 
+        // ⚠️ update() تُرجع null حين لا يُحدَّث أي صف (يحدث بصمت حين تكون
+        // سياسة UPDATE مفقودة على الجدول). لا نعرض «نجاحاً» كاذباً —
+        // نخبر المستخدم بما حدث فعلاً بدل أن يظن أن التعديل حُفظ.
+        if (!updated) {
+            logger.error('❌ تعديل التمارين لم يُطبَّق على قاعدة البيانات (0 صف مُحدَّث) — تحقق من سياسة UPDATE على exercise_posts', { exerciseId, currentUserId });
+            return res.status(500).json({
+                success: false,
+                error: 'لم يتم حفظ التعديل في قاعدة البيانات — قد تكون صلاحيات الجدول تمنع التحديث. شغّل ملف scripts/allow_exercise_posts_update.sql في Supabase ثم أعد المحاولة'
+            });
+        }
+
         // 🔄 إبطال كاش القوائم حتى تنعكس التعديلات فوراً لكل الزوار
         memoryCache.clearByPattern('exercises:');
+
+        logger.info('✏️ تم تعديل منشور تمارين بنجاح', { exerciseId, currentUserId, role: req.user.role });
 
         res.json({
             success: true,

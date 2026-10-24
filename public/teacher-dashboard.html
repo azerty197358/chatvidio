@@ -5447,6 +5447,15 @@ function appendOptimisticMessage(text, reply) {
                 <div class="exercise-filter-item" style="flex: 1; min-width: 180px; max-width: 220px;">
                     <input type="text" id="exerciseSubjectFilter" oninput="filterExercises()" placeholder="📚 اكتب اسم المادة..." style="width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-family: 'Cairo', sans-serif; font-size: 0.9rem;">
                 </div>
+                <div class="exercise-filter-item" style="flex: 1; min-width: 160px; max-width: 190px;">
+                    <select id="exerciseClassFilter" onchange="filterExercises()" title="فلترة حسب نوع المحتوى" style="width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-family: 'Cairo', sans-serif; font-size: 0.9rem; background: white;">
+                        <option value="all">🏷️ كل الأنواع</option>
+                        <option value="تمرين">📝 تمرين</option>
+                        <option value="درس">📖 درس</option>
+                        <option value="ملخص">📄 ملخص</option>
+                        <option value="فيديو">🎬 فيديو</option>
+                    </select>
+                </div>
                 <div class="exercise-filter-item">
                     <button id="exerciseSavedFilterBtn" class="exercise-filter-button" onclick="toggleExerciseSavedFilter()" style="background: #f8fafc; color: #475569; border: 1px solid #cbd5e1; padding: 10px 18px; border-radius: 10px; font-weight: 700; font-size: 0.88rem; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                         <i class="fas fa-bookmark" style="color: #f59e0b;"></i> <span>المحفوظات فقط</span>
@@ -15477,6 +15486,7 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         const searchVal = (document.getElementById('exerciseSearchInput')?.value || '').toLowerCase().trim();
         const levelVal = document.getElementById('exerciseLevelFilter')?.value || 'all';
         const subjectVal = (document.getElementById('exerciseSubjectFilter')?.value || '').trim();
+        const classVal = document.getElementById('exerciseClassFilter')?.value || 'all';
 
         let filtered = allExercisesList.filter(ex => {
             let levelMatch = true;
@@ -15506,7 +15516,13 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
                 );
             }
 
-            return levelMatch && subjectMatch && searchMatch;
+            // 🏷️ فلترة حسب نوع المحتوى: تمرين / درس / ملخص / فيديو
+            let classMatch = true;
+            if (classVal !== 'all') {
+                classMatch = ((ex.classification || 'تمرين') === classVal);
+            }
+
+            return levelMatch && subjectMatch && searchMatch && classMatch;
         });
 
         renderExercisesList(filtered);
@@ -15602,12 +15618,13 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             const ytMainId = ytIds.length > 0 ? ytIds[0] : null;
             const videoEmbedHtml = ytMainId ? `
                 <div class="ex-video-wrap">
-                    <div class="ex-video-main" id="yt-player-${ex.id}">
+                    <div class="ex-video-main" id="yt-player-${ex.id}" data-video-ids="${ytIds.join(',')}" data-current-video="${ytMainId}">
                         <img src="https://i.ytimg.com/vi/${ytMainId}/hqdefault.jpg" alt="${escapeHtml(ex.title || 'فيديو تعليمي')}" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;" loading="lazy" referrerpolicy="no-referrer">
-                        <button type="button" onclick="playExerciseVideo(${ex.id}, '${ytMainId}')" aria-label="تشغيل الفيديو" style="position: absolute; inset: 0; margin: auto; width: 70px; height: 50px; border: none; border-radius: 12px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"><i class="fas fa-play"></i></button>
+                        <button type="button" class="ex-video-playbtn" onclick="playExerciseVideo(${ex.id}, '${ytMainId}')" aria-label="تشغيل الفيديو" style="position: absolute; inset: 0; margin: auto; width: 70px; height: 50px; border: none; border-radius: 12px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"><i class="fas fa-play"></i></button>
+                        ${ytNavOverlayHtml(ex.id, ytMainId, ytIds)}
                     </div>
                     ${ytIds.length > 1 ? `
-                    <div class="ex-video-playlist">
+                    <div class="ex-video-playlist" id="yt-playlist-${ex.id}">
                         ${ytIds.map((vid, i) => `
                             <div class="ex-video-thumb" onclick="swapExerciseVideo(${ex.id}, '${vid}', this)" title="تشغيل الفيديو ${i + 1}" style="${i === 0 ? 'border-color:#dc2626;' : ''}">
                                 <img src="https://i.ytimg.com/vi/${vid}/mqdefault.jpg" alt="فيديو ${i + 1}" loading="lazy" referrerpolicy="no-referrer">
@@ -15826,10 +15843,17 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         // Fill form fields
         document.getElementById('exerciseModalTitle').value = ex.title || '';
         document.getElementById('exerciseModalSubject').value = ex.subject_name || '';
-        document.getElementById('exerciseModalLevel').value = ex.education_level || 'all';
+        // قيمة قديمة قد لا توجد ضمن الخيارات — نضمن بديلاً صالحاً حتى لا تُرفض عملية الحفظ
+        const levelSel = document.getElementById('exerciseModalLevel');
+        if (levelSel) {
+            levelSel.value = ex.education_level || 'all';
+            if (!levelSel.value) levelSel.value = 'all';
+        }
         document.getElementById('exerciseModalDesc').value = ex.description || '';
-        if (document.getElementById('exerciseModalClassification')) {
-            document.getElementById('exerciseModalClassification').value = ex.classification || 'تمرين';
+        const clsSel = document.getElementById('exerciseModalClassification');
+        if (clsSel) {
+            clsSel.value = ex.classification || 'تمرين';
+            if (!clsSel.value) clsSel.value = 'تمرين';
         }
         if (document.getElementById('exerciseModalExternalLink')) {
             document.getElementById('exerciseModalExternalLink').value = ex.external_link || '';
@@ -15975,7 +15999,10 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     function playExerciseVideo(exId, videoId) {
         const box = document.getElementById('yt-player-' + exId);
         if (!box) return;
-        box.innerHTML = '<iframe width="100%" height="100%" src="' + ytEmbedSrc(videoId) + '" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>';
+        const ids = String(box.dataset.videoIds || '').split(',').filter(Boolean);
+        box.dataset.currentVideo = videoId;
+        box.innerHTML = '<iframe width="100%" height="100%" src="' + ytEmbedSrc(videoId) + '" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>'
+            + ytNavOverlayHtml(exId, videoId, ids);
         recordExerciseView(exId);
     }
 
@@ -15983,15 +16010,17 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
     function swapExerciseVideo(exId, videoId, el) {
         const box = document.getElementById('yt-player-' + exId);
         if (box) {
+            box.dataset.currentVideo = videoId;
             const iframe = box.querySelector('iframe');
             if (iframe) {
                 iframe.src = ytEmbedSrc(videoId);
             } else {
                 const img = box.querySelector('img');
                 if (img) img.src = 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
-                const btn = box.querySelector('button');
+                const btn = box.querySelector('.ex-video-playbtn');
                 if (btn) btn.setAttribute('onclick', 'playExerciseVideo(' + exId + ", '" + videoId + "')");
             }
+            updateYtPosChip(exId);
         }
         const container = el && el.parentElement;
         if (container) {
@@ -15999,6 +16028,46 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
         }
         if (el) el.style.borderColor = '#dc2626';
         recordExerciseView(exId);
+    }
+
+    // 🔽 أزرار التبديل بين فيديوهات قائمة التشغيل الواحدة (فوق المشغّل)
+    //    اليمين = السابق › واليسار = التالي ‹ حسب اتجاه القراءة RTL
+    function ytNavOverlayHtml(exId, currentId, ids) {
+        if (!ids || ids.length < 2) return '';
+        let idx = ids.indexOf(currentId);
+        if (idx < 0) idx = 0;
+        const navBtnStyle = 'position:absolute; top:50%; transform:translateY(-50%); z-index:6; width:40px; height:40px; border-radius:50%; border:none; background:rgba(15,23,42,0.72); color:#fff; font-size:1.35rem; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px10px rgba(0,0,0,0.45); transition:background 0.2s;';
+        return `
+            <button type="button" onclick="stepExerciseVideo(${exId}, -1)" title="الفيديو السابق من القائمة" aria-label="الفيديو السابق" style="${navBtnStyle} right:10px;" onmouseover="this.style.background='rgba(220,38,38,0.85)'" onmouseout="this.style.background='rgba(15,23,42,0.72)'">&#8250;</button>
+            <button type="button" onclick="stepExerciseVideo(${exId}, 1)" title="الفيديو التالي من القائمة" aria-label="الفيديو التالي" style="${navBtnStyle} left:10px;" onmouseover="this.style.background='rgba(220,38,38,0.85)'" onmouseout="this.style.background='rgba(15,23,42,0.72)'">&#8249;</button>
+            <span id="yt-pos-${exId}" style="position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:6; background:rgba(15,23,42,0.75); color:#fff; font-size:0.72rem; font-weight:800; padding:3px 12px; border-radius:999px; pointer-events:none; box-shadow:0 2px8px rgba(0,0,0,0.35);">${idx + 1} / ${ids.length}</span>`;
+    }
+
+    // 🔽 تنقّل +/- بين فيديوهات القائمة (يشتغل من الأزرار أو بلوحة المفاتيح)
+    function stepExerciseVideo(exId, delta) {
+        const box = document.getElementById('yt-player-' + exId);
+        if (!box) return;
+        const ids = String(box.dataset.videoIds || '').split(',').filter(Boolean);
+        if (ids.length < 2) return;
+        let idx = ids.indexOf(box.dataset.currentVideo || ids[0]);
+        if (idx < 0) idx = 0;
+        const nextId = ids[(idx + delta + ids.length) % ids.length];
+        const list = document.getElementById('yt-playlist-' + exId);
+        const nextPos = ids.indexOf(nextId);
+        const thumb = list && nextPos >= 0 ? list.children[nextPos] : null;
+        swapExerciseVideo(exId, nextId, thumb || null);
+    }
+
+    // 🔽 تحديث عدّاد الموضع (مثلاً «2 / 4») أعلى المشغّل
+    function updateYtPosChip(exId) {
+        const chip = document.getElementById('yt-pos-' + exId);
+        const box = document.getElementById('yt-player-' + exId);
+        if (!chip || !box) return;
+        const ids = String(box.dataset.videoIds || '').split(',').filter(Boolean);
+        const idx = ids.indexOf(box.dataset.currentVideo || '');
+        if (ids.length < 2 || idx < 0) { chip.style.display = 'none'; return; }
+        chip.style.display = '';
+        chip.textContent = (idx + 1) + ' / ' + ids.length;
     }
 
     // ============================================================
@@ -16086,6 +16155,11 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
             return;
         }
 
+        if (!level) {
+            showToast('⚠️ يرجى اختيار المستوى الدراسي', 'warning');
+            return;
+        }
+
         // 🎬 اختيار «فيديو» يتطلب كود iframe أو رابط يوتيوب صالحاً
         if (classification === 'فيديو' && extractYouTubeVideoIds(externalLinkInput).length === 0) {
             showToast('⚠️ يرجى لصق كود الـ iframe للفيديو (من: مشاركة ← تضمين)', 'warning');
@@ -16128,11 +16202,26 @@ window.loadOtherTeacherCourses = loadOtherTeacherCourses;
 
             const data = await res.json();
             if (data.success) {
+                // ✨ تحديث فوري في القائمة المحلية قبل إعادة التحميل —
+                //    حتى يرى الأستاذ تعديله لحظياً وإن بطي إعادة الجلب
+                if (editingExerciseId) {
+                    const item = allExercisesList.find(e => e.id === editingExerciseId);
+                    if (item) {
+                        item.title = payload.title;
+                        item.subject_name = payload.subject_name;
+                        item.education_level = payload.education_level;
+                        item.description = payload.description;
+                        item.classification = classification;
+                        item.external_link = payload.external_link;
+                        if (Array.isArray(payload.images) && payload.images.length > 0) item.images = payload.images;
+                    }
+                    filterExercises();
+                }
                 showToast(editingExerciseId ? '🎉 تم تعديل التمارين والحلول بنجاح!' : '🎉 تم نشر التمارين والحلول بنجاح!', 'success');
                 closeCreateExerciseModal();
                 loadExercises(true);
             } else {
-                showToast('❌ ' + (data.error || (editingExerciseId ? 'فشل تعديل التمارين' : 'فشل نشر التمارين')), 'error');
+                showToast('❌ ' + (data.error || (editingExerciseId ? 'فشل تعديل التمارين' : 'فشل نشر التمارين')) + (res.status && res.status >= 400 ? ` (HTTP ${res.status})` : ''), 'error');
             }
         } catch (e) {
             console.error('Full Error submitting exercise:', e);
