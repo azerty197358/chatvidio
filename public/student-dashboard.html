@@ -534,7 +534,7 @@ function appendOptimisticMessage(text, reply) {
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <script src="/js/platform-config.js"></script>
-    <script src="/js/ads.js?v=3"></script>
+    <script src="/js/ads.js?v=4"></script>
     <script>
         // ✅ تهيئة الإعلانات:
         //    1) الإشعار العلوي يبدأ طلبه فور تحليل الصفحة (يكسب سباق match — لكل طالب مشاهدة واحدة لكل إعلان كل 24 ساعة)
@@ -13538,11 +13538,20 @@ let studentPostFilesArray = [];
     // 🎬 بدء التشغيل: يحلّ المشغّل الحقيقي مكان الصورة المصغّرة.
     //    نستخدم youtube.com/embed بدل youtube-nocookie: نطاق nocookie
     //    محجوب من مانعات الإعلانات (Brave) فتظهر رسالة «محتوى محجوب»
+    //    ويبقى رابط «فتح على يوتيوب» دائماً كحل بديل إن حُجب المشغّل
+    //    (فيديو معطّل التضمين من صاحبه مثلاً)
     function playExerciseVideo(exId, videoId) {
         const box = document.getElementById('yt-player-' + exId);
         if (!box) return;
-        box.innerHTML = '<iframe width="100%" height="100%" src="https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>';
+        box.innerHTML = '<iframe width="100%" height="100%" src="https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0" title="فيديو تعليمي" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="display:block; border:0;"></iframe>'
+            + ytWatchLinkHtml(videoId);
         recordExerciseView(exId);
+    }
+
+    // رابط صغير «فتح على يوتيوب» يبقى فوق المشغّل — خيار مضمون
+    // إن منع الموقع أو المتصفح تشغيل الفيديو المضمن
+    function ytWatchLinkHtml(videoId) {
+        return '<a href="https://www.youtube.com/watch?v=' + videoId + '" target="_blank" rel="noopener" data-yt-link="1" title="فتح الفيديو على يوتيوب مباشرة" style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(15,23,42,0.78); color:#fff; font-size:0.68rem; font-weight:800; padding:4px 10px; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 8px rgba(0,0,0,0.35);"><i class="fab fa-youtube" style="color:#ff4444;"></i> فتح على يوتيوب</a>';
     }
 
     // 🎬 تبديل الفيديو النشط في قائمة التشغيل — يعمل أثناء التشغيل أو قبله
@@ -13558,6 +13567,9 @@ let studentPostFilesArray = [];
                 const btn = box.querySelector('button');
                 if (btn) btn.setAttribute('onclick', 'playExerciseVideo(' + exId + ", '" + videoId + "')");
             }
+            // رابط «فتح على يوتيوب» يتبع الفيديو المختار دائماً
+            const watchLink = box.querySelector('a[data-yt-link]');
+            if (watchLink) watchLink.href = 'https://www.youtube.com/watch?v=' + videoId;
         }
         const container = el && el.parentElement;
         if (container) {
@@ -13695,7 +13707,7 @@ let studentPostFilesArray = [];
             `;
 
             try {
-                const res = await fetchWithAuth('/api/exercise');
+                const res = await fetchWithAuth('/api/exercise', { cache: 'no-store' });
                 const data = await res.json();
 
                 if (!res.ok || (data && data.success === false)) {
@@ -13922,6 +13934,7 @@ let studentPostFilesArray = [];
             <div class="ex-video-wrap">
                 <div class="ex-video-main" id="yt-player-${ex.id}">
                     <img src="https://i.ytimg.com/vi/${ytMainId}/hqdefault.jpg" alt="${escapeHtml(ex.title || 'فيديو تعليمي')}" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;" loading="lazy" referrerpolicy="no-referrer">
+                    <a href="https://www.youtube.com/watch?v=${ytMainId}" target="_blank" rel="noopener" data-yt-link="1" title="فتح الفيديو على يوتيوب مباشرة" style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(15,23,42,0.78); color:#fff; font-size:0.68rem; font-weight:800; padding:4px 10px; border-radius:8px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 8px rgba(0,0,0,0.35);"><i class="fab fa-youtube" style="color:#ff4444;"></i> فتح على يوتيوب</a>
                     <button type="button" onclick="playExerciseVideo(${ex.id}, '${ytMainId}')" aria-label="تشغيل الفيديو" style="position: absolute; inset: 0; margin: auto; width: 70px; height: 50px; border: none; border-radius: 12px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,0.4);"><i class="fas fa-play"></i></button>
                 </div>
                 ${ytIds.length > 1 ? `

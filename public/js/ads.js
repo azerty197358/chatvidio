@@ -178,7 +178,7 @@ window.ZoomDzAds = (function () {
             });
         }
 
-        // إخفاء تلقائي بعد 7 ثوانٍ
+        // إخفاء تلقائي بعد 10 ثوانٍ (كما طلب صاحب الموقع)
         setTimeout(function () {
             if (bar && bar.parentElement) {
                 bar.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
@@ -186,7 +186,7 @@ window.ZoomDzAds = (function () {
                 bar.style.opacity = '0';
                 setTimeout(function () { if (bar.parentElement) bar.remove(); }, 320);
             }
-        }, 7000);
+        }, 10000);
     }
 
     // معاينة سعر فورية (مرآة المعادلة من الخادم)

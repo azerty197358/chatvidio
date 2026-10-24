@@ -673,6 +673,10 @@ router.post('/', authenticate, [
             }
         }
 
+        // 🔄 إبطال كاش القوائم فوراً — وإلا يرى الناشر قائمته القديمة
+        //    (حتى20 ثانية) ويظن أن منشوره أو قائمة تشغيله لم تُنشر
+        memoryCache.clearByPattern('exercises:');
+
         res.json({
             success: true,
             message: isStudent ? '🎬 تم نشر الفيديو التعليمي بنجاح!' : '🎉 تم نشر التمارين والحلول بنجاح!',
@@ -776,6 +780,9 @@ router.put('/:id', authenticate, [
             }
         }
 
+        // 🔄 إبطال كاش القوائم حتى تنعكس التعديلات فوراً لكل الزوار
+        memoryCache.clearByPattern('exercises:');
+
         res.json({
             success: true,
             message: '🎉 تم تعديل التمارين والحلول بنجاح!',
@@ -820,6 +827,7 @@ router.post('/:id/bookmark', authenticate, async (req, res) => {
                 .delete()
                 .eq('id', existingBookmark.id);
 
+            memoryCache.clearByPattern('exercises:'); // قوائم «المحفوظات» تتغير
             return res.json({
                 success: true,
                 is_saved: false,
@@ -834,6 +842,7 @@ router.post('/:id/bookmark', authenticate, async (req, res) => {
                 created_at: new Date().toISOString()
             });
 
+            memoryCache.clearByPattern('exercises:'); // قوائم «المحفوظات» تتغير
             return res.json({
                 success: true,
                 is_saved: true,
@@ -911,6 +920,9 @@ router.delete('/:id', authenticate, async (req, res) => {
         try {
             await supabase.from('exercise_bookmarks').delete().eq('exercise_id', exerciseId);
         } catch(e) {}
+
+        // 🔄 إبطال كاش القوائم حتى يختفي المنشور المحذوف فوراً
+        memoryCache.clearByPattern('exercises:');
 
         res.json({ success: true, message: 'تم حذف منشور التمارين والحلول بنجاح' });
     } catch (err) {
